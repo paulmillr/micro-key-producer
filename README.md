@@ -13,6 +13,12 @@ The package exports four modules:
 - [`ed25519-keys/tor`](#torgetkeysseed) for TOR onion addresses
 - [`ed25519-keys/random`](#randomrandombyteslength) for cryptographically secure random number generator (CSPRNG)
 
+Use it in the following way:
+
+```ts
+import * as ssh from 'ed25519-keys/ssh';
+```
+
 ## `ssh.getKeys(seed, username)`
 
 - `seed: Uint8Array`
