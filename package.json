@@ -1,6 +1,6 @@
 {
   "name": "ed25519-keygen",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
   "files": [
     "index.d.ts",
@@ -52,7 +52,6 @@
     "ec",
     "elliptic"
   ],
-  "type": "module",
   "exports": {
     ".": {
       "import": "./esm/index.js",
