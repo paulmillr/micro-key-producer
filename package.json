@@ -1,5 +1,5 @@
 {
-  "name": "micro-ed25519-keygen",
+  "name": "ed25519-keygen",
   "version": "0.1.0",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
   "files": [

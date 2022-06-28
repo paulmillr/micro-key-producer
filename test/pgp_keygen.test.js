@@ -1,7 +1,7 @@
 const cp = require('child_process');
 const fs = require('fs');
 const { randomBytes } = require('@noble/hashes/utils');
-const pgp = require('micro-ed25519-keygen/pgp');
+const pgp = require('../lib/pgp');
 const { deepStrictEqual } = require('assert');
 const { should } = require('micro-should');
 
