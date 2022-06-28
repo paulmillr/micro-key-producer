@@ -2,6 +2,8 @@
 
 Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR.
 
+Does not use CLI utils, everything is done programmatically in pure JS.
+
 ## Usage
 
 > npm install ed25519-keygen
