@@ -41,22 +41,25 @@
     "ec",
     "elliptic"
   ],
+  "main": "lib/index.js",
+  "module": "lib/esm/index.js",
+  "types": "lib/index.d.ts",
   "exports": {
-    "./index.d.ts": "./lib/index.d.ts",
     ".": {
       "import": "./lib/esm/index.js",
       "default": "./lib/index.js"
     },
-    "./ssh.d.ts": "./lib/ssh.d.ts",
+    "./index.d.ts": "./lib/index.d.ts",
     "./ssh": {
       "import": "./lib/esm/ssh.js",
       "default": "./lib/ssh.js"
     },
-    "./pgp.d.ts": "./lib/pgp.d.ts",
+    "./ssh.d.ts": "./lib/ssh.d.ts",
     "./pgp": {
       "import": "./lib/esm/pgp.js",
       "default": "./lib/pgp.js"
     },
+    "./pgp.d.ts": "./lib/pgp.d.ts",
     "./tor": {
       "import": "./lib/esm/tor.js",
       "default": "./lib/tor.js"
