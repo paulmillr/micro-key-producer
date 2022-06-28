@@ -1,0 +1,77 @@
+{
+  "name": "micro-ed25519-keygen",
+  "version": "0.1.0",
+  "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -d && tsc -p tsconfig.esm.json",
+    "lint": "prettier --check index.ts",
+    "test": "node test/index.js"
+  },
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT",
+  "homepage": "https://github.com/paulmillr/ed25519-keygen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/ed25519-keygen.git"
+  },
+  "dependencies": {
+    "@noble/ed25519": "~1.5.2",
+    "@noble/hashes": "^1.1.2",
+    "@scure/base": "~1.1.0",
+    "micro-packed": "^0.1.0"
+  },
+  "devDependencies": {
+    "micro-should": "0.2.0",
+    "prettier": "2.6.2",
+    "typescript": "4.7.3"
+  },
+  "keywords": [
+    "ed25519",
+    "PGP",
+    "GPG",
+    "RFC 4880",
+    "RFC 6637",
+    "SSH",
+    "TOR",
+    "onion",
+    "key generation",
+    "ec",
+    "elliptic"
+  ],
+  "exports": {
+    "./index.d.ts": "./lib/index.d.ts",
+    ".": {
+      "import": "./lib/esm/index.js",
+      "default": "./lib/index.js"
+    },
+    "./ssh.d.ts": "./lib/ssh.d.ts",
+    "./ssh": {
+      "import": "./lib/esm/ssh.js",
+      "default": "./lib/ssh.js"
+    },
+    "./pgp.d.ts": "./lib/pgp.d.ts",
+    "./pgp": {
+      "import": "./lib/esm/pgp.js",
+      "default": "./lib/pgp.js"
+    },
+    "./tor": {
+      "import": "./lib/esm/tor.js",
+      "default": "./lib/tor.js"
+    },
+    "./tor.d.ts": "./lib/tor.d.ts",
+    "./utils": {
+      "import": "./lib/esm/utils.js",
+      "default": "./lib/utils.js"
+    },
+    "./utils.d.ts": "./lib/utils.d.ts"
+  },
+  "funding": [
+    {
+      "type": "individual",
+      "url": "https://paulmillr.com/funding/"
+    }
+  ]
+}

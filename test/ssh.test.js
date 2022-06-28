@@ -1,0 +1,43 @@
+const { deepStrictEqual } = require('assert');
+const { should } = require('micro-should');
+const ssh = require('../lib/ssh');
+const { hex } = require('@scure/base');
+
+// Real key from the internet
+const realKey = `-----BEGIN OPENSSH PRIVATE KEY-----
+
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACC2h/5eqGvaiEUKTBE0zCp32ry2KvPvhyVXHV2PjxNlKgAAAJDhCJGi4QiR
+ogAAAAtzc2gtZWQyNTUxOQAAACC2h/5eqGvaiEUKTBE0zCp32ry2KvPvhyVXHV2PjxNlKg
+AAAEBuiKVsRW9rjAjpLI+tVm8DuQ8/RCxj0G1Ncsvl446uQbaH/l6oa9qIRQpMETTMKnfa
+vLYq8++HJVcdXY+PE2UqAAAAB3BjQGRpc2gBAgMEBQY=
+-----END OPENSSH PRIVATE KEY-----
+`;
+should('ssh: pack & unpack ssh privkeys should be the same', () => {
+  deepStrictEqual(realKey, ssh.PrivateExport.encode(ssh.PrivateExport.decode(realKey)));
+});
+should('ssh: return correct key from seed', async () => {
+  deepStrictEqual(
+    await ssh.getKeys(
+      hex.decode('71e722b077c007d4ae263287878a0bff1816c99f93cf8dcddd995bccefd1d7a3'),
+      'user@pc',
+      hex.decode('c346f14a')
+    ),
+    {
+      publicKey:
+        'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBeMouB+U+QahY9rCua02H2ZfRXMpxDFtyqW+wBm0iji user@pc',
+      fingerprint: 'SHA256:idyrSmuk43TgiEwEtOFsaPybfUARlaLPQUGuazLcm94',
+      privateKey: `-----BEGIN OPENSSH PRIVATE KEY-----
+
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACAXjKLgflPkGoWPawrmtNh9mX0VzKcQxbcqlvsAZtIo4gAAAJDDRvFKw0bx
+SgAAAAtzc2gtZWQyNTUxOQAAACAXjKLgflPkGoWPawrmtNh9mX0VzKcQxbcqlvsAZtIo4g
+AAAEBx5yKwd8AH1K4mMoeHigv/GBbJn5PPjc3dmVvM79HXoxeMouB+U+QahY9rCua02H2Z
+fRXMpxDFtyqW+wBm0ijiAAAAB3VzZXJAcGMBAgMEBQY=
+-----END OPENSSH PRIVATE KEY-----
+`,
+    }
+  );
+});
+
+if (require.main === module) should.run();
