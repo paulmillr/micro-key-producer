@@ -1,9 +1,20 @@
 {
   "name": "ed25519-keygen",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
   "files": [
-    "lib"
+    "index.d.ts",
+    "index.js",
+    "esm/index.js",
+    "pgp.d.ts",
+    "pgp.js",
+    "esm/pgp.js",
+    "ssh.d.ts",
+    "ssh.js",
+    "esm/ssh.js",
+    "tor.d.ts",
+    "tor.js",
+    "esm/tor.js"
   ],
   "scripts": {
     "build": "tsc -d && tsc -p tsconfig.esm.json",
@@ -41,35 +52,33 @@
     "ec",
     "elliptic"
   ],
-  "main": "lib/index.js",
-  "module": "lib/esm/index.js",
-  "types": "lib/index.d.ts",
+  "type": "module",
   "exports": {
     ".": {
-      "import": "./lib/esm/index.js",
-      "default": "./lib/index.js"
+      "import": "./esm/index.js",
+      "default": "./index.js"
     },
-    "./index.d.ts": "./lib/index.d.ts",
+    "./index.d.ts": "./index.d.ts",
     "./ssh": {
-      "import": "./lib/esm/ssh.js",
-      "default": "./lib/ssh.js"
+      "import": "./esm/ssh.js",
+      "default": "./ssh.js"
     },
-    "./ssh.d.ts": "./lib/ssh.d.ts",
+    "./ssh.d.ts": "./ssh.d.ts",
     "./pgp": {
-      "import": "./lib/esm/pgp.js",
-      "default": "./lib/pgp.js"
+      "import": "./esm/pgp.js",
+      "default": "./pgp.js"
     },
-    "./pgp.d.ts": "./lib/pgp.d.ts",
+    "./pgp.d.ts": "./pgp.d.ts",
     "./tor": {
-      "import": "./lib/esm/tor.js",
-      "default": "./lib/tor.js"
+      "import": "./esm/tor.js",
+      "default": "./tor.js"
     },
-    "./tor.d.ts": "./lib/tor.d.ts",
+    "./tor.d.ts": "./tor.d.ts",
     "./utils": {
-      "import": "./lib/esm/utils.js",
-      "default": "./lib/utils.js"
+      "import": "./esm/utils.js",
+      "default": "./utils.js"
     },
-    "./utils.d.ts": "./lib/utils.d.ts"
+    "./utils.d.ts": "./utils.d.ts"
   },
   "funding": [
     {

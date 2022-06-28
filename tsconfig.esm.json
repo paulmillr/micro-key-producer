@@ -7,8 +7,8 @@
       "dom"
     ],
     "module": "es6",
-    "moduleResolution": "node",
-    "outDir": "lib/esm",
+    "moduleResolution": "node16",
+    "outDir": "esm",
     "noImplicitAny": true,
     "removeComments": true,
     "preserveConstEnums": true,

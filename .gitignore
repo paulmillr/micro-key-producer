@@ -1,5 +1,6 @@
 node_modules
 /build/
 /lib
-/index.js
-/index.d.ts
+/*.js
+/esm/*.js
+/*.d.ts
