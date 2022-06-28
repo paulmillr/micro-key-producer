@@ -3,11 +3,9 @@ import { sha3_256 } from '@noble/hashes/sha3';
 import { utf8, base32, base64 } from '@scure/base';
 import { concatBytes } from 'micro-packed';
 
-export type Bytes = Uint8Array;
-
 const ADDRESS_VERSION = new Uint8Array([0x03]);
 
-export async function formatPublicKey(pubBytes: Bytes) {
+export async function formatPublicKey(pubBytes: Uint8Array) {
   // checksum = H(".onion checksum" || pubkey || version)
   const checksum = sha3_256(concatBytes(utf8.decode('.onion checksum'), pubBytes, ADDRESS_VERSION));
   // onion_address = base32(pubkey || checksum || version);
@@ -25,7 +23,7 @@ export async function parseAddress(address: string) {
   return addr;
 }
 
-export async function getKeys(seed: Bytes) {
+export async function getKeys(seed: Uint8Array) {
   const { head, prefix, pointBytes } = await ed25519.utils.getExtendedPublicKey(seed);
   const bytes = concatBytes(head, prefix);
   return {

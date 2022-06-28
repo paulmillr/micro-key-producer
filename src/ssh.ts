@@ -5,7 +5,6 @@ import * as P from 'micro-packed';
 import { base64 } from '@scure/base';
 import { randomBytes } from '@noble/hashes/utils';
 
-export type Bytes = Uint8Array;
 export const SSHString = P.string(P.U32BE);
 export const SSHBuf = P.bytes(P.U32BE);
 export const SSHKeyType = P.magic(SSHString, 'ssh-ed25519');
@@ -56,12 +55,12 @@ export const PrivateExport = P.base64armor(
   })
 );
 
-export function formatPublicKey(bytes: Bytes, comment?: string) {
+export function formatPublicKey(bytes: Uint8Array, comment?: string) {
   const blob = PublicKey.encode({ pubKey: bytes });
   return `ssh-ed25519 ${base64.encode(blob)}${comment ? ` ${comment}` : ''}`;
 }
 
-export function getFingerprint(bytes: Bytes) {
+export function getFingerprint(bytes: Uint8Array) {
   const blob = PublicKey.encode({ pubKey: bytes });
   // ssh-keygen -l -f ~/.ssh/id_ed25519
   // 256 SHA256:+WK/Sl4XJjoxDlAWYuhq4Fl2hka9j3GOUjYczQkqnCI user@comp.local (ED25519)
@@ -70,9 +69,9 @@ export function getFingerprint(bytes: Bytes) {
 
 // For determenistic generation in tests
 export async function getKeys(
-  privateKey: Bytes,
+  privateKey: Uint8Array,
   comment?: string,
-  checkBytes: Bytes = randomBytes(4)
+  checkBytes = randomBytes(4)
 ) {
   const pubKey = await ed25519.getPublicKey(privateKey);
   return {
@@ -97,6 +96,6 @@ export async function getKeys(
 }
 
 // For SSH Agents
-export function authSign(privateKey: Bytes, data: AuthDataType): Promise<Bytes> {
+export function authSign(privateKey: Uint8Array, data: AuthDataType): Promise<Uint8Array> {
   return ed25519.sign(AuthData.encode(data), privateKey);
 }
