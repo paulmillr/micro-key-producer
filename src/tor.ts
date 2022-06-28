@@ -23,7 +23,7 @@ export async function parseAddress(address: string) {
   return addr;
 }
 
-export async function getKeys(seed: Uint8Array) {
+export default async function getKeys(seed: Uint8Array) {
   const { head, prefix, pointBytes } = await ed25519.utils.getExtendedPublicKey(seed);
   const bytes = concatBytes(head, prefix);
   return {

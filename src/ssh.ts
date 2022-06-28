@@ -68,7 +68,7 @@ export function getFingerprint(bytes: Uint8Array) {
 }
 
 // For determenistic generation in tests
-export async function getKeys(
+export default async function getKeys(
   privateKey: Uint8Array,
   comment?: string,
   checkBytes = randomBytes(4)

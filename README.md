@@ -11,12 +11,15 @@ The package exports four modules:
 - [`ed25519-keys/ssh`](#sshgetkeysseed-username) for SSH key generation
 - [`ed25519-keys/pgp`](#pgpgetkeysseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
 - [`ed25519-keys/tor`](#torgetkeysseed) for TOR onion addresses
-- [`ed25519-keys/random`](#randomrandombyteslength) for cryptographically secure random number generator (CSPRNG)
+- [`ed25519-keys/utils`](#randomrandombyteslength) for cryptographically secure random number generator (CSPRNG)
 
 Use it in the following way:
 
 ```ts
-import * as ssh from 'ed25519-keys/ssh';
+import ssh from 'ed25519-keys/ssh';
+import pgp from 'ed25519-keys/pgp';
+import tor from 'ed25519-keys/tor';
+import { randomBytes } from 'ed25519-keys/utils';
 ```
 
 ## `ssh.getKeys(seed, username)`
@@ -26,10 +29,10 @@ import * as ssh from 'ed25519-keys/ssh';
 - Returns `{ fingerprint: string, privateKey: string, publicKey: string }`
 
 ```js
-const ssh = require('ed25519-keys/ssh');
-const { randomBytes } = require('ed25519-keygen/utils');
+import ssh from 'ed25519-keys/ssh';
+import { randomBytes } from 'ed25519-keygen/utils';
 const sseed = randomBytes(32);
-const skeys = await ssh.getKeys(sseed, 'user@example.com');
+const skeys = await ssh(sseed, 'user@example.com');
 console.log(skeys.fingerprint);
 console.log(skeys.privateKey);
 console.log(skeys.publicKey);
@@ -66,8 +69,8 @@ hide the keys, and AES requires different IV / salt.
   happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI: see [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
 
 ```js
-const pgp = require('ed25519-keygen/pgp');
-const { randomBytes } = require('ed25519-keygen/utils');
+import * as pgp from 'ed25519-keygen/pgp';
+import { randomBytes } from 'ed25519-keygen/utils';
 const pseed = randomBytes(32);
 const pkeys = await pgp.getKeys(pseed, 'user@example.com', 'password');
 console.log(pkeys.keyId);
@@ -126,10 +129,10 @@ Generates TOR addresses.
 - Returns `{ privateKey: string, publicKey: string }`
 
 ```js
-const tor = require('ed25519-keygen/tor');
-const { randomBytes } = require('ed25519-keygen/utils');
+import tor from 'ed25519-keygen/tor';
+import { randomBytes } from 'ed25519-keygen/utils';
 const tseed = randomBytes(32);
-const tkeys = await tor.getKeys(tseed);
+const tkeys = await tor(tseed);
 console.log(tkeys.privateKey);
 console.log(tkeys.publicKey);
 /*

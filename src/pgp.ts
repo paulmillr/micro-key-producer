@@ -700,7 +700,7 @@ export async function formatPrivate(
   happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI:
   https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0
 */
-export async function getKeys(privKey: Bytes, user: string, password: string, created = 0) {
+export default async function getKeys(privKey: Bytes, user: string, password: string, created = 0) {
   const { keyId } = await getPublicPackets(privKey, privKey, created);
   const { head: cvPrivate } = await ed25519.utils.getExtendedPublicKey(privKey);
   const publicKey = await formatPublic(privKey, cvPrivate, user, created);
