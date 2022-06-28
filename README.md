@@ -8,10 +8,10 @@ Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR.
 
 The package exports four modules:
 
-- `ed25519-keys/ssh` for SSH key generation
-- `ed25519-keys/pgp` for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
-- `ed25519-keys/tor` for TOR onion addresses
-- `ed25519-keys/random` for cryptographically secure random number generator (CSPRNG)
+- [`ed25519-keys/ssh`](#sshgetkeysseed-username) for SSH key generation
+- [`ed25519-keys/pgp`](#pgpgetkeysseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
+- [`ed25519-keys/tor`](#torgetkeysseed) for TOR onion addresses
+- [`ed25519-keys/random`](#randomrandombyteslength) for cryptographically secure random number generator (CSPRNG)
 
 ## `ssh.getKeys(seed, username)`
 
@@ -131,6 +131,11 @@ ED25519-V3:EOl78M2gARYOyp4BDltfzxSR3dA/LLTXZLb2imgOwFuYC5ISIUxsQ42ywzHaxvc03mahm
 rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
 */
 ```
+
+### `random.randomBytes(length)`
+
+- `byteLength: number` default is `32`
+- Returns `Uint8Array` filled with cryptographically secure random bytes
 
 ## License
 
