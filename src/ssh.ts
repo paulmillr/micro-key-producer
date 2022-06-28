@@ -68,7 +68,7 @@ export function getFingerprint(bytes: Uint8Array) {
 }
 
 // For determenistic generation in tests
-export default async function getKeys(
+export async function getKeys(
   privateKey: Uint8Array,
   comment?: string,
   checkBytes = randomBytes(4)
@@ -99,3 +99,5 @@ export default async function getKeys(
 export function authSign(privateKey: Uint8Array, data: AuthDataType): Promise<Uint8Array> {
   return ed25519.sign(AuthData.encode(data), privateKey);
 }
+
+export default getKeys;

@@ -23,7 +23,7 @@ export async function parseAddress(address: string) {
   return addr;
 }
 
-export default async function getKeys(seed: Uint8Array) {
+export async function getKeys(seed: Uint8Array) {
   const { head, prefix, pointBytes } = await ed25519.utils.getExtendedPublicKey(seed);
   const bytes = concatBytes(head, prefix);
   return {
@@ -31,3 +31,5 @@ export default async function getKeys(seed: Uint8Array) {
     privateKey: `ED25519-V3:${base64.encode(bytes)}`,
   };
 }
+
+export default getKeys;
