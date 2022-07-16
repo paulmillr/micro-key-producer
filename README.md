@@ -28,7 +28,7 @@ import { randomBytes } from 'ed25519-keys/utils';
 
 - `seed: Uint8Array`
 - `username: string`
-- Returns `{ fingerprint: string, privateKey: string, publicKey: string }`
+- Returns `{ fingerprint: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
 
 ```js
 import ssh from 'ed25519-keys/ssh';
@@ -59,7 +59,7 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHsjMxxbMNsYAIkU+a3yENkZ50fpbXDRIa5jVS36giXF
 - `user: string`
 - `password: string`
 - `createdAt: number` - (default: 0) timestamp corresponding to key creation time
-- Returns `{ keyId: string, privateKey: string, publicKey: string }`
+- Returns `{ keyId: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
 
 Creates keys compatible with GPG. GPG is a commonly known utility that supports PGP protocol. Quirks:
 
@@ -128,7 +128,7 @@ console.log({
 Generates TOR addresses.
 
 - `seed: Uint8Array`
-- Returns `{ privateKey: string, publicKey: string }`
+- Returns `{ privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
 
 ```js
 import tor from 'ed25519-keygen/tor';
