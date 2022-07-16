@@ -1,6 +1,6 @@
 {
   "name": "ed25519-keygen",
-  "version": "0.1.2",
+  "version": "0.2.0-pre",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
   "files": [
     "index.d.ts",
@@ -17,7 +17,7 @@
     "esm/tor.js"
   ],
   "scripts": {
-    "build": "tsc -d && tsc -p tsconfig.esm.json",
+    "build": "tsc && tsc -p tsconfig.esm.json",
     "lint": "prettier --check index.ts",
     "test": "node test/index.js"
   },
@@ -29,7 +29,7 @@
     "url": "git+https://github.com/paulmillr/ed25519-keygen.git"
   },
   "dependencies": {
-    "@noble/ed25519": "~1.5.2",
+    "@noble/ed25519": "^1.6.1",
     "@noble/hashes": "^1.1.2",
     "@scure/base": "~1.1.0",
     "micro-packed": "^0.1.0"

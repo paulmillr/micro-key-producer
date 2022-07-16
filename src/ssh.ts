@@ -55,12 +55,12 @@ export const PrivateExport = P.base64armor(
   })
 );
 
-export function formatPublicKey(bytes: Uint8Array, comment?: string) {
+export function formatPublicKey(bytes: Uint8Array, comment?: string): string {
   const blob = PublicKey.encode({ pubKey: bytes });
   return `ssh-ed25519 ${base64.encode(blob)}${comment ? ` ${comment}` : ''}`;
 }
 
-export function getFingerprint(bytes: Uint8Array) {
+export function getFingerprint(bytes: Uint8Array): string {
   const blob = PublicKey.encode({ pubKey: bytes });
   // ssh-keygen -l -f ~/.ssh/id_ed25519
   // 256 SHA256:+WK/Sl4XJjoxDlAWYuhq4Fl2hka9j3GOUjYczQkqnCI user@comp.local (ED25519)
@@ -75,6 +75,7 @@ export async function getKeys(
 ) {
   const pubKey = await ed25519.getPublicKey(privateKey);
   return {
+    publicKeyBytes: pubKey,
     publicKey: formatPublicKey(pubKey, comment),
     fingerprint: getFingerprint(pubKey),
     privateKey: PrivateExport.encode({
