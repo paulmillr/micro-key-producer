@@ -1,6 +1,6 @@
 {
   "name": "ed25519-keygen",
-  "version": "0.2.0-pre",
+  "version": "0.2.0",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
   "files": [
     "index.d.ts",
