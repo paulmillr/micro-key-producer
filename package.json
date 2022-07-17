@@ -2,32 +2,27 @@
   "name": "ed25519-keygen",
   "version": "0.2.0",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
   "files": [
-    "index.d.ts",
+    "index.ts",
     "index.js",
-    "esm/index.js",
-    "pgp.d.ts",
+    "index.d.ts",
+    "index.d.ts.map",
+    "pgp.ts",
     "pgp.js",
-    "esm/pgp.js",
-    "ssh.d.ts",
+    "pgp.d.ts",
+    "pgp.d.ts.map",
+    "ssh.ts",
     "ssh.js",
-    "esm/ssh.js",
-    "tor.d.ts",
+    "ssh.d.ts",
+    "ssh.d.ts.map",
+    "tor.ts",
     "tor.js",
-    "esm/tor.js"
+    "tor.d.ts",
+    "tor.d.ts.map"
   ],
-  "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
-    "lint": "prettier --check index.ts",
-    "test": "node test/index.js"
-  },
-  "author": "Paul Miller (https://paulmillr.com)",
-  "license": "MIT",
-  "homepage": "https://github.com/paulmillr/ed25519-keygen",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/paulmillr/ed25519-keygen.git"
-  },
   "dependencies": {
     "@noble/ed25519": "^1.6.1",
     "@noble/hashes": "^1.1.2",
@@ -38,6 +33,40 @@
     "micro-should": "0.2.0",
     "prettier": "2.6.2",
     "typescript": "4.7.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./ssh": {
+      "types": "./ssh.d.ts",
+      "default": "./ssh.js"
+    },
+    "./pgp": {
+      "types": "./pgp.d.ts",
+      "default": "./pgp.js"
+    },
+    "./tor": {
+      "types": "./tor.d.ts",
+      "default": "./tor.js"
+    },
+    "./utils": {
+      "types": "./utils.d.ts",
+      "default": "./utils.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "prettier --check index.ts",
+    "test": "node test/index.js"
+  },
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT",
+  "homepage": "https://github.com/paulmillr/ed25519-keygen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/ed25519-keygen.git"
   },
   "keywords": [
     "ed25519",
@@ -52,33 +81,6 @@
     "ec",
     "elliptic"
   ],
-  "exports": {
-    ".": {
-      "import": "./esm/index.js",
-      "default": "./index.js"
-    },
-    "./index.d.ts": "./index.d.ts",
-    "./ssh": {
-      "import": "./esm/ssh.js",
-      "default": "./ssh.js"
-    },
-    "./ssh.d.ts": "./ssh.d.ts",
-    "./pgp": {
-      "import": "./esm/pgp.js",
-      "default": "./pgp.js"
-    },
-    "./pgp.d.ts": "./pgp.d.ts",
-    "./tor": {
-      "import": "./esm/tor.js",
-      "default": "./tor.js"
-    },
-    "./tor.d.ts": "./tor.d.ts",
-    "./utils": {
-      "import": "./esm/utils.js",
-      "default": "./utils.js"
-    },
-    "./utils.d.ts": "./utils.d.ts"
-  },
   "funding": [
     {
       "type": "individual",

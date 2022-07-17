@@ -1,7 +1,7 @@
-const { deepStrictEqual } = require('assert');
-const { should } = require('micro-should');
-const ssh = require('../ssh');
-const { hex } = require('@scure/base');
+import { deepStrictEqual } from 'assert';
+import { should } from 'micro-should';
+import * as ssh from '../ssh.js';
+import { hex } from '@scure/base';
 
 // Real key from the internet
 const realKey = `-----BEGIN OPENSSH PRIVATE KEY-----
@@ -37,5 +37,3 @@ should('ssh: return correct key from seed', async () => {
   const checkBytes = hex.decode('c346f14a');
   deepStrictEqual(await ssh.getKeys(priv, comment, checkBytes), EXPECTED);
 });
-
-if (require.main === module) should.run();

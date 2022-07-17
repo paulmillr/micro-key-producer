@@ -1,9 +1,9 @@
-const cp = require('child_process');
-const fs = require('fs');
-const { randomBytes } = require('@noble/hashes/utils');
-const pgp = require('../pgp');
-const { deepStrictEqual } = require('assert');
-const { should } = require('micro-should');
+import cp from 'child_process';
+import fs from 'fs';
+import { randomBytes } from '@noble/hashes/utils';
+import pgp from '../pgp.js';
+import { deepStrictEqual } from 'assert';
+import { should } from 'micro-should';
 
 // Warning: this test will execute system command `gpg`
 
@@ -63,5 +63,3 @@ should('basic', async () => {
     cleanKeys();
   }
 });
-
-if (require.main === module) should.run();

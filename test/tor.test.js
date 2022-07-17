@@ -1,7 +1,7 @@
-const { deepStrictEqual } = require('assert');
-const { should } = require('micro-should');
-const tor = require('../tor');
-const { hex } = require('@scure/base');
+import { deepStrictEqual } from 'assert';
+import { should } from 'micro-should';
+import * as tor from '../tor.js';
+import { hex } from '@scure/base';
 
 should('tor: basic', async () => {
   const seed = hex.decode('87e09c06a31743bb594cd0d6294c358883fb3ef2269f6e48816339eccb0d6489');
@@ -16,5 +16,3 @@ should('tor: basic', async () => {
   const parsed = tor.parseAddress(addr);
   deepStrictEqual(tor.formatPublicKey(parsed), addr);
 });
-
-if (require.main === module) should.run();
