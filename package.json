@@ -58,7 +58,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "lint": "prettier --check index.ts",
+    "lint": "prettier --check src",
     "test": "node test/index.js"
   },
   "author": "Paul Miller (https://paulmillr.com)",
