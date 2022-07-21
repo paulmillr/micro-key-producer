@@ -1,6 +1,6 @@
 {
   "name": "ed25519-keygen",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR",
   "type": "module",
   "main": "index.js",
@@ -27,7 +27,7 @@
     "@noble/ed25519": "^1.6.1",
     "@noble/hashes": "^1.1.2",
     "@scure/base": "~1.1.0",
-    "micro-packed": "^0.1.0"
+    "micro-packed": "^0.2.0"
   },
   "devDependencies": {
     "micro-should": "0.2.0",
