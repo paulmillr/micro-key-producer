@@ -64,11 +64,11 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHsjMxxbMNsYAIkU+a3yENkZ50fpbXDRIa5jVS36giXF
 Creates keys compatible with GPG. GPG is a commonly known utility that supports PGP protocol. Quirks:
 
 1. Generated private and public keys would have different representation,
-however, **their fingerprints would be the same**. This is because AES encryption is used to
-hide the keys, and AES requires different IV / salt.
+   however, **their fingerprints would be the same**. This is because AES encryption is used to
+   hide the keys, and AES requires different IV / salt.
 2. The function is slow (~725ms on Apple M1), because it uses S2K to derive keys.
 3. "warning: lower 3 bits of the secret key are not cleared"
-  happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI: see [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
+   happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI: see [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
 
 ```js
 import * as pgp from 'ed25519-keygen/pgp';
@@ -151,4 +151,3 @@ rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
 ## License
 
 MIT (c) Paul Miller [(https://paulmillr.com)](https://paulmillr.com), see LICENSE file.
-
