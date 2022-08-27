@@ -24,10 +24,10 @@
     "tor.d.ts.map"
   ],
   "dependencies": {
-    "@noble/ed25519": "^1.6.1",
-    "@noble/hashes": "^1.1.2",
+    "@noble/ed25519": "~1.7.0",
+    "@noble/hashes": "~1.1.2",
     "@scure/base": "~1.1.0",
-    "micro-packed": "^0.2.0"
+    "micro-packed": "^0.3.0"
   },
   "devDependencies": {
     "micro-should": "0.2.0",
