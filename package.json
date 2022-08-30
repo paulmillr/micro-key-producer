@@ -21,7 +21,10 @@
     "src/tor.ts",
     "tor.js",
     "tor.d.ts",
-    "tor.d.ts.map"
+    "tor.d.ts.map",
+    "utils.js",
+    "utils.d.ts",
+    "utils.d.ts.map"
   ],
   "dependencies": {
     "@noble/ed25519": "~1.7.0",

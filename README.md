@@ -10,18 +10,18 @@ Does not use CLI utils, everything is done programmatically in pure JS.
 
 The package exports four modules:
 
-- [`ed25519-keys/ssh`](#sshseed-username) for SSH key generation
-- [`ed25519-keys/pgp`](#pgpseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
-- [`ed25519-keys/tor`](#torseed) for TOR onion addresses
-- [`ed25519-keys/utils`](#randombyteslength) for cryptographically secure random number generator (CSPRNG)
+- [`ed25519-keygen/ssh`](#sshseed-username) for SSH key generation
+- [`ed25519-keygen/pgp`](#pgpseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
+- [`ed25519-keygen/tor`](#torseed) for TOR onion addresses
+- [`ed25519-keygen/utils`](#randombyteslength) for cryptographically secure random number generator (CSPRNG)
 
 Use it in the following way:
 
 ```ts
-import ssh from 'ed25519-keys/ssh';
-import pgp from 'ed25519-keys/pgp';
-import tor from 'ed25519-keys/tor';
-import { randomBytes } from 'ed25519-keys/utils';
+import ssh from 'ed25519-keygen/ssh';
+import pgp from 'ed25519-keygen/pgp';
+import tor from 'ed25519-keygen/tor';
+import { randomBytes } from 'ed25519-keygen/utils';
 ```
 
 ## `ssh(seed, username)`
@@ -31,7 +31,7 @@ import { randomBytes } from 'ed25519-keys/utils';
 - Returns `{ fingerprint: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
 
 ```js
-import ssh from 'ed25519-keys/ssh';
+import ssh from 'ed25519-keygen/ssh';
 import { randomBytes } from 'ed25519-keygen/utils';
 const sseed = randomBytes(32);
 const skeys = await ssh(sseed, 'user@example.com');
