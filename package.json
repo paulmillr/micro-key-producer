@@ -22,6 +22,7 @@
     "tor.js",
     "tor.d.ts",
     "tor.d.ts.map",
+    "src/utils.ts",
     "utils.js",
     "utils.d.ts",
     "utils.d.ts.map"
