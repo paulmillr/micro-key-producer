@@ -260,7 +260,7 @@ const ECDHPub = P.struct({
   ),
 });
 
-const PubKeyPacket = P.struct({
+export const PubKeyPacket = P.struct({
   version: PGP_PACKET_VERSION,
   created: P.U32BE,
   algo: P.tag(pubKeyEnum, {
@@ -270,16 +270,27 @@ const PubKeyPacket = P.struct({
 });
 type PubKeyType = P.UnwrapCoder<typeof PubKeyPacket>;
 
-// NOTE: SecretKey is specific packet type as per spec. For user facing API we using 'privateKey'
-const SecretKeyPacket = P.struct({
-  pub: PubKeyPacket,
-  s2k_type: P.U8,
-  // only for 254 & 255
+const PlainSecretKey = P.struct({
+  secret: P.bytes(null),
+});
+
+const EncryptedSecretKey = P.struct({
   enc: EncryptionEnum,
-  S2K: S2K,
+  S2K,
   // IV as blocksize of algo. For AES it is 16 bytes, others is not supported
   iv: P.bytes(16),
   secret: P.bytes(null),
+});
+// NOTE: SecretKey is specific packet type as per spec. For user facing API we using 'privateKey'
+const SecretKeyPacket = P.struct({
+  pub: PubKeyPacket,
+  type: P.mappedTag(P.U8, {
+    plain: [0x00, PlainSecretKey],
+    // Skipping 'Any other value is a symmetric-key encryption algorithm identifier.'
+    encrypted: [254, EncryptedSecretKey],
+    // Same as above, but secret is with checksum
+    encrypted2: [255, EncryptedSecretKey],
+  }),
 });
 type SecretKeyType = P.UnwrapCoder<typeof SecretKeyPacket>;
 
@@ -530,11 +541,23 @@ async function signData(
   return { head, unhashed, hashPrefix, sig };
 }
 
+function decodeSecretChecksum(secret: Bytes) {
+  const [data, checksum] = [secret.slice(0, -2), P.U16BE.decode(secret.slice(-2))];
+  // Wow, third checksum algorithm in single spec!
+  let ourChecksum = 0;
+  for (let i = 0; i < data.length; i++) ourChecksum += data[i];
+  ourChecksum %= 65536;
+  if (ourChecksum !== checksum) throw new Error('PGP.secretKey: wrong checksum for plain encoding');
+  return mpi.decode(data);
+}
+
 export async function decodeSecretKey(password: string, key: SecretKeyType) {
-  if (key.s2k_type !== 254) throw new Error(`PGP.secretKey Unsupported s2k_type=${key.s2k_type}`);
-  const data = key.S2K.data;
-  const keyLen = EncryptionKeySize[key.enc];
-  if (keyLen === undefined) throw new Error(`PGP.secretKey: unknown encryption mode=${key.enc}`);
+  if (key.type.TAG === 'plain') return decodeSecretChecksum(key.type.data.secret);
+  const keyData = key.type.data;
+  const data = keyData.S2K.data;
+  const keyLen = EncryptionKeySize[keyData.enc];
+  if (keyLen === undefined)
+    throw new Error(`PGP.secretKey: unknown encryption mode=${keyData.enc}`);
   const encKey = deriveKey(
     data.hash,
     keyLen,
@@ -542,7 +565,7 @@ export async function decodeSecretKey(password: string, key: SecretKeyType) {
     (data as any).salt,
     (data as any).count
   );
-  const decrypted = await Encryption[key.enc].decrypt(key.secret, encKey, key.iv);
+  const decrypted = await Encryption[keyData.enc].decrypt(keyData.secret, encKey, keyData.iv);
   const decryptedKey = decrypted.subarray(0, -20);
   const checksum = Hash.sha1(decryptedKey);
   if (!equalBytes(decrypted.slice(-20), checksum))
@@ -550,6 +573,7 @@ export async function decodeSecretKey(password: string, key: SecretKeyType) {
   if (!['ECDH', 'ECDSA', 'EdDSA'].includes(key.pub.algo.TAG))
     throw new Error(`PGP.secretKey unsupported publicKey algorithm: ${key.pub.algo.TAG}`);
   // Decoded as generic MPI, not as OpaqueMPI
+  if (key.type.TAG === 'encrypted2') return decodeSecretChecksum(decryptedKey);
   return mpi.decode(decryptedKey);
 }
 
@@ -570,7 +594,7 @@ async function createPrivKey(
   const secretClear = concatBytes(keyBytes, sha1(keyBytes));
   const secret = await Encryption[enc].encrypt(secretClear, encKey, iv);
   const S2K = { TAG: 'iterated', data: { hash, salt, count } } as const;
-  return { pub, s2k_type: 254, enc, S2K, iv, secret };
+  return { pub, type: { TAG: 'encrypted', data: { enc, S2K, iv, secret } } };
 }
 
 export const pubArmor = P.base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24);
