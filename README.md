@@ -4,6 +4,8 @@ Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR.
 
 Does not use CLI utils, everything is done programmatically in pure JS.
 
+Uses audited [@noble/ed25519](https://github.com/paulmillr/noble-ed25519) under the hood. See [@paulmillr/ed25519-hdkey](https://github.com/paulmillr/ed25519-hdkey) if you need SLIP-0010/BIP32 HDKey implementation.
+
 ## Usage
 
 > npm install ed25519-keygen
