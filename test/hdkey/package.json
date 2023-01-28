@@ -1,0 +1,17 @@
+{
+  "name": "hdkey",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.test.mjs",
+    "test2": "node bip39.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@scure/bip39": "1.1.0",
+    "@solana/web3.js": "1.63.0"
+  }
+}

@@ -1,20 +1,21 @@
 # ed25519-keygen
 
-Generate ed25519 keys deterministically for SSH, PGP (GPG) and TOR.
+Generate ed25519 keys for SSH, PGP (GPG), TOR and SLIP-0010 hdkey.
 
-Does not use CLI utils, everything is done programmatically in pure JS.
+Generation is deterministic and done in pure javascript, without CLI tools. Uses audited [@noble/ed25519](https://github.com/paulmillr/noble-ed25519) under the hood.
 
-Uses audited [@noble/ed25519](https://github.com/paulmillr/noble-ed25519) under the hood. See [micro-ed25519-hdkey](https://github.com/paulmillr/micro-ed25519-hdkey) if you need SLIP-0010/BIP32 HDKey implementation.
+Includes SLIP-0010 / BIP32 HDKey implementation, sponsored by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
 
 ## Usage
 
 > npm install ed25519-keygen
 
-The package exports four modules:
+The package exports five modules:
 
 - [`ed25519-keygen/ssh`](#sshseed-username) for SSH key generation
 - [`ed25519-keygen/pgp`](#pgpseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
 - [`ed25519-keygen/tor`](#torseed) for TOR onion addresses
+- [`ed25519-keygen/hdkey`](#hdkey) for [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md)/[BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki) HDKey
 - [`ed25519-keygen/utils`](#randombyteslength) for cryptographically secure random number generator (CSPRNG)
 
 Use it in the following way:
@@ -143,6 +144,56 @@ console.log(tkeys.publicKey);
 ED25519-V3:EOl78M2gARYOyp4BDltfzxSR3dA/LLTXZLb2imgOwFuYC5ISIUxsQ42ywzHaxvc03mahmaLziuyN0+f8EhM+4w==
 rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
 */
+```
+
+## hdkey
+
+SLIP-0010 hierarchical deterministic (HD) wallets for implementation. Based on audited code from [scure-bip32](https://github.com/paulmillr/scure-bip32). Check out [scure-bip39](https://github.com/paulmillr/scure-bip39) if you also need mnemonic phrases.
+
+- SLIP-0010 publicKey is 33 bytes (see [this issue](https://github.com/satoshilabs/slips/issues/1251)), if you want 32-byte publicKey, use `.publicKeyRaw` getter
+- SLIP-0010 vectors fingerprint is actually `parentFingerprint`
+- SLIP-0010 doesn't allow deriving non-hardened keys for Ed25519, however some other libraries treat non-hardened keys (`m/0/1`) as hardened (`m/0'/1'`). If you want this behaviour, there is a flag `forceHardened` in `derive` method
+
+```ts
+import { HDKey } from 'ed25519-keygen/hdkey';
+const hdkey1 = HDKey.fromMasterSeed(seed);
+
+// props
+[hdkey1.depth, hdkey1.index, hdkey1.chainCode];
+console.log(hdkey2.privateKey, hdkey2.publicKey);
+console.log(hdkey3.derive("m/0/2147483647'/1'"));
+const sig = hdkey3.sign(hash);
+hdkey3.verify(hash, sig);
+```
+
+Note: `chainCode` property is essentially a private part
+of a secret "master" key, it should be guarded from unauthorized access.
+
+The full API is:
+
+```ts
+class HDKey {
+  public static HARDENED_OFFSET: number;
+  public static fromMasterSeed(seed: Uint8Array | string): HDKey;
+
+  readonly depth: number = 0;
+  readonly index: number = 0;
+  readonly chainCode: Uint8Array | null = null;
+  readonly parentFingerprint: number = 0;
+  public readonly privateKey: Uint8Array;
+
+  get fingerprint(): number;
+  get fingerprintHex(): string;
+  get parentFingerprintHex(): string;
+  get pubKeyHash(): Uint8Array;
+  get publicKey(): Uint8Array;
+  get publicKeyRaw(): Uint8Array;
+
+  derive(path: string, forceHardened = false): HDKey;
+  deriveChild(index: number): HDKey;
+  sign(hash: Uint8Array): Uint8Array;
+  verify(hash: Uint8Array, signature: Uint8Array): boolean;
+}
 ```
 
 ### `randomBytes(length)`
