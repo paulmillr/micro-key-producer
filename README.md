@@ -6,6 +6,8 @@ Generation is deterministic and done in pure javascript, without CLI tools. Uses
 
 Includes SLIP-0010 / BIP32 HDKey implementation, sponsored by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
 
+For the apps made with the library, check out: [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7).
+
 ## Usage
 
 > npm install ed25519-keygen
