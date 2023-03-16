@@ -1,4 +1,4 @@
-import * as ed25519 from '@noble/ed25519';
+import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { concatBytes } from 'micro-packed';
 import * as P from 'micro-packed';
@@ -97,7 +97,7 @@ export async function getKeys(
 }
 
 // For SSH Agents
-export function authSign(privateKey: Uint8Array, data: AuthDataType): Promise<Uint8Array> {
+export function authSign(privateKey: Uint8Array, data: AuthDataType): Uint8Array {
   return ed25519.sign(AuthData.encode(data), privateKey);
 }
 

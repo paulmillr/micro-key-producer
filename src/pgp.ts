@@ -1,4 +1,4 @@
-import * as ed25519 from '@noble/ed25519';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { sha1 } from '@noble/hashes/sha1';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha256 } from '@noble/hashes/sha256';
@@ -44,21 +44,15 @@ const BLOCK_LEN = 16;
 const IV = new Uint8Array(BLOCK_LEN);
 async function runAesBlock(msg: Uint8Array, key: Uint8Array): Promise<Uint8Array> {
   if (key.length !== 16 && key.length !== 32) throw new Error('Invalid key length');
-  if (crypto.web) {
-    const mode = { name: `AES-CBC`, length: key.length * 8 };
-    const wKey = await crypto.web.subtle.importKey('raw', key, mode, true, ['encrypt']);
-    const cipher = await crypto.web.subtle.encrypt(
-      { name: `aes-cbc`, iv: IV, counter: IV, length: 64 },
-      wKey,
-      msg
-    );
-    return new Uint8Array(cipher).subarray(0, 16);
-  } else if (crypto.node) {
-    const mode = key.length === 32 ? 'aes-256-cbc' : 'aes-128-cbc';
-    return crypto.node.createCipheriv(mode, key, IV).update(msg).subarray(0, 16);
-  } else {
-    throw new Error("The environment doesn't have AES module");
-  }
+  if (!crypto) throw new Error('crypto.subtle must be defined');
+  const mode = { name: `AES-CBC`, length: key.length * 8 };
+  const wKey = await crypto.subtle.importKey('raw', key, mode, true, ['encrypt']);
+  const cipher = await crypto.subtle.encrypt(
+    { name: `aes-cbc`, iv: IV, counter: IV, length: 64 },
+    wKey,
+    msg
+  );
+  return new Uint8Array(cipher).subarray(0, 16);
 }
 
 async function runAesCfb(keyLen: number, data: Bytes, key: Bytes, iv: Bytes, decrypt = false) {
@@ -608,7 +602,7 @@ async function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
     created,
     algo: { TAG: 'EdDSA', data: { curve: 'ed25519', pub: edPub } },
   } as const;
-  const cvPoint = ed25519.curve25519.scalarMultBase(cvPriv);
+  const cvPoint = x25519.scalarMultBase(cvPriv);
   const cvPub = bytesToNumber(concatBytes(new Uint8Array([0x40]), cvPoint));
   const cvPubPacket = {
     created,

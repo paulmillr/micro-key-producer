@@ -1,4 +1,4 @@
-import * as ed25519 from '@noble/ed25519';
+import { ed25519 } from '@noble/curves/ed25519';
 import { sha3_256 } from '@noble/hashes/sha3';
 import { utf8, base32, base64 } from '@scure/base';
 import { concatBytes } from 'micro-packed';

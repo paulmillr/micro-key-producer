@@ -32,15 +32,15 @@
     "utils.d.ts.map"
   ],
   "dependencies": {
-    "@noble/ed25519": "~1.7.0",
-    "@noble/hashes": "~1.1.2",
+    "@noble/curves": "~0.8.3",
+    "@noble/hashes": "~1.3.0",
     "@scure/base": "~1.1.0",
-    "micro-packed": "^0.3.0"
+    "micro-packed": "^0.3.2"
   },
   "devDependencies": {
     "micro-should": "0.4.0",
-    "prettier": "2.6.2",
-    "typescript": "4.7.3"
+    "prettier": "2.8.4",
+    "typescript": "5.0.2"
   },
   "exports": {
     ".": {
@@ -71,6 +71,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "prettier --check src",
+    "format": "prettier --write 'src/**/*.{js,ts}' 'test/*.js'",
     "test": "node test/index.js"
   },
   "author": "Paul Miller (https://paulmillr.com)",
