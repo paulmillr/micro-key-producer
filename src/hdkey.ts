@@ -127,7 +127,6 @@ export class HDKey {
   }
 
   sign(message: Hex): Uint8Array {
-    message = ensureBytes(message, 32);
     return ed25519.sign(message, this.privateKey);
   }
 
