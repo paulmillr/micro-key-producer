@@ -131,7 +131,6 @@ export class HDKey {
   }
 
   verify(message: Hex, signature: Hex): boolean {
-    message = ensureBytes(message, 32);
     signature = ensureBytes(signature, 64);
     return ed25519.verify(signature, message, this.publicKeyRaw);
   }
