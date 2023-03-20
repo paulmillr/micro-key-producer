@@ -127,12 +127,10 @@ export class HDKey {
   }
 
   sign(message: Hex): Uint8Array {
-    message = ensureBytes(message, 32);
     return ed25519.sign(message, this.privateKey);
   }
 
   verify(message: Hex, signature: Hex): boolean {
-    message = ensureBytes(message, 32);
     signature = ensureBytes(signature, 64);
     return ed25519.verify(signature, message, this.publicKeyRaw);
   }
