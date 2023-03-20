@@ -32,7 +32,6 @@ should('signing', () => {
   const sigA = hdkey.sign(msgA);
   const sigB = hdkey.sign(msgB);
   const sigC = hdkey.sign(msgC);
-  console.log(sigB.length, sigC.length);
   deepStrictEqual(
     bytesToHex(sigA),
     '9280d4802b67760fb56274dcb43db877c4888e958831cb4a0d689cde7c3183b655d3a622c08ab0255a1f09c637b145776cb3327c9c2c776eb7aa464a241ce907'
