@@ -32,7 +32,7 @@
     "utils.d.ts.map"
   ],
   "dependencies": {
-    "@noble/curves": "~0.8.3",
+    "@noble/curves": "~1.0.0",
     "@noble/hashes": "~1.3.0",
     "@scure/base": "~1.1.0",
     "micro-packed": "^0.3.2"
