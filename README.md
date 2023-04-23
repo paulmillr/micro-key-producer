@@ -2,11 +2,14 @@
 
 Generate ed25519 keys for SSH, PGP (GPG), TOR and SLIP-0010 hdkey.
 
-Generation is deterministic and done in pure javascript, without CLI tools. Uses audited [@noble/ed25519](https://github.com/paulmillr/noble-ed25519) under the hood.
+Generation is deterministic and done in pure javascript, without CLI tools.
+Uses [noble-curves](https://github.com/paulmillr/noble-curves) under the hood.
+Includes SLIP-0010 / BIP32 HDKey implementation,
+sponsored by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
 
-Includes SLIP-0010 / BIP32 HDKey implementation, sponsored by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
+For the apps made with the library, check out:
 
-For the apps made with the library, check out: [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7).
+- [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7)
 
 ## Usage
 
