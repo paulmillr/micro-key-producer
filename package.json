@@ -31,6 +31,9 @@
     "utils.d.ts",
     "utils.d.ts.map"
   ],
+  "engines": {
+    "node": "16.x || >= 18.0.0"
+  },
   "dependencies": {
     "@noble/curves": "~1.0.0",
     "@noble/hashes": "~1.3.0",
