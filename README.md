@@ -1,6 +1,6 @@
 # ed25519-keygen
 
-Generate ed25519 keys for SSH, PGP (GPG), TOR and SLIP-0010 hdkey.
+Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey.
 
 Generation is deterministic and done in pure javascript, without CLI tools.
 Uses [noble-curves](https://github.com/paulmillr/noble-curves) under the hood.
@@ -15,11 +15,12 @@ For the apps made with the library, check out:
 
 > npm install ed25519-keygen
 
-The package exports five modules:
+The package exports six modules:
 
 - [`ed25519-keygen/ssh`](#sshseed-username) for SSH key generation
 - [`ed25519-keygen/pgp`](#pgpseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
 - [`ed25519-keygen/tor`](#torseed) for TOR onion addresses
+- [`ed25519-keygen/ipns`](#ipnsseed) for IPNS addresses
 - [`ed25519-keygen/hdkey`](#hdkey) for [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md)/[BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki) HDKey
 - [`ed25519-keygen/utils`](#randombyteslength) for cryptographically secure random number generator (CSPRNG)
 
@@ -148,6 +149,31 @@ console.log(tkeys.publicKey);
 /*
 ED25519-V3:EOl78M2gARYOyp4BDltfzxSR3dA/LLTXZLb2imgOwFuYC5ISIUxsQ42ywzHaxvc03mahmaLziuyN0+f8EhM+4w==
 rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
+*/
+```
+## `ipns(seed)`
+
+Generates IPNS addresses.
+
+- `seed: Uint8Array`
+- Returns `{ privateKey: string, publicKey: string, base32: string, base16: string, contenthash: string}`
+
+```js
+import ipns from 'ed25519-keygen/ipns';
+import { randomBytes } from 'ed25519-keygen/utils';
+const iseed = randomBytes(32);
+const ikeys = await ipns(iseed);
+console.log(ikeys.privateKey);
+console.log(ikeys.publicKey);
+console.log(ikeys.base16);
+console.log(ikeys.base32);
+console.log(ikeys.contenthash);
+/*
+0x080112400681d6420abb1ba47acd5c03c8e5ee84185a2673576b262e234e50c46d86f59712c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
+0x017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
+f017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
+bafzaajaiaejcaewifgpmfri57654wt47zsw45ykcjszdp2ntbu6nolkhygaqg2e5
+0xe501017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
 */
 ```
 
