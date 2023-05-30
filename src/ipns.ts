@@ -57,7 +57,7 @@ export async function getKeys(seed: Uint8Array) {
     privateKey: `0x${hex.encode(
       concatBytes(new Uint8Array([0x08, 0x01, 0x12, 0x40]), seed, pubKey)
     )}`,
-    base36: `ipns://k${BigInt(`0x${hexKey}`).toString(36)}`,
+    base36: `ipns://k${base36.encode(pubKey)}`,
     base32: `ipns://b${base32.encode(pubKeyBytes).toLowerCase()}`,
     base16: `ipns://f${hexKey}`,
     contenthash: `0xe501${hexKey}`,
