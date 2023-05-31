@@ -156,7 +156,7 @@ rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
 Generates IPNS addresses.
 
 - `seed: Uint8Array`
-- Returns `{ privateKey: string, publicKey: string, base32: string, base16: string, contenthash: string}`
+- Returns `{ privateKey: string, publicKey: string, base36: string, base32: string, base16: string, contenthash: string}`
 
 ```js
 import ipns from 'ed25519-keygen/ipns';
@@ -167,12 +167,14 @@ console.log(ikeys.privateKey);
 console.log(ikeys.publicKey);
 console.log(ikeys.base16);
 console.log(ikeys.base32);
+console.log(ikeys.base36);
 console.log(ikeys.contenthash);
 /*
 0x080112400681d6420abb1ba47acd5c03c8e5ee84185a2673576b262e234e50c46d86f59712c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
 0x017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
-f017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
-bafzaajaiaejcaewifgpmfri57654wt47zsw45ykcjszdp2ntbu6nolkhygaqg2e5
+ipns://f017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
+ipns://bafzaajaiaejcaewifgpmfri57654wt47zsw45ykcjszdp2ntbu6nolkhygaqg2e5
+ipns://k51qzi5uqu5dgnfwbc46une4upw1vc9hxznymyeykmg6rev1513yrnbyrwmmql
 0xe501017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
 */
 ```
