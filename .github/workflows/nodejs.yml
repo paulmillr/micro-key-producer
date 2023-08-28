@@ -19,6 +19,6 @@ jobs:
         version: 8
         run_install: |
           - args: [--frozen-lockfile, --strict-peer-dependencies]
-    - run: pnpm run build --if-present
-    - run: pnpm run lint --if-present
+    - run: pnpm run --if-present build
+    - run: pnpm run --if-present lint
     - run: pnpm test
