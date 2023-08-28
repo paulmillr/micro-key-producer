@@ -6,30 +6,34 @@
   "main": "index.js",
   "module": "index.js",
   "files": [
-    "src/index.ts",
     "index.js",
     "index.d.ts",
     "index.d.ts.map",
-    "src/hdkey.ts",
+    "ipns.js",
+    "ipns.d.ts",
+    "ipns.d.ts.map",
     "hdkey.js",
     "hdkey.d.ts",
     "hdkey.d.ts.map",
-    "src/pgp.ts",
     "pgp.js",
     "pgp.d.ts",
     "pgp.d.ts.map",
-    "src/ssh.ts",
     "ssh.js",
     "ssh.d.ts",
     "ssh.d.ts.map",
-    "src/tor.ts",
     "tor.js",
     "tor.d.ts",
     "tor.d.ts.map",
-    "src/utils.ts",
     "utils.js",
     "utils.d.ts",
-    "utils.d.ts.map"
+    "utils.d.ts.map",
+    "src/index.ts",
+    "src/ipns.ts",
+    "src/hdkey.ts",
+    "src/pgp.ts",
+    "src/ssh.ts",
+    "src/tor.ts",
+    "src/utils.ts"
   ],
   "dependencies": {
     "@noble/curves": "~1.2.0",
@@ -46,6 +50,10 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.js"
+    },
+    "./ipns": {
+      "types": "./ipns.d.ts",
+      "default": "./ipns.js"
     },
     "./hdkey": {
       "types": "./hdkey.d.ts",

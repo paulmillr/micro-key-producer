@@ -15,9 +15,11 @@ jobs:
          node-version: 20
          registry-url: 'https://registry.npmjs.org'
          cache: npm
-     - run: npm install -g npm
-     - run: npm ci
-     - run: npm run build
-     - run: npm publish --provenance --access public
+     - uses: pnpm/action-setup@v2
+       with:
+         version: 7
+         run_install: false
+     - run: pnpm run build
+     - run: pnpm publish --provenance --access public
        env:
          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
