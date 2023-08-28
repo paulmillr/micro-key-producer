@@ -18,8 +18,8 @@ jobs:
       with:
         version: 8
         run_install: |
-        - recursive: true
-          args: [--frozen-lockfile, --strict-peer-dependencies]
+          - recursive: true
+            args: [--frozen-lockfile, --strict-peer-dependencies]
     - run: pnpm run build --if-present
     - run: pnpm run lint --if-present
     - run: pnpm test
