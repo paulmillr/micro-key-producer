@@ -17,11 +17,7 @@ jobs:
         uses: actions/setup-node@64ed1c7eab4cce3362f8c340dee64e5eaeef8f7c # v3
         with:
           node-version: ${{ matrix.node }}
-      - uses: pnpm/action-setup@d882d12c64e032187b2edb46d3a0d003b7a43598 # v2.4
-        with:
-          version: 8
-          run_install: |
-            - args: [--frozen-lockfile, --strict-peer-dependencies]
-      - run: pnpm run --if-present build
-      - run: pnpm run --if-present lint
-      - run: pnpm test
+      - run: npm install
+      - run: npm run build --if-present
+      - run: npm test
+      - run: npm run lint --if-present
