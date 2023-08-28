@@ -1,24 +1,27 @@
 name: Node CI
-
-on: [push, pull_request]
+on:
+  - push
+  - pull_request
 jobs:
   test:
     name: v${{ matrix.node }} @ ubuntu-latest
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 20]
+        node:
+          - 18
+          - 20
     steps:
-    - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3
-    - name: Use Node.js ${{ matrix.node }}
-      uses: actions/setup-node@64ed1c7eab4cce3362f8c340dee64e5eaeef8f7c # v3
-      with:
-        node-version: ${{ matrix.node }}
-    - uses: pnpm/action-setup@d882d12c64e032187b2edb46d3a0d003b7a43598 # v2.4
-      with:
-        version: 8
-        run_install: |
-          - args: [--frozen-lockfile, --strict-peer-dependencies]
-    - run: pnpm run --if-present build
-    - run: pnpm run --if-present lint
-    - run: pnpm test
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@64ed1c7eab4cce3362f8c340dee64e5eaeef8f7c
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: pnpm/action-setup@d882d12c64e032187b2edb46d3a0d003b7a43598
+        with:
+          version: 8
+          run_install: |
+            - args: [--frozen-lockfile, --strict-peer-dependencies]
+      - run: pnpm run --if-present build
+      - run: pnpm run --if-present lint
+      - run: pnpm test
