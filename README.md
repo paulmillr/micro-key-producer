@@ -2,10 +2,12 @@
 
 Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey.
 
-Generation is deterministic and done in pure javascript, without CLI tools.
-Uses [noble-curves](https://github.com/paulmillr/noble-curves) under the hood.
-Includes SLIP-0010 / BIP32 HDKey implementation,
-sponsored by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
+- Pure JS, no CLI tools are involved
+- Can generate both deterministic and random keys
+- Uses [noble-curves](https://github.com/paulmillr/noble-curves) under the hood
+
+Includes SLIP-0010 (ed BIP32) HDKey implementation,
+funded by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
 
 For the apps made with the library, check out:
 
