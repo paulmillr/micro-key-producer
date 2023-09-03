@@ -6,12 +6,9 @@ Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey.
 - Can generate both deterministic and random keys
 - Uses [noble-curves](https://github.com/paulmillr/noble-curves) under the hood
 
-Includes SLIP-0010 (ed BIP32) HDKey implementation,
-funded by the Kin Foundation for [Kinetic](https://github.com/kin-labs/kinetic).
-
-For the apps made with the library, check out:
-
-- [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7)
+Includes SLIP-0010 (ed BIP32) HDKey implementation, funded by the Kin Foundation for
+[Kinetic](https://github.com/kin-labs/kinetic). For the apps made with the library, check out:
+[terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7)
 
 ## Usage
 
@@ -20,11 +17,16 @@ For the apps made with the library, check out:
 The package exports six modules:
 
 - [`ed25519-keygen/ssh`](#sshseed-username) for SSH key generation
-- [`ed25519-keygen/pgp`](#pgpseed-user-password) for [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) + [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
+- [`ed25519-keygen/pgp`](#pgpseed-user-password) for
+  [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) +
+  [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
 - [`ed25519-keygen/tor`](#torseed) for TOR onion addresses
 - [`ed25519-keygen/ipns`](#ipnsseed) for IPNS addresses
-- [`ed25519-keygen/hdkey`](#hdkey) for [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md)/[BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki) HDKey
-- [`ed25519-keygen/utils`](#randombyteslength) for cryptographically secure random number generator (CSPRNG)
+- [`ed25519-keygen/hdkey`](#hdkey) for
+  [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md)/[BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki)
+  HDKey
+- [`ed25519-keygen/utils`](#randombyteslength) for cryptographically secure random number generator
+  (CSPRNG)
 
 Use it in the following way:
 
@@ -39,7 +41,8 @@ import { randomBytes } from 'ed25519-keygen/utils';
 
 - `seed: Uint8Array`
 - `username: string`
-- Returns `{ fingerprint: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
+- Returns
+  `{ fingerprint: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
 
 ```js
 import ssh from 'ed25519-keygen/ssh';
@@ -72,14 +75,16 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHsjMxxbMNsYAIkU+a3yENkZ50fpbXDRIa5jVS36giXF
 - `createdAt: number` - (default: 0) timestamp corresponding to key creation time
 - Returns `{ keyId: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
 
-Creates keys compatible with GPG. GPG is a commonly known utility that supports PGP protocol. Quirks:
+Creates keys compatible with GPG. GPG is a commonly known utility that supports PGP protocol.
+Quirks:
 
-1. Generated private and public keys would have different representation,
-   however, **their fingerprints would be the same**. This is because AES encryption is used to
-   hide the keys, and AES requires different IV / salt.
+1. Generated private and public keys would have different representation, however, **their
+   fingerprints would be the same**. This is because AES encryption is used to hide the keys, and
+   AES requires different IV / salt.
 2. The function is slow (~725ms on Apple M1), because it uses S2K to derive keys.
-3. "warning: lower 3 bits of the secret key are not cleared"
-   happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI: see [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
+3. "warning: lower 3 bits of the secret key are not cleared" happens even for keys generated with
+   GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI: see
+   [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
 
 ```js
 import * as pgp from 'ed25519-keygen/pgp';
@@ -153,12 +158,14 @@ ED25519-V3:EOl78M2gARYOyp4BDltfzxSR3dA/LLTXZLb2imgOwFuYC5ISIUxsQ42ywzHaxvc03mahm
 rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
 */
 ```
+
 ## `ipns(seed)`
 
 Generates IPNS addresses.
 
 - `seed: Uint8Array`
-- Returns `{ privateKey: string, publicKey: string, base36: string, base32: string, base16: string, contenthash: string}`
+- Returns
+  `{ privateKey: string, publicKey: string, base36: string, base32: string, base16: string, contenthash: string}`
 
 ```js
 import ipns from 'ed25519-keygen/ipns';
@@ -183,11 +190,17 @@ ipns://k51qzi5uqu5dgnfwbc46une4upw1vc9hxznymyeykmg6rev1513yrnbyrwmmql
 
 ## hdkey
 
-SLIP-0010 hierarchical deterministic (HD) wallets for implementation. Based on audited code from [scure-bip32](https://github.com/paulmillr/scure-bip32). Check out [scure-bip39](https://github.com/paulmillr/scure-bip39) if you also need mnemonic phrases.
+SLIP-0010 hierarchical deterministic (HD) wallets for implementation. Based on code from
+[scure-bip32](https://github.com/paulmillr/scure-bip32). Check out
+[scure-bip39](https://github.com/paulmillr/scure-bip39) if you also need mnemonic phrases.
 
-- SLIP-0010 publicKey is 33 bytes (see [this issue](https://github.com/satoshilabs/slips/issues/1251)), if you want 32-byte publicKey, use `.publicKeyRaw` getter
+- SLIP-0010 publicKey is 33 bytes (see
+  [this issue](https://github.com/satoshilabs/slips/issues/1251)), if you want 32-byte publicKey,
+  use `.publicKeyRaw` getter
 - SLIP-0010 vectors fingerprint is actually `parentFingerprint`
-- SLIP-0010 doesn't allow deriving non-hardened keys for Ed25519, however some other libraries treat non-hardened keys (`m/0/1`) as hardened (`m/0'/1'`). If you want this behaviour, there is a flag `forceHardened` in `derive` method
+- SLIP-0010 doesn't allow deriving non-hardened keys for Ed25519, however some other libraries treat
+  non-hardened keys (`m/0/1`) as hardened (`m/0'/1'`). If you want this behaviour, there is a flag
+  `forceHardened` in `derive` method
 
 ```ts
 import { HDKey } from 'ed25519-keygen/hdkey';
@@ -201,8 +214,8 @@ const sig = hdkey3.sign(hash);
 hdkey3.verify(hash, sig);
 ```
 
-Note: `chainCode` property is essentially a private part
-of a secret "master" key, it should be guarded from unauthorized access.
+Note: `chainCode` property is essentially a private part of a secret "master" key, it should be
+guarded from unauthorized access.
 
 The full API is:
 
@@ -231,10 +244,14 @@ class HDKey {
 }
 ```
 
-### `randomBytes(length)`
+## utils
 
-- `byteLength: number` default is `32`
-- Returns `Uint8Array` filled with cryptographically secure random bytes
+```
+import { randomBytes } from 'ed25519-keygen/utils';
+const key = randomBytes(32);
+```
+
+CSPRNG for secure generation of random Uint8Array. Utilizes webcrypto under the hood.
 
 ## License
 
