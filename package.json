@@ -1,7 +1,7 @@
 {
   "name": "ed25519-keygen",
   "version": "0.4.9",
-  "description": "Generate ed25519 keys for SSH, PGP (GPG), TOR and SLIP-0010 hdkey",
+  "description": "Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey",
   "type": "module",
   "main": "index.js",
   "module": "index.js",
@@ -102,10 +102,5 @@
     "ec",
     "elliptic"
   ],
-  "funding": [
-    {
-      "type": "individual",
-      "url": "https://paulmillr.com/funding/"
-    }
-  ]
+  "funding": "https://paulmillr.com/funding/"
 }

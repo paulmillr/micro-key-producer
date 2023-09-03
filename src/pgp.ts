@@ -1,36 +1,16 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { sha1 } from '@noble/hashes/sha1';
+import { bytesToNumberBE, equalBytes, numberToHexUnpadded } from '@noble/curves/abstract/utils';
+import { crypto } from '@noble/hashes/crypto';
 import { ripemd160 } from '@noble/hashes/ripemd160';
+import { sha1 } from '@noble/hashes/sha1';
 import { sha256 } from '@noble/hashes/sha256';
 import { sha512 } from '@noble/hashes/sha512';
 import { sha3_256 } from '@noble/hashes/sha3';
-import { CHash } from '@noble/hashes/utils';
-import { randomBytes } from '@noble/hashes/utils';
-import { crypto } from '@noble/hashes/crypto';
-import * as P from 'micro-packed';
-import { concatBytes } from 'micro-packed';
+import { CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
 import { utf8, hex } from '@scure/base';
+import * as P from 'micro-packed';
 
 export type Bytes = Uint8Array;
-
-function numberToHexUnpadded(num: number | bigint): string {
-  let hex = num.toString(16);
-  hex = hex.length & 1 ? `0${hex}` : hex;
-  return hex;
-}
-
-function bytesToNumber(bytes: Uint8Array): bigint {
-  return BigInt('0x' + hex.encode(bytes));
-}
-
-// todo: const-time?
-function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
 
 // RFCS:
 // - main: https://datatracker.ietf.org/doc/html/rfc4880
@@ -90,7 +70,7 @@ export const mpi = P.wrap({
     w.bytes(hex.decode(numberToHexUnpadded(value)));
   },
   decodeStream: (r: P.Reader): bigint =>
-    bytesToNumber(r.bytes((P.U16BE.decodeStream(r) + 7) >>> 3)),
+    bytesToNumberBE(r.bytes((P.U16BE.decodeStream(r) + 7) >>> 3)),
 });
 
 // GnuGP violates spec by using non-zero stripped MPI's for secret keys (opaque MPI/SOS).
@@ -595,7 +575,7 @@ export const pubArmor = P.base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24)
 export const privArmor = P.base64armor('PGP PRIVATE KEY BLOCK', 64, Stream, crc24);
 
 async function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
-  const edPub = bytesToNumber(
+  const edPub = bytesToNumberBE(
     concatBytes(new Uint8Array([0x40]), await ed25519.getPublicKey(edPriv))
   );
   const edPubPacket = {
@@ -603,7 +583,7 @@ async function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
     algo: { TAG: 'EdDSA', data: { curve: 'ed25519', pub: edPub } },
   } as const;
   const cvPoint = x25519.scalarMultBase(cvPriv);
-  const cvPub = bytesToNumber(concatBytes(new Uint8Array([0x40]), cvPoint));
+  const cvPub = bytesToNumberBE(concatBytes(new Uint8Array([0x40]), cvPoint));
   const cvPubPacket = {
     created,
     algo: {

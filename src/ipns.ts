@@ -1,6 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519';
+import { concatBytes } from '@noble/hashes/utils';
 import { hex, base32, utils } from '@scure/base';
-import { concatBytes } from 'micro-packed';
 
 const base36 = utils.chain(
   utils.radix(36),
