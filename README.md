@@ -246,7 +246,7 @@ class HDKey {
 
 ## utils
 
-```
+```ts
 import { randomBytes } from 'ed25519-keygen/utils';
 const key = randomBytes(32);
 ```
