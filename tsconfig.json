@@ -1,27 +1,25 @@
 {
   "compilerOptions": {
-    "strict": true,
-    "declaration": true,
-    "declarationMap": true,
     "target": "es2020",
-    "lib": [
-      "es2020",
-      "dom"
-    ],
-    "module": "node16",
-    "moduleResolution": "node16",
-    "outDir": ".",
-    "noImplicitAny": true,
-    "removeComments": true,
-    "preserveConstEnums": true,
-    "resolveJsonModule": true,
+    "lib": ["es2020"],
+    "strict": true,
+    "sourceMap": false,
+    "allowSyntheticDefaultImports": false,
+    "allowUnreachableCode": false,
+    "esModuleInterop": false,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "baseUrl": ".",
+
+    "module": "es2020",
+    "outDir": ".",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "declarationMap": true
   },
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "node_modules",
-    "lib"
-  ]
+  "include": ["src"],
+  "exclude": ["node_modules", "lib"]
 }
