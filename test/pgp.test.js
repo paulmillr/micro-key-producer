@@ -1,5 +1,5 @@
 import { deepStrictEqual } from 'node:assert';
-import { should } from 'micro-should';
+import { describe, should } from 'micro-should';
 import * as pgp from '../lib/esm/pgp.js';
 import { hex } from '@scure/base';
 
@@ -43,58 +43,63 @@ const USER = 'John Doe <example@example.com>';
 const PWD = '123456789';
 const CREATED = 1637429480;
 
-should('OID', () => {
-  deepStrictEqual(hex.encode(pgp.oid.encode('1.2.840.10045.3.1.7')), '2a8648ce3d030107');
-  deepStrictEqual(pgp.oid.decode(pgp.oid.encode('1.2.840.10045.3.1.7')), '1.2.840.10045.3.1.7');
-});
-should('PacketLen', () => {
-  deepStrictEqual(pgp.PacketLen.encode(100), new Uint8Array([0x64]));
-  deepStrictEqual(pgp.PacketLen.encode(1723), new Uint8Array([0xc5, 0xfb]));
-  deepStrictEqual(pgp.PacketLen.encode(100000), new Uint8Array([0xff, 0x00, 0x01, 0x86, 0xa0]));
+describe('pgp', () => {
+  should('OID', () => {
+    deepStrictEqual(hex.encode(pgp.oid.encode('1.2.840.10045.3.1.7')), '2a8648ce3d030107');
+    deepStrictEqual(pgp.oid.decode(pgp.oid.encode('1.2.840.10045.3.1.7')), '1.2.840.10045.3.1.7');
+  });
+  should('PacketLen', () => {
+    deepStrictEqual(pgp.PacketLen.encode(100), new Uint8Array([0x64]));
+    deepStrictEqual(pgp.PacketLen.encode(1723), new Uint8Array([0xc5, 0xfb]));
+    deepStrictEqual(pgp.PacketLen.encode(100000), new Uint8Array([0xff, 0x00, 0x01, 0x86, 0xa0]));
 
-  deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0x64])), 100);
-  deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xc5, 0xfb])), 1723);
-  deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xff, 0x00, 0x01, 0x86, 0xa0])), 100000);
-});
-should('PGP', async () => {
-  const edPriv = hex.decode('6c18b9d6dc5d18a933c704c56ed8165a0651b27856ce3345f52f2921666dcef1');
-  const cvPriv = hex.decode('58cf48afad21cbf3e2d904387df28a1385c8a1b790f28e04ca7eb721fd6c0d6b');
-  const edSalt = hex.decode('31b33a4b50c662f4');
-  const edIV = hex.decode('821984c2c70cd60f0fbf650b6e666ead');
-  const cvSalt = hex.decode('050c1f3e46bfcc8d');
-  const cvIV = hex.decode('ab54be47dc65e8ac478aa2d1ec7b0c7c');
-  const pubKey = await pgp.formatPublic(edPriv, cvPriv, USER, CREATED);
-  const privKey = await pgp.formatPrivate(
-    edPriv,
-    cvPriv,
-    USER,
-    PWD,
-    CREATED,
-    edSalt,
-    edIV,
-    cvSalt,
-    cvIV
-  );
-  deepStrictEqual(pgp.pubArmor.decode(pubKey), pgp.pubArmor.decode(PUB), 'publicKey (stream)');
-  deepStrictEqual(pubKey, PUB, 'publicKey (armor)');
-  deepStrictEqual(pgp.privArmor.decode(privKey), pgp.privArmor.decode(PRIV), 'privateKey (stream)');
-  deepStrictEqual(privKey, PRIV, 'privateKey (armor)');
-  deepStrictEqual(
-    await pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[0].data),
-    48893474592257195969419733099033914136114698516948265455201948185088704237297n
-  );
-  deepStrictEqual(
-    await pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[3].data),
-    48421196023274373923070909897586368745762760188967824324892067105939602853720n
-  );
-});
-const NAME_EMAIL = 'a <a>';
-should('PGP Keys', async () => {
-  const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
-  const { publicKey: pub } = await pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
-  deepStrictEqual(
-    pub,
-    `-----BEGIN PGP PUBLIC KEY BLOCK-----
+    deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0x64])), 100);
+    deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xc5, 0xfb])), 1723);
+    deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xff, 0x00, 0x01, 0x86, 0xa0])), 100000);
+  });
+  should('PGP', async () => {
+    const edPriv = hex.decode('6c18b9d6dc5d18a933c704c56ed8165a0651b27856ce3345f52f2921666dcef1');
+    const cvPriv = hex.decode('58cf48afad21cbf3e2d904387df28a1385c8a1b790f28e04ca7eb721fd6c0d6b');
+    const edSalt = hex.decode('31b33a4b50c662f4');
+    const edIV = hex.decode('821984c2c70cd60f0fbf650b6e666ead');
+    const cvSalt = hex.decode('050c1f3e46bfcc8d');
+    const cvIV = hex.decode('ab54be47dc65e8ac478aa2d1ec7b0c7c');
+    const pubKey = await pgp.formatPublic(edPriv, cvPriv, USER, CREATED);
+    const privKey = await pgp.formatPrivate(
+      edPriv,
+      cvPriv,
+      USER,
+      PWD,
+      CREATED,
+      edSalt,
+      edIV,
+      cvSalt,
+      cvIV
+    );
+    deepStrictEqual(pgp.pubArmor.decode(pubKey), pgp.pubArmor.decode(PUB), 'publicKey (stream)');
+    deepStrictEqual(pubKey, PUB, 'publicKey (armor)');
+    deepStrictEqual(
+      pgp.privArmor.decode(privKey),
+      pgp.privArmor.decode(PRIV),
+      'privateKey (stream)'
+    );
+    deepStrictEqual(privKey, PRIV, 'privateKey (armor)');
+    deepStrictEqual(
+      await pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[0].data),
+      48893474592257195969419733099033914136114698516948265455201948185088704237297n
+    );
+    deepStrictEqual(
+      await pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[3].data),
+      48421196023274373923070909897586368745762760188967824324892067105939602853720n
+    );
+  });
+  const NAME_EMAIL = 'a <a>';
+  should('PGP Keys', async () => {
+    const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
+    const { publicKey: pub } = await pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
+    deepStrictEqual(
+      pub,
+      `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mDMEAAAAABYJKwYBBAHaRw8BAQdA2QIU3+eeQjGWpvS2/6iR3CbKu6iq+JbnM4HL
 kyRFkfm0BWEgPGE+iJQEExYKADwWIQQzKMoIOBaUYqaTmfoamwl0PC4LXgUCAAAA
@@ -108,12 +113,12 @@ fTxMaZcG
 =6pnW
 -----END PGP PUBLIC KEY BLOCK-----
 `
-  );
-  const { publicKey: pub2 } = await pgp.getKeys(seed, NAME_EMAIL, PWD, 123);
-  deepStrictEqual(pub2 !== pub, true);
-  deepStrictEqual(
-    pub2,
-    `-----BEGIN PGP PUBLIC KEY BLOCK-----
+    );
+    const { publicKey: pub2 } = await pgp.getKeys(seed, NAME_EMAIL, PWD, 123);
+    deepStrictEqual(pub2 !== pub, true);
+    deepStrictEqual(
+      pub2,
+      `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
 mDMEAAAAexYJKwYBBAHaRw8BAQdA2QIU3+eeQjGWpvS2/6iR3CbKu6iq+JbnM4HL
 kyRFkfm0BWEgPGE+iJQEExYKADwWIQRnAFrpj5zsKWjJUsGjAb/LbAwBBwUCAAAA
@@ -127,6 +132,7 @@ jPfr1XwC
 =HQ9C
 -----END PGP PUBLIC KEY BLOCK-----
 `
-  );
-  // Cannot verify priv here since it has dynamic IV and stuff
+    );
+    // Cannot verify priv here since it has dynamic IV and stuff
+  });
 });

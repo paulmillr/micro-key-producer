@@ -1,5 +1,5 @@
 import { deepStrictEqual } from 'node:assert';
-import { should } from 'micro-should';
+import { describe, should } from 'micro-should';
 import * as ssh from '../lib/esm/ssh.js';
 import { hex } from '@scure/base';
 
@@ -28,12 +28,14 @@ fRXMpxDFtyqW+wBm0ijiAAAAB3VzZXJAcGMBAgMEBQY=
 -----END OPENSSH PRIVATE KEY-----
 `,
 };
-should('ssh: pack & unpack ssh privkeys should be the same', () => {
-  deepStrictEqual(realKey, ssh.PrivateExport.encode(ssh.PrivateExport.decode(realKey)));
-});
-should('ssh: return correct key from seed', async () => {
-  const priv = hex.decode('71e722b077c007d4ae263287878a0bff1816c99f93cf8dcddd995bccefd1d7a3');
-  const comment = 'user@pc';
-  const checkBytes = hex.decode('c346f14a');
-  deepStrictEqual(await ssh.getKeys(priv, comment, checkBytes), EXPECTED);
+describe('ssh', () => {
+  should('pack & unpack ssh privkeys should be the same', () => {
+    deepStrictEqual(realKey, ssh.PrivateExport.encode(ssh.PrivateExport.decode(realKey)));
+  });
+  should('return correct key from seed', async () => {
+    const priv = hex.decode('71e722b077c007d4ae263287878a0bff1816c99f93cf8dcddd995bccefd1d7a3');
+    const comment = 'user@pc';
+    const checkBytes = hex.decode('c346f14a');
+    deepStrictEqual(await ssh.getKeys(priv, comment, checkBytes), EXPECTED);
+  });
 });
