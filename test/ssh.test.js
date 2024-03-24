@@ -1,6 +1,6 @@
-import { deepStrictEqual } from 'assert';
+import { deepStrictEqual } from 'node:assert';
 import { should } from 'micro-should';
-import * as ssh from '../ssh.js';
+import * as ssh from '../lib/esm/ssh.js';
 import { hex } from '@scure/base';
 
 // Real key from the internet

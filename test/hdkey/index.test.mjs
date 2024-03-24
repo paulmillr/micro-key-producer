@@ -1,5 +1,5 @@
-import { HDKey } from '../../hdkey.js';
-import { deepStrictEqual, throws } from 'assert';
+import { deepStrictEqual, throws } from 'node:assert';
+import { HDKey } from '../../lib/esm/hdkey.js';
 import { should } from 'micro-should';
 import { bytesToHex } from '@noble/hashes/utils';
 import { fixtures } from './slip-0010.fixture.mjs';

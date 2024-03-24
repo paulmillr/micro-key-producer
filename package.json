@@ -6,78 +6,60 @@
   "main": "index.js",
   "module": "index.js",
   "files": [
-    "index.js",
-    "index.d.ts",
-    "index.d.ts.map",
-    "ipns.js",
-    "ipns.d.ts",
-    "ipns.d.ts.map",
-    "hdkey.js",
-    "hdkey.d.ts",
-    "hdkey.d.ts.map",
-    "pgp.js",
-    "pgp.d.ts",
-    "pgp.d.ts.map",
-    "ssh.js",
-    "ssh.d.ts",
-    "ssh.d.ts.map",
-    "tor.js",
-    "tor.d.ts",
-    "tor.d.ts.map",
-    "utils.js",
-    "utils.d.ts",
-    "utils.d.ts.map",
-    "src/index.ts",
-    "src/ipns.ts",
-    "src/hdkey.ts",
-    "src/pgp.ts",
-    "src/ssh.ts",
-    "src/tor.ts",
-    "src/utils.ts"
+    "lib",
+    "src"
   ],
   "dependencies": {
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
-    "@scure/base": "~1.1.5",
+    "@scure/base": "~1.1.6",
     "micro-packed": "~0.5.3"
   },
   "devDependencies": {
+    "@paulmillr/jsbt": "0.1.0",
     "micro-should": "0.4.0",
     "prettier": "3.1.1",
     "typescript": "5.3.2"
   },
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
+      "types": "./lib/index.d.ts",
+      "import": "./lib/esm/index.js",
+      "default": "./lib/index.js"
     },
     "./ipns": {
-      "types": "./ipns.d.ts",
-      "default": "./ipns.js"
+      "types": "./lib/ipns.d.ts",
+      "import": "./lib/esm/ipns.js",
+      "default": "./lib/ipns.js"
     },
     "./hdkey": {
       "types": "./hdkey.d.ts",
+      "import": "./lib/esm/hdkey.js",
       "default": "./hdkey.js"
     },
     "./ssh": {
       "types": "./ssh.d.ts",
+      "import": "./lib/esm/ssh.js",
       "default": "./ssh.js"
     },
     "./pgp": {
       "types": "./pgp.d.ts",
+      "import": "./lib/esm/pgp.js",
       "default": "./pgp.js"
     },
     "./tor": {
       "types": "./tor.d.ts",
+      "import": "./lib/esm/tor.js",
       "default": "./tor.js"
     },
     "./utils": {
       "types": "./utils.d.ts",
+      "import": "./lib/esm/utils.js",
       "default": "./utils.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.esm.json",
     "lint": "prettier --check src",
     "format": "prettier --write 'src/**/*.{js,ts}' 'test/*.js'",
     "test": "node test/index.js"

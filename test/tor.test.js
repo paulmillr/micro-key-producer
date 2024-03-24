@@ -1,6 +1,6 @@
-import { deepStrictEqual } from 'assert';
+import { deepStrictEqual } from 'node:assert';
 import { should } from 'micro-should';
-import * as tor from '../tor.js';
+import * as tor from '../lib/esm/tor.js';
 import { hex } from '@scure/base';
 
 should('tor: basic', async () => {
