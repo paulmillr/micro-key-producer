@@ -1,10 +1,9 @@
 {
   "name": "ed25519-keygen",
-  "version": "0.4.11",
+  "version": "0.5.0-pre",
   "description": "Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey",
-  "type": "module",
-  "main": "index.js",
-  "module": "index.js",
+  "main": "./lib/index.js",
+  "module": "./lib/esm/index.js",
   "files": [
     "lib",
     "src"

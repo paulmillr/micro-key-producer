@@ -34,6 +34,8 @@ Use it in the following way:
 import ssh from 'ed25519-keygen/ssh';
 import pgp from 'ed25519-keygen/pgp';
 import tor from 'ed25519-keygen/tor';
+import ipns from 'ed25519-keygen/ipns';
+import { HDKey } from 'ed25519-keygen/hdkey';
 import { randomBytes } from 'ed25519-keygen/utils';
 ```
 
