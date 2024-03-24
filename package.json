@@ -32,29 +32,29 @@
       "default": "./lib/ipns.js"
     },
     "./hdkey": {
-      "types": "./hdkey.d.ts",
+      "types": "./lib/hdkey.d.ts",
       "import": "./lib/esm/hdkey.js",
-      "default": "./hdkey.js"
+      "default": "./lib/hdkey.js"
     },
     "./ssh": {
-      "types": "./ssh.d.ts",
+      "types": "./lib/ssh.d.ts",
       "import": "./lib/esm/ssh.js",
-      "default": "./ssh.js"
+      "default": "./lib/ssh.js"
     },
     "./pgp": {
-      "types": "./pgp.d.ts",
+      "types": "./lib/pgp.d.ts",
       "import": "./lib/esm/pgp.js",
-      "default": "./pgp.js"
+      "default": "./lib/pgp.js"
     },
     "./tor": {
-      "types": "./tor.d.ts",
+      "types": "./lib/tor.d.ts",
       "import": "./lib/esm/tor.js",
-      "default": "./tor.js"
+      "default": "./lib/tor.js"
     },
     "./utils": {
-      "types": "./utils.d.ts",
+      "types": "./lib/utils.d.ts",
       "import": "./lib/esm/utils.js",
-      "default": "./utils.js"
+      "default": "./lib/utils.js"
     }
   },
   "scripts": {
