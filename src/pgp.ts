@@ -1,6 +1,6 @@
+import { cfb } from '@noble/ciphers/aes';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { bytesToNumberBE, equalBytes, numberToHexUnpadded } from '@noble/curves/abstract/utils';
-import { crypto } from '@noble/hashes/crypto';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha1 } from '@noble/hashes/sha1';
 import { sha256 } from '@noble/hashes/sha256';
@@ -20,36 +20,22 @@ export type Bytes = Uint8Array;
 
 // Safari supports AES_CFB via webCrypto, but chromium/firefox do not.
 // Test page: https://diafygi.github.io/webcrypto-examples/
-const BLOCK_LEN = 16;
-const IV = new Uint8Array(BLOCK_LEN);
-async function runAesBlock(msg: Uint8Array, key: Uint8Array): Promise<Uint8Array> {
-  if (key.length !== 16 && key.length !== 32) throw new Error('Invalid key length');
-  if (!crypto) throw new Error('crypto.subtle must be defined');
-  const mode = { name: `AES-CBC`, length: key.length * 8 };
-  const wKey = await crypto.subtle.importKey('raw', key, mode, true, ['encrypt']);
-  const cipher = await crypto.subtle.encrypt(
-    { name: `aes-cbc`, iv: IV, counter: IV, length: 64 },
-    wKey,
-    msg
-  );
-  return new Uint8Array(cipher).subarray(0, 16);
-}
 
-async function runAesCfb(keyLen: number, data: Bytes, key: Bytes, iv: Bytes, decrypt = false) {
+function runAesCfb(keyLen: number, data: Bytes, key: Bytes, iv: Bytes, decrypt = false) {
+  // NOTE: we need to validate key length here since file can be malformed
   if (keyLen !== key.length * 8) throw new Error('AesCfbProcess: wrong key length');
   if (iv.length !== 16) throw new Error('AesCfbProcess: wrong IV');
-  const blocks: Bytes[] = [];
-  let prevBlock = iv;
-
-  for (let i = 0; i < data.length; i += 16) {
-    const curBlock = data.subarray(i, i + 16);
-    const enc = await runAesBlock(prevBlock, key);
-    const outBlock = curBlock.slice();
-    for (let j = 0; j < outBlock.length; j++) outBlock[j] ^= enc[j];
-    blocks.push(outBlock);
-    prevBlock = decrypt ? curBlock : outBlock;
-  }
-  return concatBytes(...blocks);
+  // Packed does subarray and read is unaligned here
+  // TODO: support unaligned reads in all AES?
+  const keyCopy = key.slice();
+  const ivCopy = iv.slice();
+  const dataCopy = data.slice();
+  const cipher = cfb(keyCopy, ivCopy);
+  const res = decrypt ? cipher.decrypt(dataCopy) : cipher.encrypt(dataCopy);
+  keyCopy.fill(0);
+  ivCopy.fill(0);
+  dataCopy.fill(0);
+  return res;
 }
 
 function createAesCfb(len: number) {
@@ -503,15 +489,15 @@ export const Stream = P.array(null, Packet);
 
 // Key generation
 const EDSIGN = P.array(null, P.U256BE);
-async function signData(
+function signData(
   head: SignatureHeadType,
   unhashed: any,
   data: any,
   privateKey: Bytes
-): Promise<SignatureType> {
+): SignatureType {
   const hash = hashSignature(head, data);
   const hashPrefix = hash.subarray(0, 2);
-  const sig = EDSIGN.decode(await ed25519.sign(hash, privateKey)) as any;
+  const sig = EDSIGN.decode(ed25519.sign(hash, privateKey)) as any;
   return { head, unhashed, hashPrefix, sig };
 }
 
@@ -525,7 +511,7 @@ function decodeSecretChecksum(secret: Bytes) {
   return mpi.decode(data);
 }
 
-export async function decodeSecretKey(password: string, key: SecretKeyType) {
+export function decodeSecretKey(password: string, key: SecretKeyType) {
   if (key.type.TAG === 'plain') return decodeSecretChecksum(key.type.data.secret);
   const keyData = key.type.data;
   const data = keyData.S2K.data;
@@ -539,7 +525,7 @@ export async function decodeSecretKey(password: string, key: SecretKeyType) {
     (data as any).salt,
     (data as any).count
   );
-  const decrypted = await Encryption[keyData.enc].decrypt(keyData.secret, encKey, keyData.iv);
+  const decrypted = Encryption[keyData.enc].decrypt(keyData.secret, encKey, keyData.iv);
   const decryptedKey = decrypted.subarray(0, -20);
   const checksum = Hash.sha1(decryptedKey);
   if (!equalBytes(decrypted.slice(-20), checksum))
@@ -551,7 +537,7 @@ export async function decodeSecretKey(password: string, key: SecretKeyType) {
   return mpi.decode(decryptedKey);
 }
 
-async function createPrivKey(
+function createPrivKey(
   pub: PubKeyType,
   key: Bytes,
   password: string,
@@ -560,13 +546,13 @@ async function createPrivKey(
   hash = 'sha1',
   count = 240,
   enc = 'aes128'
-): Promise<SecretKeyType> {
+): SecretKeyType {
   const keyLen = EncryptionKeySize[enc];
   if (keyLen === undefined) throw new Error(`PGP.secretKey: unknown encryption mode=${enc}`);
   const encKey = deriveKey(hash, keyLen, utf8.decode(password), salt, count);
   const keyBytes = opaquempi.encode(key);
   const secretClear = concatBytes(keyBytes, sha1(keyBytes));
-  const secret = await Encryption[enc].encrypt(secretClear, encKey, iv);
+  const secret = Encryption[enc].encrypt(secretClear, encKey, iv);
   const S2K = { TAG: 'iterated', data: { hash, salt, count } } as const;
   return { pub, type: { TAG: 'encrypted', data: { enc, S2K, iv, secret } } };
 }
@@ -574,10 +560,8 @@ async function createPrivKey(
 export const pubArmor = P.base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24);
 export const privArmor = P.base64armor('PGP PRIVATE KEY BLOCK', 64, Stream, crc24);
 
-async function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
-  const edPub = bytesToNumberBE(
-    concatBytes(new Uint8Array([0x40]), await ed25519.getPublicKey(edPriv))
-  );
+function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
+  const edPub = bytesToNumberBE(concatBytes(new Uint8Array([0x40]), ed25519.getPublicKey(edPriv)));
   const edPubPacket = {
     created,
     algo: { TAG: 'EdDSA', data: { curve: 'ed25519', pub: edPub } },
@@ -596,20 +580,20 @@ async function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
   return { edPubPacket, fingerprint, keyId, cvPubPacket };
 }
 
-async function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
+function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
   // key settings same as in PGP to avoid fingerprinting since they are part of public key
   const preferredEncryptionAlgorithms = ['aes256', 'aes192', 'aes128', 'tripledes'];
   const preferredHashAlgorithms = ['sha512', 'sha384', 'sha256', 'sha224', 'sha1'];
   const preferredCompressionAlgorithms = ['zlib', 'bzip2', 'zip'];
   const preferredAEADAlgorithms = ['OCB', 'EAX'];
 
-  const { edPubPacket, fingerprint, keyId, cvPubPacket } = await getPublicPackets(
+  const { edPubPacket, fingerprint, keyId, cvPubPacket } = getPublicPackets(
     edPriv,
     cvPriv,
     created
   );
 
-  const edCert = await signData(
+  const edCert = signData(
     {
       type: 'certPositive',
       algo: 'EdDSA',
@@ -630,7 +614,7 @@ async function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0)
     { pubKey: { pubKey: edPubPacket }, user: { user } },
     edPriv
   );
-  const cvCert = await signData(
+  const cvCert = signData(
     {
       type: 'subkeyBinding',
       algo: 'EdDSA',
@@ -648,13 +632,8 @@ async function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0)
   return { edPubPacket, fingerprint, keyId, cvPubPacket, cvCert, edCert };
 }
 
-export async function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
-  const { edPubPacket, cvPubPacket, edCert, cvCert } = await getCerts(
-    edPriv,
-    cvPriv,
-    user,
-    created
-  );
+export function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
+  const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, created);
   return pubArmor.encode([
     { TAG: 'publicKey', data: edPubPacket },
     { TAG: 'userId', data: user },
@@ -664,7 +643,7 @@ export async function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, c
   ]);
 }
 
-export async function formatPrivate(
+export function formatPrivate(
   edPriv: Bytes,
   cvPriv: Bytes,
   user: string,
@@ -675,15 +654,10 @@ export async function formatPrivate(
   cvSalt = randomBytes(8),
   cvIV = randomBytes(16)
 ) {
-  const { edPubPacket, cvPubPacket, edCert, cvCert } = await getCerts(
-    edPriv,
-    cvPriv,
-    user,
-    created
-  );
-  const edSecret = await createPrivKey(edPubPacket, edPriv, password, edSalt, edIV);
+  const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, created);
+  const edSecret = createPrivKey(edPubPacket, edPriv, password, edSalt, edIV);
   const cvPrivLE = P.U256BE.encode(P.U256LE.decode(cvPriv));
-  const cvSecret = await createPrivKey(cvPubPacket, cvPrivLE, password, cvSalt, cvIV);
+  const cvSecret = createPrivKey(cvPubPacket, cvPrivLE, password, cvSalt, cvIV);
   return privArmor.encode([
     { TAG: 'secretKey', data: edSecret },
     { TAG: 'userId', data: user },
@@ -698,12 +672,12 @@ export async function formatPrivate(
   happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI:
   https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0
 */
-export async function getKeys(privKey: Bytes, user: string, password: string, created = 0) {
-  const { keyId } = await getPublicPackets(privKey, privKey, created);
-  const { head: cvPrivate } = await ed25519.utils.getExtendedPublicKey(privKey);
-  const publicKey = await formatPublic(privKey, cvPrivate, user, created);
+export function getKeys(privKey: Bytes, user: string, password: string, created = 0) {
+  const { keyId } = getPublicPackets(privKey, privKey, created);
+  const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(privKey);
+  const publicKey = formatPublic(privKey, cvPrivate, user, created);
   // The slow part
-  const privateKey = await formatPrivate(privKey, cvPrivate, user, password, created);
+  const privateKey = formatPrivate(privKey, cvPrivate, user, password, created);
   return { keyId, privateKey, publicKey };
 }
 

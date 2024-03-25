@@ -28,10 +28,10 @@ function exec(command, opt = {}) {
   return { status, stdout, stderr };
 }
 
-should('basic', async () => {
+should('basic', () => {
   // Deterministic via scrypt
   const seed = randomBytes();
-  let { publicKey, privateKey, keyId } = await pgp.getKeys(seed, 'user', 'password');
+  let { publicKey, privateKey, keyId } = pgp.getKeys(seed, 'user', 'password');
   const SECRET_KEY_OPT = `--no-tty --batch --yes --passphrase "password"`;
 
   const cleanKeys = () => {

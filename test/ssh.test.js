@@ -32,10 +32,10 @@ describe('ssh', () => {
   should('pack & unpack ssh privkeys should be the same', () => {
     deepStrictEqual(realKey, ssh.PrivateExport.encode(ssh.PrivateExport.decode(realKey)));
   });
-  should('return correct key from seed', async () => {
+  should('return correct key from seed', () => {
     const priv = hex.decode('71e722b077c007d4ae263287878a0bff1816c99f93cf8dcddd995bccefd1d7a3');
     const comment = 'user@pc';
     const checkBytes = hex.decode('c346f14a');
-    deepStrictEqual(await ssh.getKeys(priv, comment, checkBytes), EXPECTED);
+    deepStrictEqual(ssh.getKeys(priv, comment, checkBytes), EXPECTED);
   });
 });

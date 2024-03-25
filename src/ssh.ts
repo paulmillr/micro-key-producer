@@ -67,12 +67,8 @@ export function getFingerprint(bytes: Uint8Array): string {
 }
 
 // For determenistic generation in tests
-export async function getKeys(
-  privateKey: Uint8Array,
-  comment?: string,
-  checkBytes = randomBytes(4)
-) {
-  const pubKey = await ed25519.getPublicKey(privateKey);
+export function getKeys(privateKey: Uint8Array, comment?: string, checkBytes = randomBytes(4)) {
+  const pubKey = ed25519.getPublicKey(privateKey);
   return {
     publicKeyBytes: pubKey,
     publicKey: formatPublicKey(pubKey, comment),

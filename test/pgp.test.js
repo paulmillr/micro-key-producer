@@ -57,15 +57,15 @@ describe('pgp', () => {
     deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xc5, 0xfb])), 1723);
     deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xff, 0x00, 0x01, 0x86, 0xa0])), 100000);
   });
-  should('PGP', async () => {
+  should('PGP', () => {
     const edPriv = hex.decode('6c18b9d6dc5d18a933c704c56ed8165a0651b27856ce3345f52f2921666dcef1');
     const cvPriv = hex.decode('58cf48afad21cbf3e2d904387df28a1385c8a1b790f28e04ca7eb721fd6c0d6b');
     const edSalt = hex.decode('31b33a4b50c662f4');
     const edIV = hex.decode('821984c2c70cd60f0fbf650b6e666ead');
     const cvSalt = hex.decode('050c1f3e46bfcc8d');
     const cvIV = hex.decode('ab54be47dc65e8ac478aa2d1ec7b0c7c');
-    const pubKey = await pgp.formatPublic(edPriv, cvPriv, USER, CREATED);
-    const privKey = await pgp.formatPrivate(
+    const pubKey = pgp.formatPublic(edPriv, cvPriv, USER, CREATED);
+    const privKey = pgp.formatPrivate(
       edPriv,
       cvPriv,
       USER,
@@ -85,18 +85,18 @@ describe('pgp', () => {
     );
     deepStrictEqual(privKey, PRIV, 'privateKey (armor)');
     deepStrictEqual(
-      await pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[0].data),
+      pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[0].data),
       48893474592257195969419733099033914136114698516948265455201948185088704237297n
     );
     deepStrictEqual(
-      await pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[3].data),
+      pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[3].data),
       48421196023274373923070909897586368745762760188967824324892067105939602853720n
     );
   });
   const NAME_EMAIL = 'a <a>';
-  should('PGP Keys', async () => {
+  should('PGP Keys', () => {
     const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
-    const { publicKey: pub } = await pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
+    const { publicKey: pub } = pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
     deepStrictEqual(
       pub,
       `-----BEGIN PGP PUBLIC KEY BLOCK-----
@@ -114,7 +114,7 @@ fTxMaZcG
 -----END PGP PUBLIC KEY BLOCK-----
 `
     );
-    const { publicKey: pub2 } = await pgp.getKeys(seed, NAME_EMAIL, PWD, 123);
+    const { publicKey: pub2 } = pgp.getKeys(seed, NAME_EMAIL, PWD, 123);
     deepStrictEqual(pub2 !== pub, true);
     deepStrictEqual(
       pub2,
