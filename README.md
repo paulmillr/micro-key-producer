@@ -50,7 +50,7 @@ import { randomBytes } from 'ed25519-keygen/utils';
 import ssh from 'ed25519-keygen/ssh';
 import { randomBytes } from 'ed25519-keygen/utils';
 const sseed = randomBytes(32);
-const skeys = await ssh(sseed, 'user@example.com');
+const skeys = ssh(sseed, 'user@example.com');
 console.log(skeys.fingerprint);
 console.log(skeys.privateKey);
 console.log(skeys.publicKey);
@@ -92,7 +92,7 @@ Quirks:
 import * as pgp from 'ed25519-keygen/pgp';
 import { randomBytes } from 'ed25519-keygen/utils';
 const pseed = randomBytes(32);
-const pkeys = await pgp.getKeys(pseed, 'user@example.com', 'password');
+const pkeys = pgp.getKeys(pseed, 'user@example.com', 'password');
 console.log(pkeys.keyId);
 console.log(pkeys.privateKey);
 console.log(pkeys.publicKey);
@@ -131,13 +131,13 @@ KmnxVEBpz5Vt5TldT/9ovAA=
 */
 
 // Also, you can explore existing keys internal structure
-console.log(await pgp.pubArmor.decode(keys.publicKey));
-const privDecoded = await pgp.privArmor.decode(keys.privateKey);
+console.log(pgp.pubArmor.decode(keys.publicKey));
+const privDecoded = pgp.privArmor.decode(keys.privateKey);
 console.log(privDecoded);
 // And receive raw private keys as bigint
 console.log({
-  ed25519: await pgp.decodeSecretKey('password', privDecoded[0].data),
-  cv25519: await pgp.decodeSecretKey('password', privDecoded[3].data),
+  ed25519: pgp.decodeSecretKey('password', privDecoded[0].data),
+  cv25519: pgp.decodeSecretKey('password', privDecoded[3].data),
 });
 ```
 
@@ -152,7 +152,7 @@ Generates TOR addresses.
 import tor from 'ed25519-keygen/tor';
 import { randomBytes } from 'ed25519-keygen/utils';
 const tseed = randomBytes(32);
-const tkeys = await tor(tseed);
+const tkeys = tor(tseed);
 console.log(tkeys.privateKey);
 console.log(tkeys.publicKey);
 /*
@@ -173,7 +173,7 @@ Generates IPNS addresses.
 import ipns from 'ed25519-keygen/ipns';
 import { randomBytes } from 'ed25519-keygen/utils';
 const iseed = randomBytes(32);
-const ikeys = await ipns(iseed);
+const ikeys = ipns(iseed);
 console.log(ikeys.privateKey);
 console.log(ikeys.publicKey);
 console.log(ikeys.base16);
