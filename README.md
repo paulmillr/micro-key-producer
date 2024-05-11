@@ -92,6 +92,7 @@ Quirks:
 import * as pgp from 'ed25519-keygen/pgp';
 import { randomBytes } from 'ed25519-keygen/utils';
 const pseed = randomBytes(32);
+pgp.getKeyId(pseed); // fast
 const pkeys = pgp.getKeys(pseed, 'user@example.com', 'password');
 console.log(pkeys.keyId);
 console.log(pkeys.privateKey);

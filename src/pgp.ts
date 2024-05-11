@@ -18,13 +18,10 @@ export type Bytes = Uint8Array;
 // - ed25519: https://www.ietf.org/archive/id/draft-koch-eddsa-for-openpgp-04.txt
 // - bis: https://datatracker.ietf.org/doc/html/draft-ietf-openpgp-rfc4880bis-10#section-5.2.3.1
 
-// Safari supports AES_CFB via webCrypto, but chromium/firefox do not.
-// Test page: https://diafygi.github.io/webcrypto-examples/
-
 function runAesCfb(keyLen: number, data: Bytes, key: Bytes, iv: Bytes, decrypt = false) {
   // NOTE: we need to validate key length here since file can be malformed
-  if (keyLen !== key.length * 8) throw new Error('AesCfbProcess: wrong key length');
-  if (iv.length !== 16) throw new Error('AesCfbProcess: wrong IV');
+  if (keyLen !== key.length * 8) throw new Error('aes-cfb: wrong key length');
+  if (iv.length !== 16) throw new Error('aes-cfb: wrong IV');
   // Packed does subarray and read is unaligned here
   // TODO: support unaligned reads in all AES?
   const keyCopy = key.slice();
@@ -416,9 +413,6 @@ function hashSignature(head: SignatureHeadType, data: any) {
   return h.digest();
 }
 
-const getFingerprint = (pubKey: PubKeyType) => hex.encode(sha1(hashPubKey.encode({ pubKey })));
-const getKeyId = (fp: string) => fp.slice(-16);
-
 // https://datatracker.ietf.org/doc/html/rfc4880#section-6.1
 function crc24(data: Bytes) {
   let crc = 0xb704ce;
@@ -511,7 +505,7 @@ function decodeSecretChecksum(secret: Bytes) {
   return mpi.decode(data);
 }
 
-export function decodeSecretKey(password: string, key: SecretKeyType) {
+export function decodeSecretKey(password: string, key: SecretKeyType): bigint {
   if (key.type.TAG === 'plain') return decodeSecretChecksum(key.type.data.secret);
   const keyData = key.type.data;
   const data = keyData.S2K.data;
@@ -559,28 +553,33 @@ function createPrivKey(
 
 export const pubArmor = P.base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24);
 export const privArmor = P.base64armor('PGP PRIVATE KEY BLOCK', 64, Stream, crc24);
+function validateDate(timestamp: number) {
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 2 ** 46)
+    throw new Error('invalid PGP key creation time: must be a valid UNIX timestamp');
+}
 
-function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, created = 0) {
+function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, createdAt = 0) {
+  validateDate(createdAt);
   const edPub = bytesToNumberBE(concatBytes(new Uint8Array([0x40]), ed25519.getPublicKey(edPriv)));
   const edPubPacket = {
-    created,
+    created: createdAt,
     algo: { TAG: 'EdDSA', data: { curve: 'ed25519', pub: edPub } },
   } as const;
   const cvPoint = x25519.scalarMultBase(cvPriv);
   const cvPub = bytesToNumberBE(concatBytes(new Uint8Array([0x40]), cvPoint));
   const cvPubPacket = {
-    created,
+    created: createdAt,
     algo: {
       TAG: 'ECDH',
       data: { curve: 'curve25519', pub: cvPub, params: { hash: 'sha256', encryption: 'aes128' } },
     },
   } as const;
-  const fingerprint = getFingerprint(edPubPacket);
-  const keyId = getKeyId(fingerprint);
+  const fingerprint = hex.encode(sha1(hashPubKey.encode({ pubKey: edPubPacket })));
+  const keyId = fingerprint.slice(-16);
   return { edPubPacket, fingerprint, keyId, cvPubPacket };
 }
 
-function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
+function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0) {
   // key settings same as in PGP to avoid fingerprinting since they are part of public key
   const preferredEncryptionAlgorithms = ['aes256', 'aes192', 'aes128', 'tripledes'];
   const preferredHashAlgorithms = ['sha512', 'sha384', 'sha256', 'sha224', 'sha1'];
@@ -590,7 +589,7 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
   const { edPubPacket, fingerprint, keyId, cvPubPacket } = getPublicPackets(
     edPriv,
     cvPriv,
-    created
+    createdAt
   );
 
   const edCert = signData(
@@ -600,7 +599,7 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
       hash: 'sha512',
       hashed: [
         { TAG: 'issuerFingerprint', data: { fingerprint } },
-        { TAG: 'signatureCreationTime', data: created },
+        { TAG: 'signatureCreationTime', data: createdAt },
         { TAG: 'keyFlags', data: { sign: true, certify: true } },
         { TAG: 'preferredEncryptionAlgorithms', data: preferredEncryptionAlgorithms },
         { TAG: 'preferredAEADAlgorithms', data: preferredAEADAlgorithms },
@@ -621,7 +620,7 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
       hash: 'sha512',
       hashed: [
         { TAG: 'issuerFingerprint', data: { fingerprint } },
-        { TAG: 'signatureCreationTime', data: created },
+        { TAG: 'signatureCreationTime', data: createdAt },
         { TAG: 'keyFlags', data: { encrypt: true, encryptComm: true } },
       ],
     },
@@ -632,8 +631,8 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
   return { edPubPacket, fingerprint, keyId, cvPubPacket, cvCert, edCert };
 }
 
-export function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, created = 0) {
-  const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, created);
+export function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0) {
+  const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   return pubArmor.encode([
     { TAG: 'publicKey', data: edPubPacket },
     { TAG: 'userId', data: user },
@@ -648,13 +647,13 @@ export function formatPrivate(
   cvPriv: Bytes,
   user: string,
   password: string,
-  created = 0,
+  createdAt = 0,
   edSalt = randomBytes(8),
   edIV = randomBytes(16),
   cvSalt = randomBytes(8),
   cvIV = randomBytes(16)
 ) {
-  const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, created);
+  const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   const edSecret = createPrivKey(edPubPacket, edPriv, password, edSalt, edIV);
   const cvPrivLE = P.U256BE.encode(P.U256LE.decode(cvPriv));
   const cvSecret = createPrivKey(cvPubPacket, cvPrivLE, password, cvSalt, cvIV);
@@ -667,17 +666,29 @@ export function formatPrivate(
   ]);
 }
 
-/*
-  NOTE: gpg: warning: lower 3 bits of the secret key are not cleared
-  happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI:
-  https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0
-*/
-export function getKeys(privKey: Bytes, user: string, password: string, created = 0) {
-  const { keyId } = getPublicPackets(privKey, privKey, created);
+/**
+ * Derives PGP key ID from the private key.
+ * PGP key depends on its date of creation.
+ */
+export function getKeyId(edPrivKey: Bytes, createdAt = 0) {
+  const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(edPrivKey);
+  return getPublicPackets(edPrivKey, cvPrivate, createdAt);
+}
+
+/**
+ * Derives PGP private key, public key and fingerprint.
+ * Uses S2K KDF, which means it's slow. Use `getKeyId` if you want to get key id in a fast way.
+ * PGP key depends on its date of creation.
+ * NOTE: gpg: warning: lower 3 bits of the secret key are not cleared
+ * happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI:
+ * https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0
+ */
+export function getKeys(privKey: Bytes, user: string, password: string, createdAt = 0) {
   const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(privKey);
-  const publicKey = formatPublic(privKey, cvPrivate, user, created);
+  const { keyId } = getPublicPackets(privKey, cvPrivate, createdAt);
+  const publicKey = formatPublic(privKey, cvPrivate, user, createdAt);
   // The slow part
-  const privateKey = formatPrivate(privKey, cvPrivate, user, password, created);
+  const privateKey = formatPrivate(privKey, cvPrivate, user, password, createdAt);
   return { keyId, privateKey, publicKey };
 }
 
