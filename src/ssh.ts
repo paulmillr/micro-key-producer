@@ -1,6 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { concatBytes, randomBytes } from '@noble/hashes/utils';
+import { base64armor } from './utils.js';
 import { base64 } from '@scure/base';
 import * as P from 'micro-packed';
 
@@ -35,7 +36,7 @@ export const AuthData = P.struct({
 
 export type AuthDataType = P.UnwrapCoder<typeof AuthData>;
 
-export const PrivateExport = P.base64armor(
+export const PrivateExport = base64armor(
   'openssh private key',
   70,
   P.struct({

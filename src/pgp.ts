@@ -9,6 +9,7 @@ import { sha3_256 } from '@noble/hashes/sha3';
 import { CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
 import { utf8, hex } from '@scure/base';
 import * as P from 'micro-packed';
+import { base64armor } from './utils.js';
 
 export type Bytes = Uint8Array;
 
@@ -474,7 +475,7 @@ const Packet = P.wrap({
   decodeStream: (r: P.Reader): any => {
     const { tag, lenType } = PacketHead.decodeStream(r);
     const packetLen =
-      lenType !== 3 ? [P.U8, P.U16BE, P.U32BE][lenType].decodeStream(r) : r.data.length - r.pos;
+      lenType !== 3 ? [P.U8, P.U16BE, P.U32BE][lenType].decodeStream(r) : r.leftBytes;
     return { TAG: tag, data: PacketTags[tag].decode(r.bytes(packetLen)) };
   },
 });
@@ -551,8 +552,8 @@ function createPrivKey(
   return { pub, type: { TAG: 'encrypted', data: { enc, S2K, iv, secret } } };
 }
 
-export const pubArmor = P.base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24);
-export const privArmor = P.base64armor('PGP PRIVATE KEY BLOCK', 64, Stream, crc24);
+export const pubArmor = base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24);
+export const privArmor = base64armor('PGP PRIVATE KEY BLOCK', 64, Stream, crc24);
 function validateDate(timestamp: number) {
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 2 ** 46)
     throw new Error('invalid PGP key creation time: must be a valid UNIX timestamp');
