@@ -1,6 +1,6 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import * as tor from '../lib/esm/tor.js';
+import * as tor from '../esm/tor.js';
 import { hex } from '@scure/base';
 
 describe('tor', () => {

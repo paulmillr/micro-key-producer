@@ -1,6 +1,6 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import * as ipns from '../lib/esm/ipns.js';
+import * as ipns from '../esm/ipns.js';
 import { hex } from '@scure/base';
 
 describe('ipns', () => {

@@ -1,5 +1,5 @@
 import { deepStrictEqual, throws } from 'node:assert';
-import { HDKey } from '../../lib/esm/hdkey.js';
+import { HDKey } from '../../esm/hdkey.js';
 import { describe, should } from 'micro-should';
 import { bytesToHex } from '@noble/hashes/utils';
 import { fixtures } from './slip-0010.fixture.mjs';
@@ -61,7 +61,13 @@ describe('hdkey', () => {
 
   should('throw on derivation of wrong indexes', () => {
     const hdkey = HDKey.fromMasterSeed('000102030405060708090a0b0c0d0e0f');
-    const invalid = ["m/0'/ 1' /2'", "m/0'/1.5'/2'", "m/0'/331e100'/2'", "m/0'/3e'/2'", "m/0'/'/2'"];
+    const invalid = [
+      "m/0'/ 1' /2'",
+      "m/0'/1.5'/2'",
+      "m/0'/331e100'/2'",
+      "m/0'/3e'/2'",
+      "m/0'/'/2'",
+    ];
     for (const t of invalid) throws(() => hdkey.derive(t));
   });
 });
