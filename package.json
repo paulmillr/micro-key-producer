@@ -2,9 +2,41 @@
   "name": "ed25519-keygen",
   "version": "0.6.1",
   "description": "Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey",
-  "main": "./lib/index.js",
-  "module": "./lib/esm/index.js",
-  "files": ["lib", "src"],
+  "main": "./index.js",
+  "module": "./esm/index.js",
+  "files": [
+    "esm",
+    "hdkey.d.ts",
+    "hdkey.d.ts.map",
+    "hdkey.js",
+    "hdkey.js.map",
+    "index.d.ts",
+    "index.d.ts.map",
+    "index.js",
+    "index.js.map",
+    "ipns.d.ts",
+    "ipns.d.ts.map",
+    "ipns.js",
+    "ipns.js.map",
+    "pgp.d.ts",
+    "pgp.d.ts.map",
+    "pgp.js",
+    "pgp.js.map",
+    "src",
+    "ssh.d.ts",
+    "ssh.d.ts.map",
+    "ssh.js",
+    "ssh.js.map",
+    "test",
+    "tor.d.ts",
+    "tor.d.ts.map",
+    "tor.js",
+    "tor.js.map",
+    "utils.d.ts",
+    "utils.d.ts.map",
+    "utils.js",
+    "utils.js.map"
+  ],
   "dependencies": {
     "@noble/ciphers": "~0.5.2",
     "@noble/curves": "~1.4.0",
@@ -20,39 +52,39 @@
   },
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "import": "./lib/esm/index.js",
-      "default": "./lib/index.js"
+      "types": "./index.d.ts",
+      "import": "./esm/index.js",
+      "default": "./index.js"
     },
     "./ipns": {
-      "types": "./lib/ipns.d.ts",
-      "import": "./lib/esm/ipns.js",
-      "default": "./lib/ipns.js"
+      "types": "./ipns.d.ts",
+      "import": "./esm/ipns.js",
+      "default": "./ipns.js"
     },
     "./hdkey": {
-      "types": "./lib/hdkey.d.ts",
-      "import": "./lib/esm/hdkey.js",
-      "default": "./lib/hdkey.js"
+      "types": "./hdkey.d.ts",
+      "import": "./esm/hdkey.js",
+      "default": "./hdkey.js"
     },
     "./ssh": {
-      "types": "./lib/ssh.d.ts",
-      "import": "./lib/esm/ssh.js",
-      "default": "./lib/ssh.js"
+      "types": "./ssh.d.ts",
+      "import": "./esm/ssh.js",
+      "default": "./ssh.js"
     },
     "./pgp": {
-      "types": "./lib/pgp.d.ts",
-      "import": "./lib/esm/pgp.js",
-      "default": "./lib/pgp.js"
+      "types": "./pgp.d.ts",
+      "import": "./esm/pgp.js",
+      "default": "./pgp.js"
     },
     "./tor": {
-      "types": "./lib/tor.d.ts",
-      "import": "./lib/esm/tor.js",
-      "default": "./lib/tor.js"
+      "types": "./tor.d.ts",
+      "import": "./esm/tor.js",
+      "default": "./tor.js"
     },
     "./utils": {
-      "types": "./lib/utils.d.ts",
-      "import": "./lib/esm/utils.js",
-      "default": "./lib/utils.js"
+      "types": "./utils.d.ts",
+      "import": "./esm/utils.js",
+      "default": "./utils.js"
     }
   },
   "scripts": {
