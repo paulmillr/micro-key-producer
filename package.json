@@ -27,7 +27,6 @@
     "ssh.d.ts.map",
     "ssh.js",
     "ssh.js.map",
-    "test",
     "tor.d.ts",
     "tor.d.ts.map",
     "tor.js",
