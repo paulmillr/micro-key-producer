@@ -1,7 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha3_256 } from '@noble/hashes/sha3';
 import { concatBytes } from '@noble/hashes/utils';
-import { utf8, base32, base64 } from '@scure/base';
+import { base32, base64, utf8 } from '@scure/base';
 
 const ADDRESS_VERSION = new Uint8Array([0x03]);
 

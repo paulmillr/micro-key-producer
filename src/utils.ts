@@ -1,5 +1,5 @@
 import { randomBytes } from '@noble/hashes/utils';
-import { Coder, CoderType, utils as pkUtils } from 'micro-packed';
+import { Coder, CoderType, utils as packedUtils } from 'micro-packed';
 import { base64 } from '@scure/base';
 export { randomBytes };
 
@@ -24,11 +24,12 @@ export function base64armor<T>(
     throw new Error('name must be a non-empty string');
   if (!Number.isSafeInteger(lineLen) || lineLen <= 0)
     throw new Error('lineLen must be a positive integer');
-  if (!pkUtils.isCoder(inner)) throw new Error('inner must be a valid base coder');
+  if (!packedUtils.isCoder(inner)) throw new Error('inner must be a valid base coder');
   if (checksum !== undefined && typeof checksum !== 'function')
     throw new Error('checksum must be a function or undefined');
-  const markBegin = `-----BEGIN ${name.toUpperCase()}-----`;
-  const markEnd = `-----END ${name.toUpperCase()}-----`;
+  const upcase = name.toUpperCase();
+  const markBegin = `-----BEGIN ${upcase}-----`;
+  const markEnd = `-----END ${upcase}-----`;
   return {
     encode(value: T) {
       const data = inner.encode(value);

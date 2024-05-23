@@ -42,7 +42,7 @@ export function parseAddress(address: string): Uint8Array {
 // Generates an ed25519 pubkey from a seed and converts it to several IPNS pubkey formats
 export function getKeys(seed: Uint8Array) {
   //? privKey "seed" should be checked for <ed25519.curve.n?
-  if (seed.length != 32) throw new TypeError('Seed must be 32 bytes in length');
+  if (seed.length !== 32) throw new TypeError('Seed must be 32 bytes in length');
   // Generate ed25519 public key from seed
   const pubKey = ed25519.getPublicKey(seed);
   // Create public key bytes by concatenating prefix bytes and pubKey

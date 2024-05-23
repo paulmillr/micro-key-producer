@@ -1,13 +1,13 @@
 import { cfb } from '@noble/ciphers/aes';
-import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { bytesToNumberBE, equalBytes, numberToHexUnpadded } from '@noble/curves/abstract/utils';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha1 } from '@noble/hashes/sha1';
 import { sha256 } from '@noble/hashes/sha256';
-import { sha512 } from '@noble/hashes/sha512';
 import { sha3_256 } from '@noble/hashes/sha3';
+import { sha512 } from '@noble/hashes/sha512';
 import { CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
-import { utf8, hex } from '@scure/base';
+import { hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { base64armor } from './utils.js';
 

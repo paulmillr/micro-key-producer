@@ -1,9 +1,9 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { concatBytes, randomBytes } from '@noble/hashes/utils';
-import { base64armor } from './utils.js';
 import { base64 } from '@scure/base';
 import * as P from 'micro-packed';
+import { base64armor } from './utils.js';
 
 export const SSHString = P.string(P.U32BE);
 export const SSHBuf = P.bytes(P.U32BE);
