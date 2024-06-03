@@ -1,3 +1,4 @@
+/*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 import { ed25519 } from '@noble/curves/ed25519';
 import { concatBytes } from '@noble/hashes/utils';
 import { hex, base32, utils } from '@scure/base';

@@ -1,6 +1,6 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import * as ipns from '../esm/ipns.js';
+import * as ipns from '../lib/esm/ipns.js';
 import { hex } from '@scure/base';
 
 describe('ipns', () => {
@@ -24,3 +24,8 @@ describe('ipns', () => {
     deepStrictEqual(ipns.formatPublicKey(parsed), addr);
   });
 });
+
+import url from 'node:url';
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  should.run();
+}

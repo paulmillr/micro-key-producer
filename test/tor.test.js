@@ -1,6 +1,6 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import * as tor from '../esm/tor.js';
+import * as tor from '../lib/esm/tor.js';
 import { hex } from '@scure/base';
 
 describe('tor', () => {
@@ -18,3 +18,8 @@ describe('tor', () => {
     deepStrictEqual(tor.formatPublicKey(parsed), addr);
   });
 });
+
+import url from 'node:url';
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  should.run();
+}

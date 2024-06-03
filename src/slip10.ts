@@ -1,4 +1,4 @@
-/*! micro-ed25519-hdkey - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+/*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 import { ed25519 } from '@noble/curves/ed25519';
 import { bytes as assertBytes } from '@noble/hashes/_assert';
 import { hmac } from '@noble/hashes/hmac';
@@ -135,3 +135,4 @@ export class HDKey {
     return ed25519.verify(signature, message, this.publicKeyRaw);
   }
 }
+export default HDKey;

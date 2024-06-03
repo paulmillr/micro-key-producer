@@ -1,41 +1,10 @@
 {
-  "name": "ed25519-keygen",
-  "version": "0.6.2",
-  "description": "Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey",
-  "main": "./index.js",
-  "module": "./esm/index.js",
-  "files": [
-    "esm",
-    "hdkey.d.ts",
-    "hdkey.d.ts.map",
-    "hdkey.js",
-    "hdkey.js.map",
-    "index.d.ts",
-    "index.d.ts.map",
-    "index.js",
-    "index.js.map",
-    "ipns.d.ts",
-    "ipns.d.ts.map",
-    "ipns.js",
-    "ipns.js.map",
-    "pgp.d.ts",
-    "pgp.d.ts.map",
-    "pgp.js",
-    "pgp.js.map",
-    "src",
-    "ssh.d.ts",
-    "ssh.d.ts.map",
-    "ssh.js",
-    "ssh.js.map",
-    "tor.d.ts",
-    "tor.d.ts.map",
-    "tor.js",
-    "tor.js.map",
-    "utils.d.ts",
-    "utils.d.ts.map",
-    "utils.js",
-    "utils.js.map"
-  ],
+  "name": "micro-key-producer",
+  "version": "0.7.0",
+  "description": "Produces secure keys and passwords. Supports SSH, PGP, BLS, OTP, and many others",
+  "main": "./lib/index.js",
+  "module": "./lib/esm/index.js",
+  "files": ["lib"],
   "dependencies": {
     "@noble/ciphers": "~0.5.2",
     "@noble/curves": "~1.4.0",
@@ -51,39 +20,54 @@
   },
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "import": "./esm/index.js",
-      "default": "./index.js"
+      "types": "./lib/index.d.ts",
+      "import": "./lib/esm/index.js",
+      "default": "./lib/index.js"
     },
-    "./ipns": {
-      "types": "./ipns.d.ts",
-      "import": "./esm/ipns.js",
-      "default": "./ipns.js"
+    "./bls.js": {
+      "types": "./lib/bls.d.ts",
+      "import": "./lib/esm/bls.js",
+      "default": "./lib/bls.js"
     },
-    "./hdkey": {
-      "types": "./hdkey.d.ts",
-      "import": "./esm/hdkey.js",
-      "default": "./hdkey.js"
+    "./ipns.js": {
+      "types": "./lib/ipns.d.ts",
+      "import": "./lib/esm/ipns.js",
+      "default": "./lib/ipns.js"
     },
-    "./ssh": {
-      "types": "./ssh.d.ts",
-      "import": "./esm/ssh.js",
-      "default": "./ssh.js"
+    "./hdkey.js": {
+      "types": "./lib/hdkey.d.ts",
+      "import": "./lib/esm/hdkey.js",
+      "default": "./lib/hdkey.js"
     },
-    "./pgp": {
-      "types": "./pgp.d.ts",
-      "import": "./esm/pgp.js",
-      "default": "./pgp.js"
+    "./otp.js": {
+      "types": "./lib/otp.d.ts",
+      "import": "./lib/esm/otp.js",
+      "default": "./lib/otp.js"
     },
-    "./tor": {
-      "types": "./tor.d.ts",
-      "import": "./esm/tor.js",
-      "default": "./tor.js"
+    "./password.js": {
+      "types": "./lib/password.d.ts",
+      "import": "./lib/esm/password.js",
+      "default": "./lib/password.js"
     },
-    "./utils": {
-      "types": "./utils.d.ts",
-      "import": "./esm/utils.js",
-      "default": "./utils.js"
+    "./pgp.js": {
+      "types": "./lib/pgp.d.ts",
+      "import": "./lib/esm/pgp.js",
+      "default": "./lib/pgp.js"
+    },
+    "./ssh.js": {
+      "types": "./lib/ssh.d.ts",
+      "import": "./lib/esm/ssh.js",
+      "default": "./lib/ssh.js"
+    },
+    "./tor.js": {
+      "types": "./lib/tor.d.ts",
+      "import": "./lib/esm/tor.js",
+      "default": "./lib/tor.js"
+    },
+    "./utils.js": {
+      "types": "./lib/utils.d.ts",
+      "import": "./lib/esm/utils.js",
+      "default": "./lib/utils.js"
     }
   },
   "scripts": {
@@ -94,10 +78,10 @@
   },
   "author": "Paul Miller (https://paulmillr.com)",
   "license": "MIT",
-  "homepage": "https://github.com/paulmillr/ed25519-keygen",
+  "homepage": "https://github.com/paulmillr/micro-key-producer",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/paulmillr/ed25519-keygen.git"
+    "url": "git+https://github.com/paulmillr/micro-key-producer.git"
   },
   "keywords": [
     "ed25519",

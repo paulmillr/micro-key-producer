@@ -1,84 +1,202 @@
-# ed25519-keygen
+# micro-key-producer
 
-Generate ed25519 keys for SSH, PGP (GPG), TOR, IPNS and SLIP-0010 hdkey.
+Produces secure keys and passwords.
 
-- Pure JS, no CLI tools are involved
-- Can generate both deterministic and random keys
-- Uses [noble-curves](https://github.com/paulmillr/noble-curves) under the hood
+- 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography
+- 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
+- 🎲 Produce known and random keys
+- 🔑 SSH, PGP, TOR, IPNS, SLIP10 keys
+- 🪙 BLS12-381 keys for ETH validators
+- 📟 Generate secure passwords & OTP 2FA codes
 
-Includes SLIP-0010 (ed BIP32) HDKey implementation, funded by the Kin Foundation for
-[Kinetic](https://github.com/kin-labs/kinetic). For the apps made with the library, check out:
-[terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7)
+Used in: [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7).
 
 ## Usage
 
-> npm install ed25519-keygen
-
-The package exports six modules:
-
-- [`ed25519-keygen/ssh`](#sshseed-username) for SSH key generation
-- [`ed25519-keygen/pgp`](#pgpseed-user-password) for
-  [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) +
-  [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637)
-- [`ed25519-keygen/tor`](#torseed) for TOR onion addresses
-- [`ed25519-keygen/ipns`](#ipnsseed) for IPNS addresses
-- [`ed25519-keygen/hdkey`](#hdkey) for
-  [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md)/[BIP32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki)
-  HDKey
-- [`ed25519-keygen/utils`](#randombyteslength) for cryptographically secure random number generator
-  (CSPRNG)
-
-Use it in the following way:
+> npm install micro-key-producer
 
 ```ts
-import ssh from 'ed25519-keygen/ssh';
-import pgp from 'ed25519-keygen/pgp';
-import tor from 'ed25519-keygen/tor';
-import ipns from 'ed25519-keygen/ipns';
-import { HDKey } from 'ed25519-keygen/hdkey';
-import { randomBytes } from 'ed25519-keygen/utils';
+import ssh from 'micro-key-producer/ssh.js';
+import pgp from 'micro-key-producer/pgp.js';
+import * as pwd from 'micro-key-producer/password.js';
+import * as otp from 'micro-key-producer/otp.js';
+import tor from 'micro-key-producer/tor.js';
+import ipns from 'micro-key-producer/ipns.js';
+import slip10 from 'micro-key-producer/slip10.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
 ```
 
-## `ssh(seed, username)`
+- [Known and random seeds](#known-and-random-seeds)
+- [Generate SSH keys](#generate-ssh-keys)
+- [Generate PGP keys](#generate-pgp-keys)
+- [Generate BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
+- [Generate secure passwords](#generate-secure-passwords)
+- [Generate 2FA OTP codes](#generate-2fa-otp-codes)
+- [Generate TOR keys and addresses](#generate-tor-keys-and-addresses)
+- [Generate IPNS addresses](#generate-ipns-addresses)
+- [Generate SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
+- [Low-level API](#low-level-api)
+  - [PGP key generation](#pgp-key-generation)
+  - [Password generation](#password-generation)
+    - [Bruteforce estimation and ZXCVBN score](#bruteforce-estimation-and-zxcvbn-score)
+    - [Mask control characters](#mask-control-characters)
+    - [Design rationale](#design-rationale)
+    - [What do we want from passwords?](#what-do-we-want-from-passwords)
+  - [SLIP10 API](#slip10-api)
 
-- `seed: Uint8Array`
-- `username: string`
-- Returns
-  `{ fingerprint: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
+### Known and random seeds
+
+Every method takes a seed (key), from which the formatted result is produced.
+
+A seed can be **known** (it will always produce the same result), or **random**.
 
 ```js
-import ssh from 'ed25519-keygen/ssh';
-import { randomBytes } from 'ed25519-keygen/utils';
-const sseed = randomBytes(32);
-const skeys = ssh(sseed, 'user@example.com');
-console.log(skeys.fingerprint);
-console.log(skeys.privateKey);
-console.log(skeys.publicKey);
-/*
-SHA256:3M832z6j5R6mQh4TTzVG5KVs2IbvythcS6VPiEixMJg
------BEGIN OPENSSH PRIVATE KEY-----
+// known: Uses known mnemonic (handled in separate package)
+import { mnemonicToSeedSync } from '@scure/bip39';
+const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
+const knownSeed = mnemonicToSeedSync(mnemonic, '');
 
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACB7IzMcWzDbGACJFPmt8hDZGedH6W1w0SGuY1Ut+oIlxQAAAJh8wUpUfMFK
-VAAAAAtzc2gtZWQyNTUxOQAAACB7IzMcWzDbGACJFPmt8hDZGedH6W1w0SGuY1Ut+oIlxQ
-AAAEBPTJHsreF9Losr930Yt/8DseFi66G7vK8QF/Kd8fcRlXsjMxxbMNsYAIkU+a3yENkZ
-50fpbXDRIa5jVS36giXFAAAAEHVzZXJAZXhhbXBsZS5jb20BAgMEBQ==
------END OPENSSH PRIVATE KEY-----
-
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHsjMxxbMNsYAIkU+a3yENkZ50fpbXDRIa5jVS36giXF user@example.com
-*/
+// random: Uses system's CSPRNG to produce new random seed
+import { randomBytes } from 'micro-key-producer/utils.js';
+const randSeed = randomBytes(32);
 ```
 
-## `pgp(seed, user, password)`
+### Generate SSH keys
 
-- `seed: Uint8Array`
-- `user: string`
-- `password: string`
-- `createdAt: number` - (default: 0) timestamp corresponding to key creation time
-- Returns `{ keyId: string, privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
+```js
+import ssh from 'micro-key-producer/ssh.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
 
-Creates keys compatible with GPG. GPG is a commonly known utility that supports PGP protocol.
-Quirks:
+const seed = randomBytes(32);
+const key = ssh(seed, 'user@example.com');
+console.log(key.fingerprint, key.privateKey, key.publicKey);
+// SHA256:3M832z6j5R6mQh4TTzVG5KVs2Ibvy...
+// -----BEGIN OPENSSH PRIVATE KEY----- ...
+// ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
+```
+
+The PGP (GPG) keys conform to
+[RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) &
+[RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637). Only ed25519 algorithm is currently supported.
+
+### Generate PGP keys
+
+```js
+import pgp, { getKeyId } from 'micro-key-producer/pgp.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
+
+const seed = randomBytes(32);
+const email = 'user@example.com';
+const pass = 'password';
+const createdAt = Date.now(); // optional; timestamp >= 0
+
+const keyId = getKeyId(seed);
+const key = pgp(seed, email, pass, createdAt);
+console.log(key.fingerprint, key.privateKey, key.publicKey);
+// ca88e2a8afd9cdb8
+// -----BEGIN PGP PRIVATE KEY BLOCK-----...
+// -----BEGIN PGP PUBLIC KEY BLOCK-----...
+```
+
+### Generate BLS keys for ETH validators
+
+```js
+import { mnemonicToSeedSync } from '@scure/bip39';
+import { createDerivedEIP2334Keystores } from 'micro-key-producer/bls.js';
+
+const password = 'my_password';
+const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
+const keyType = 'signing'; // or 'withdrawal'
+const indexes = [0, 1, 2, 3]; // create 4 keys
+
+const keystores = createDerivedEIP2334Keystores(
+  password
+  'scrypt',
+  mnemonicToSeedSync(mnemonic, ''),
+  keyType,
+  indexes
+);
+```
+
+Conforms to EIP-2333 / EIP-2334 / EIP-2335. Online demo: [eip2333-tool](https://iancoleman.io/eip2333/)
+
+### Generate secure passwords
+
+```js
+import * as pwd from 'micro-key-producer/password.js';
+import { randomBytes } from '@noble/hashes/utils';
+
+const seed = randomBytes(32);
+const pass = pwd.secureMask.apply(seed).password;
+// console.log(pwd.secureMask.estimate); // produce password estimation
+// wivfi1-Zykrap-fohcij, will change on each run
+// secureMask is format from iOS keychain, see "Detailed API" section
+```
+
+- Supports iOS / macOS Safari Secure Password from Keychain
+- Provides ZXCVBN Score for password bruteforce estimation
+
+### Generate 2FA OTP codes
+
+```js
+import * as otp from 'micro-key-producer/otp.js';
+otp.hotp(otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS'), 0n); // 549419
+otp.totp(otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS'), 0); // 549419
+```
+
+Conforms to [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238).
+
+### Generate TOR keys and addresses
+
+```js
+import tor from 'micro-key-producer/tor.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
+const seed = randomBytes(32);
+const key = tor(seed);
+console.log(key.privateKey, key.publicKey);
+// ED25519-V3:EOl78M2gA...
+// rx724x3oambzxr46pkbd... .onion
+```
+
+### Generate IPNS addresses
+
+```js
+import ipns from 'micro-key-producer/ipns.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
+const seed = randomBytes(32);
+const k = ipns(seed);
+console.log(k.privateKey, k.publicKey, k.base16, k.base32, k.base36, k.contenthash);
+// 0x080112400681d6420abb1b...
+// 0x017200240801122012c829...
+// ipns://f0172002408011220...
+// ipns://bafzaajaiaejcaewi...
+// ipns://k51qzi5uqu5dgnfwb...
+// 0xe501017200240801122012...
+```
+
+### Generate SLIP10 ed25519 hdkeys
+
+```js
+import slip10 from 'micro-key-producer/slip10.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
+
+const seed = randomBytes(32);
+const hdkey1 = slip10.HDKey.fromMasterSeed(seed);
+
+// props
+[hdkey1.depth, hdkey1.index, hdkey1.chainCode];
+console.log(hdkey2.privateKey, hdkey2.publicKey);
+console.log(hdkey3.derive("m/0/2147483647'/1'"));
+const sig = hdkey3.sign(hash);
+hdkey3.verify(hash, sig);
+```
+
+SLIP10 (ed25519 BIP32) HDKey implementation has been funded by the Kin Foundation for
+[Kinetic](https://github.com/kin-labs/kinetic).
+
+## Low-level details
+
+### PGP key generation
 
 1. Generated private and public keys would have different representation, however, **their
    fingerprints would be the same**. This is because AES encryption is used to hide the keys, and
@@ -89,47 +207,14 @@ Quirks:
    [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
 
 ```js
-import * as pgp from 'ed25519-keygen/pgp';
-import { randomBytes } from 'ed25519-keygen/utils';
+import * as pgp from 'micro-key-producer/pgp';
+import { randomBytes } from 'micro-key-producer/utils';
 const pseed = randomBytes(32);
 pgp.getKeyId(pseed); // fast
 const pkeys = pgp.getKeys(pseed, 'user@example.com', 'password');
 console.log(pkeys.keyId);
 console.log(pkeys.privateKey);
 console.log(pkeys.publicKey);
-/*
-ca88e2a8afd9cdb8
------BEGIN PGP PRIVATE KEY BLOCK-----
-
-lIYEAAAAABYJKwYBBAHaRw8BAQdA0TSxOgyxDIuJh0afj457vpf7IZJsnyVu+HG2
-k/v1F0P+BwMCpkzMdFodxiHwgVurmhm72ikz5FqdF8WJEBy0VC8ovbXkNz9oCi31
-grwUafRgb874q0n99Q6Kh1cDMwMNF6vjQvgusaJQtvy75Y0pkNEnKrQQdXNlckBl
-eGFtcGxlLmNvbYiUBBMWCgA8FiEELCHHdWxwPnwIbwzfyojiqK/ZzbgFAgAAAAAC
-GwMFCwkIBwIDIgIBBhUKCQgLAgQWAgMBAh4HAheAAAoJEMqI4qiv2c24nyABALvn
-+XR0T4AeohBNL+h88o2tgPazB1GtKo1FhMb8cpaDAQCRr8Ml3Ow5ijijFBQ0aqG4
-1D43SIinNvQFD59o85YfBZyLBAAAAAASCisGAQQBl1UBBQEBB0C8acmhByJtlAZo
-7T2lVQa0iCo0RBm/CgMJKO+3/NaHGgMBCAf+BwMCJsLfz4M3/KrwyBBBRu8MTvjq
-pY5FjFcJGoPRhYHX+/ZATZf4cRrA0LX3zDi1nudO1f755Q4ALWjPXNXMMBkmKjHJ
-p5WaAFm7xMdxEvXYaIh4BBgWCgAgFiEELCHHdWxwPnwIbwzfyojiqK/ZzbgFAgAA
-AAACGwwACgkQyojiqK/ZzbikkgEAod4RMOLsVngAH/WFBWQi+Ee5hZ4nXsfasDsT
-hNEnaqcBAI5h/ss8SU/gOmx/uiGJTCpp8VRAac+VbeU5XU//aLwA
-=oOli
------END PGP PRIVATE KEY BLOCK-----
-
------BEGIN PGP PUBLIC KEY BLOCK-----
-
-mDMEAAAAABYJKwYBBAHaRw8BAQdA0TSxOgyxDIuJh0afj457vpf7IZJsnyVu+HG2
-k/v1F0O0EHVzZXJAZXhhbXBsZS5jb22IlAQTFgoAPBYhBCwhx3VscD58CG8M38qI
-4qiv2c24BQIAAAAAAhsDBQsJCAcCAyICAQYVCgkICwIEFgIDAQIeBwIXgAAKCRDK
-iOKor9nNuJ8gAQC75/l0dE+AHqIQTS/ofPKNrYD2swdRrSqNRYTG/HKWgwEAka/D
-JdzsOYo4oxQUNGqhuNQ+N0iIpzb0BQ+faPOWHwW4OAQAAAAAEgorBgEEAZdVAQUB
-AQdAvGnJoQcibZQGaO09pVUGtIgqNEQZvwoDCSjvt/zWhxoDAQgHiHgEGBYKACAW
-IQQsIcd1bHA+fAhvDN/KiOKor9nNuAUCAAAAAAIbDAAKCRDKiOKor9nNuKSSAQCh
-3hEw4uxWeAAf9YUFZCL4R7mFnidex9qwOxOE0SdqpwEAjmH+yzxJT+A6bH+6IYlM
-KmnxVEBpz5Vt5TldT/9ovAA=
-=4hZe
------END PGP PUBLIC KEY BLOCK-----
-*/
 
 // Also, you can explore existing keys internal structure
 console.log(pgp.pubArmor.decode(keys.publicKey));
@@ -142,56 +227,85 @@ console.log({
 });
 ```
 
-## `tor(seed)`
+### Password generation
 
-Generates TOR addresses.
-
-- `seed: Uint8Array`
-- Returns `{ privateKey: string, publicKey: string, publicKeyBytes: Uint8Array }`
+#### Bruteforce estimation and ZXCVBN score
 
 ```js
-import tor from 'ed25519-keygen/tor';
-import { randomBytes } from 'ed25519-keygen/utils';
-const tseed = randomBytes(32);
-const tkeys = tor(tseed);
-console.log(tkeys.privateKey);
-console.log(tkeys.publicKey);
-/*
-ED25519-V3:EOl78M2gARYOyp4BDltfzxSR3dA/LLTXZLb2imgOwFuYC5ISIUxsQ42ywzHaxvc03mahmaLziuyN0+f8EhM+4w==
-rx724x3oambzxr46pkbdckdqyut5x5lhsneru3uditf4nuyuf4uou6qd.onion
-*/
+{
+  score: 'somewhat guessable', // ZXCVBN Score
+  // Guess times
+  guesses: {
+    online_throttling: '1y 115mo', // Throttled online attack
+    online: '1mo 10d', // Online attack
+    // Offline attack (salte, slow hash function like bcrypt, scrypt, PBKDF2, argon, etc)
+    slow: '57min 36sec',
+    fast: '0 sec' // Offline attack
+  },
+  // Estimated attack costs (in $)
+  costs: {
+    luks: 1.536122841572242, // LUKS (Linux FDE)
+    filevault2: 0.2308740987992559, // FileVault 2 (macOS FDE)
+    macos: 0.03341598798410283, // MaccOS v10.8+ passwords
+    pbkdf2: 0.011138662661367609 // PBKDF2 (PBKDF2-HMAC-SHA256)
+  }
+}
 ```
 
-## `ipns(seed)`
+#### Mask control characters
 
-Generates IPNS addresses.
+| Mask | Description                        | Example       |
+| ---- | ---------------------------------- | ------------- |
+| 1    | digits                             | 4, 7, 5, 0    |
+| @    | symbols                            | !, @, %, ^    |
+| v    | vowels                             | a, e, i       |
+| c    | consonant                          | b, c, d       |
+| a    | letter (vowel or consonant)        | a, b, e, c    |
+| V    | uppercase vowel                    | A, E, I       |
+| C    | uppercase consonant                | B, C, D       |
+| A    | uppercase letter                   | A, B, E, C    |
+| l    | lower and upper case letters       | A, b, C       |
+| n    | same as 'l', but also digits       | A, 1, b, 2, C |
+| \*   | same as 'n', but also symbols      | A, 1, !, b, @ |
+| s    | syllable (same as 'cv')            | ca, re, do    |
+| S    | Capitalized syllable (same as 'Cv) | Ca, Ti, Je    |
+|      | All other characters used as is    |               |
 
-- `seed: Uint8Array`
-- Returns
-  `{ privateKey: string, publicKey: string, base36: string, base32: string, base16: string, contenthash: string}`
+Examples:
 
-```js
-import ipns from 'ed25519-keygen/ipns';
-import { randomBytes } from 'ed25519-keygen/utils';
-const iseed = randomBytes(32);
-const ikeys = ipns(iseed);
-console.log(ikeys.privateKey);
-console.log(ikeys.publicKey);
-console.log(ikeys.base16);
-console.log(ikeys.base32);
-console.log(ikeys.base36);
-console.log(ikeys.contenthash);
-/*
-0x080112400681d6420abb1ba47acd5c03c8e5ee84185a2673576b262e234e50c46d86f59712c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
-0x017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
-ipns://f017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
-ipns://bafzaajaiaejcaewifgpmfri57654wt47zsw45ykcjszdp2ntbu6nolkhygaqg2e5
-ipns://k51qzi5uqu5dgnfwbc46une4upw1vc9hxznymyeykmg6rev1513yrnbyrwmmql
-0xe501017200240801122012c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d
-*/
-```
+- Mask: `Cvccvc-cvccvc-cvccv1` will generate `Mavmuq-xadgys-poqsa5`
+- Mask `@Ss-ss-ss` will generate: `*Tavy-qyjy-vemo`
 
-## hdkey
+#### Design rationale
+
+Most strict password rules (so password will be accepted everywhere):
+
+- at least one upper-case character
+- at least one lower-case character
+- at least one symbol
+- at least one digit
+- length greater or equal to 8
+  These rules don't significantly increase password entropy (most humans will use mask like 'Aaaaaa1@' or any other popular mask),
+  but they means that we cannot simple use mask like `********`, since it can generate passwords which won't satisfy these rules.
+
+#### What do we want from passwords?
+
+- **_length_**: entering 32 character password for FDE via IPMI java applet on remote server is pretty painful.
+  -> 12-16 probably ok, anything with more characters has chance to be truncated by service.
+- **_readability_**: entering '!#%!$#Y^&\*#%@#!!1' from air-gapped pc is hard.
+- **_entropy_**:
+  - 32 bit is likely to be brutforced via network
+  - 64 bit: 22 days && 1.6k$ at 4x V100: https://blog.trailofbits.com/2019/11/27/64-bits-ought-to-be-enough-for-anybody/
+    but it is simple loop, if there is something like pbkdf before password, it will significantly slowdown everything
+  - 80 bits is probably outside of budget for most attackers (btc hash rate) even if there is major speedup for specific algorithm
+  - For websites and services we don't care much about entropy, since passwords are unique and there is no re-usage,
+    however for FDE / server password entropy is pretty important
+- no fancy and unique mask by default: we don't want to fingeprint users
+- any mask will leak eventually (even if user choices personal mask, there will be password leaks from websites),
+  so we cannot calculate entropy by `******` mask, we need to calculate entropy for specific mask (which is smaller).
+- Password generator should be reversible, that way we can easily proof entropy/strength of password.
+
+### SLIP10 API
 
 SLIP-0010 hierarchical deterministic (HD) wallets for implementation. Based on code from
 [scure-bip32](https://github.com/paulmillr/scure-bip32). Check out
@@ -205,24 +319,12 @@ SLIP-0010 hierarchical deterministic (HD) wallets for implementation. Based on c
   non-hardened keys (`m/0/1`) as hardened (`m/0'/1'`). If you want this behaviour, there is a flag
   `forceHardened` in `derive` method
 
-```ts
-import { HDKey } from 'ed25519-keygen/hdkey';
-const hdkey1 = HDKey.fromMasterSeed(seed);
-
-// props
-[hdkey1.depth, hdkey1.index, hdkey1.chainCode];
-console.log(hdkey2.privateKey, hdkey2.publicKey);
-console.log(hdkey3.derive("m/0/2147483647'/1'"));
-const sig = hdkey3.sign(hash);
-hdkey3.verify(hash, sig);
-```
-
 Note: `chainCode` property is essentially a private part of a secret "master" key, it should be
 guarded from unauthorized access.
 
 The full API is:
 
-```ts
+```js
 class HDKey {
   public static HARDENED_OFFSET: number;
   public static fromMasterSeed(seed: Uint8Array | string): HDKey;
@@ -246,15 +348,6 @@ class HDKey {
   verify(hash: Uint8Array, signature: Uint8Array): boolean;
 }
 ```
-
-## utils
-
-```ts
-import { randomBytes } from 'ed25519-keygen/utils';
-const key = randomBytes(32);
-```
-
-CSPRNG for secure generation of random Uint8Array. Utilizes webcrypto under the hood.
 
 ## License
 

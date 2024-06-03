@@ -1,3 +1,4 @@
+/*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 import { cfb } from '@noble/ciphers/aes';
 import { bytesToNumberBE, equalBytes, numberToHexUnpadded } from '@noble/curves/abstract/utils';
 import { ed25519, x25519 } from '@noble/curves/ed25519';

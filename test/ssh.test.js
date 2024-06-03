@@ -1,6 +1,6 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import * as ssh from '../esm/ssh.js';
+import * as ssh from '../lib/esm/ssh.js';
 import { hex } from '@scure/base';
 
 // Real key from the internet
@@ -39,3 +39,8 @@ describe('ssh', () => {
     deepStrictEqual(ssh.getKeys(priv, comment, checkBytes), EXPECTED);
   });
 });
+
+import url from 'node:url';
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  should.run();
+}

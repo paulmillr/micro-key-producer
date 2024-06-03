@@ -2,7 +2,7 @@ import { deepStrictEqual } from 'node:assert';
 import cp from 'node:child_process';
 import fs from 'node:fs';
 import { randomBytes } from '@noble/hashes/utils';
-import pgp from '../esm/pgp.js';
+import pgp from '../lib/esm/pgp.js';
 import { should } from 'micro-should';
 
 // Warning: this test will execute system command `gpg`
@@ -63,3 +63,8 @@ should('basic', () => {
     cleanKeys();
   }
 });
+
+import url from 'node:url';
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  should.run();
+}
