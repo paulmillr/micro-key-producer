@@ -4,7 +4,7 @@
   "description": "Produces secure keys and passwords. Supports SSH, PGP, BLS, OTP, and many others",
   "main": "./lib/index.js",
   "module": "./lib/esm/index.js",
-  "files": ["lib"],
+  "files": ["lib", "src"],
   "dependencies": {
     "@noble/ciphers": "~0.5.2",
     "@noble/curves": "~1.4.0",
@@ -34,10 +34,10 @@
       "import": "./lib/esm/ipns.js",
       "default": "./lib/ipns.js"
     },
-    "./hdkey.js": {
-      "types": "./lib/hdkey.d.ts",
-      "import": "./lib/esm/hdkey.js",
-      "default": "./lib/hdkey.js"
+    "./slip10.js": {
+      "types": "./lib/slip10.d.ts",
+      "import": "./lib/esm/slip10.js",
+      "default": "./lib/slip10.js"
     },
     "./otp.js": {
       "types": "./lib/otp.d.ts",
@@ -72,6 +72,7 @@
   },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
+    "build:release": "tsc && tsc -p tsconfig.esm.json",
     "lint": "prettier --check src",
     "format": "prettier --write 'src/**/*.{js,ts}' 'test/*.js'",
     "test": "node test/index.js"
