@@ -6,7 +6,7 @@
   "module": "./lib/esm/index.js",
   "files": ["lib", "src"],
   "dependencies": {
-    "@noble/ciphers": "~0.5.2",
+    "@noble/ciphers": "~0.5.3",
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
     "@scure/base": "~1.1.6",
