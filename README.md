@@ -128,13 +128,11 @@ import { randomBytes } from '@noble/hashes/utils';
 
 const seed = randomBytes(32);
 const pass = pwd.secureMask.apply(seed).password;
-// console.log(pwd.secureMask.estimate); // produce password estimation
 // wivfi1-Zykrap-fohcij, will change on each run
 // secureMask is format from iOS keychain, see "Detailed API" section
 ```
 
-- Supports iOS / macOS Safari Secure Password from Keychain
-- Provides ZXCVBN Score for password bruteforce estimation
+Supports iOS / macOS Safari Secure Password from Keychain. Optional zxcvbn score for password bruteforce estimation
 
 ### Generate 2FA OTP codes
 
@@ -232,6 +230,10 @@ console.log({
 #### Bruteforce estimation and ZXCVBN score
 
 ```js
+import * as pwd from 'micro-key-producer/password.js';
+console.log(pwd.secureMask.estimate);
+
+// Output
 {
   score: 'somewhat guessable', // ZXCVBN Score
   // Guess times
