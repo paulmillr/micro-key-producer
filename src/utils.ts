@@ -28,8 +28,8 @@ export function base64armor<T>(
   if (checksum !== undefined && typeof checksum !== 'function')
     throw new Error('checksum must be a function or undefined');
   const upcase = name.toUpperCase();
-  const markBegin = `-----BEGIN ${upcase}-----`;
-  const markEnd = `-----END ${upcase}-----`;
+  const markBegin = '-----BEGIN ' + upcase + '-----';
+  const markEnd = '-----END ' + upcase + '-----';
   return {
     encode(value: T) {
       const data = inner.encode(value);
@@ -37,11 +37,11 @@ export function base64armor<T>(
       const lines = [];
       for (let i = 0; i < encoded.length; i += lineLen) {
         const s = encoded.slice(i, i + lineLen);
-        if (s.length) lines.push(`${encoded.slice(i, i + lineLen)}\n`);
+        if (s.length) lines.push(encoded.slice(i, i + lineLen) + '\n');
       }
       let body = lines.join('');
-      if (checksum) body += `=${base64.encode(checksum(data))}\n`;
-      return `${markBegin}\n\n${body}${markEnd}\n`;
+      if (checksum) body += '=' + base64.encode(checksum(data)) + '\n';
+      return markBegin + '\n\n' + body + markEnd + '\n';
     },
     decode(s: string): T {
       if (typeof s !== 'string') throw new Error('string expected');
@@ -57,7 +57,7 @@ export function base64armor<T>(
         const body = base64.decode(lines.slice(0, -1).join(''));
         const cs = lines[last].slice(1);
         const realCS = base64.encode(checksum(body));
-        if (realCS !== cs) throw new Error(`invalid checksum ${cs} instead of ${realCS}`);
+        if (realCS !== cs) throw new Error('invalid checksum ' + cs + 'instead of ' + realCS);
         return inner.decode(body);
       }
       return inner.decode(base64.decode(lines.join('')));
