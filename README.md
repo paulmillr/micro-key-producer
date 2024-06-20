@@ -26,15 +26,15 @@ import slip10 from 'micro-key-producer/slip10.js';
 import { randomBytes } from 'micro-key-producer/utils.js';
 ```
 
-- [Known and random seeds](#known-and-random-seeds)
-- [Generate SSH keys](#generate-ssh-keys)
-- [Generate PGP keys](#generate-pgp-keys)
-- [Generate BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
-- [Generate secure passwords](#generate-secure-passwords)
-- [Generate 2FA OTP codes](#generate-2fa-otp-codes)
-- [Generate TOR keys and addresses](#generate-tor-keys-and-addresses)
-- [Generate IPNS addresses](#generate-ipns-addresses)
-- [Generate SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
+- [Key generation: known and random seeds](#key-generation-known-and-random-seeds)
+    - [SSH keys](#generate-ssh-keys)
+    - [PGP keys](#generate-pgp-keys)
+    - [Secure passwords](#generate-secure-passwords)
+    - [2FA OTP codes](#generate-2fa-otp-codes)
+    - [BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
+    - [TOR keys and addresses](#generate-tor-keys-and-addresses)
+    - [IPNS addresses](#generate-ipns-addresses)
+    - [SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
 - [Low-level API](#low-level-api)
   - [PGP key generation](#pgp-key-generation)
   - [Password generation](#password-generation)
@@ -44,14 +44,15 @@ import { randomBytes } from 'micro-key-producer/utils.js';
     - [What do we want from passwords?](#what-do-we-want-from-passwords)
   - [SLIP10 API](#slip10-api)
 
-### Known and random seeds
+
+### Key generation: known and random seeds
 
 Every method takes a seed (key), from which the formatted result is produced.
 
-A seed can be **known** (it will always produce the same result), or **random**.
+A seed can be **known** (a.k.a. determinisitc - it will always produce the same result), or **random**.
 
 ```js
-// known: Uses known mnemonic (handled in separate package)
+// known: (deterministic) Uses known mnemonic (handled in separate package)
 import { mnemonicToSeedSync } from '@scure/bip39';
 const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
 const knownSeed = mnemonicToSeedSync(mnemonic, '');
