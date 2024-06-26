@@ -6,3 +6,4 @@ node_modules
 /esm/*.js*
 /esm/*.ts*
 /cjs
+/types
