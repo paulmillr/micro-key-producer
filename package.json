@@ -2,9 +2,15 @@
   "name": "micro-key-producer",
   "version": "0.7.0",
   "description": "Produces secure keys and passwords. Supports SSH, PGP, BLS, OTP, and many others",
-  "main": "./lib/index.js",
-  "module": "./lib/esm/index.js",
-  "files": ["lib", "src"],
+  "main": "./index.js",
+  "module": "./esm/index.js",
+  "files": [
+    "*.js",
+    "*.d.ts",
+    "*.map",
+    "esm",
+    "src"
+  ],
   "dependencies": {
     "@noble/ciphers": "~0.5.3",
     "@noble/curves": "~1.4.0",
@@ -15,59 +21,50 @@
   "devDependencies": {
     "@paulmillr/jsbt": "0.1.0",
     "micro-should": "0.4.0",
-    "prettier": "3.1.1",
-    "typescript": "5.3.2"
+    "prettier": "3.3.2",
+    "typescript": "5.5.2"
   },
+  "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "import": "./lib/esm/index.js",
-      "default": "./lib/index.js"
+      "import": "./esm/index.js",
+      "require": "./index.js"
     },
     "./bls.js": {
-      "types": "./lib/bls.d.ts",
-      "import": "./lib/esm/bls.js",
-      "default": "./lib/bls.js"
+      "import": "./esm/bls.js",
+      "require": "./bls.js"
     },
     "./ipns.js": {
-      "types": "./lib/ipns.d.ts",
-      "import": "./lib/esm/ipns.js",
-      "default": "./lib/ipns.js"
+      "import": "./esm/ipns.js",
+      "require": "./ipns.js"
     },
     "./slip10.js": {
-      "types": "./lib/slip10.d.ts",
-      "import": "./lib/esm/slip10.js",
-      "default": "./lib/slip10.js"
+      "import": "./esm/slip10.js",
+      "require": "./slip10.js"
     },
     "./otp.js": {
-      "types": "./lib/otp.d.ts",
-      "import": "./lib/esm/otp.js",
-      "default": "./lib/otp.js"
+      "import": "./esm/otp.js",
+      "require": "./otp.js"
     },
     "./password.js": {
-      "types": "./lib/password.d.ts",
-      "import": "./lib/esm/password.js",
-      "default": "./lib/password.js"
+      "import": "./esm/password.js",
+      "require": "./password.js"
     },
     "./pgp.js": {
-      "types": "./lib/pgp.d.ts",
-      "import": "./lib/esm/pgp.js",
-      "default": "./lib/pgp.js"
+      "import": "./esm/pgp.js",
+      "require": "./pgp.js"
     },
     "./ssh.js": {
-      "types": "./lib/ssh.d.ts",
-      "import": "./lib/esm/ssh.js",
-      "default": "./lib/ssh.js"
+      "import": "./esm/ssh.js",
+      "require": "./ssh.js"
     },
     "./tor.js": {
-      "types": "./lib/tor.d.ts",
-      "import": "./lib/esm/tor.js",
-      "default": "./lib/tor.js"
+      "import": "./esm/tor.js",
+      "require": "./tor.js"
     },
     "./utils.js": {
-      "types": "./lib/utils.d.ts",
-      "import": "./lib/esm/utils.js",
-      "default": "./lib/utils.js"
+      "import": "./esm/utils.js",
+      "require": "./utils.js"
     }
   },
   "scripts": {

@@ -3,8 +3,8 @@
 Produces secure keys and passwords.
 
 - 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography
-- 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
-- 🎲 Produce known and random keys
+- 🔻 Tree-shakeable: unused code is excluded from your builds
+- 🎲 Produce known (deterministic) and random keys
 - 🔑 SSH, PGP, TOR, IPNS, SLIP10 keys
 - 🪙 BLS12-381 keys for ETH validators
 - 📟 Generate secure passwords & OTP 2FA codes
