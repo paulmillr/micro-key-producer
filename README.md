@@ -8,6 +8,7 @@ Produces secure keys and passwords.
 - 🔑 SSH, PGP, TOR, IPNS, SLIP10 keys
 - 🪙 BLS12-381 keys for ETH validators
 - 📟 Generate secure passwords & OTP 2FA codes
+- 🖇️ Support cjs and esm exports
 
 Used in: [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/terminal7).
 
@@ -16,25 +17,36 @@ Used in: [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/termin
 > npm install micro-key-producer
 
 ```ts
-import ssh from 'micro-key-producer/ssh.js';
-import pgp from 'micro-key-producer/pgp.js';
-import * as pwd from 'micro-key-producer/password.js';
-import * as otp from 'micro-key-producer/otp.js';
-import tor from 'micro-key-producer/tor.js';
-import ipns from 'micro-key-producer/ipns.js';
-import slip10 from 'micro-key-producer/slip10.js';
-import { randomBytes } from 'micro-key-producer/utils.js';
+import ssh from 'micro-key-producer/esm/ssh.js';
+import pgp from 'micro-key-producer/esm/pgp.js';
+import * as pwd from 'micro-key-producer/esm/password.js';
+import * as otp from 'micro-key-producer/esm/otp.js';
+import tor from 'micro-key-producer/esm/tor.js';
+import ipns from 'micro-key-producer/esm/ipns.js';
+import slip10 from 'micro-key-producer/esm/slip10.js';
+import { randomBytes } from 'micro-key-producer/esm/utils.js';
+```
+
+```ts
+import ssh from 'micro-key-producer/cjs/ssh';
+import pgp from 'micro-key-producer/cjs/pgp';
+import * as pwd from 'micro-key-producer/cjs/password';
+import * as otp from 'micro-key-producer/cjs/otp';
+import tor from 'micro-key-producer/cjs/tor';
+import ipns from 'micro-key-producer/cjs/ipns';
+import slip10 from 'micro-key-producer/cjs/slip10';
+import { randomBytes } from 'micro-key-producer/cjs/utils';
 ```
 
 - [Key generation: known and random seeds](#key-generation-known-and-random-seeds)
-    - [SSH keys](#generate-ssh-keys)
-    - [PGP keys](#generate-pgp-keys)
-    - [Secure passwords](#generate-secure-passwords)
-    - [2FA OTP codes](#generate-2fa-otp-codes)
-    - [BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
-    - [TOR keys and addresses](#generate-tor-keys-and-addresses)
-    - [IPNS addresses](#generate-ipns-addresses)
-    - [SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
+  - [SSH keys](#generate-ssh-keys)
+  - [PGP keys](#generate-pgp-keys)
+  - [Secure passwords](#generate-secure-passwords)
+  - [2FA OTP codes](#generate-2fa-otp-codes)
+  - [BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
+  - [TOR keys and addresses](#generate-tor-keys-and-addresses)
+  - [IPNS addresses](#generate-ipns-addresses)
+  - [SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
 - [Low-level API](#low-level-api)
   - [PGP key generation](#pgp-key-generation)
   - [Password generation](#password-generation)
@@ -43,7 +55,6 @@ import { randomBytes } from 'micro-key-producer/utils.js';
     - [Design rationale](#design-rationale)
     - [What do we want from passwords?](#what-do-we-want-from-passwords)
   - [SLIP10 API](#slip10-api)
-
 
 ### Key generation: known and random seeds
 

@@ -1,0 +1,7 @@
+{
+  "extends": "@paulmillr/jsbt/tsconfigs/cjs.json",
+  "compilerOptions": {
+    "outDir": "cjs"
+  },
+  "include": ["src"],
+}

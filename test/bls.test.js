@@ -2,7 +2,7 @@ import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { utf8 } from '@scure/base';
-import * as bls from '../lib/esm/bls.js';
+import * as bls from '../esm/bls.js';
 
 const vectors = [
   [

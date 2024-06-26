@@ -1,8 +1,8 @@
 node_modules
 /build/
-/lib
 /*.js
-/esm/*.js
 /*.d.ts
 /*.map
-/esm
+/esm/*.js*
+/esm/*.ts*
+/cjs

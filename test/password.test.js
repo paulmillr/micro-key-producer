@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { should, describe } from 'micro-should';
 import { sha256 } from '@noble/hashes/sha256';
-import * as pwd from '../lib/esm/password.js';
+import * as pwd from '../esm/password.js';
 
 describe('password', () => {
   should('Set utils', () => {
