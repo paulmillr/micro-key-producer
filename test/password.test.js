@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { should, describe } from 'micro-should';
 import { sha256 } from '@noble/hashes/sha256';
-import * as pwd from '../lib/esm/password.js';
+import * as pwd from '../esm/password.js';
 
 describe('password', () => {
   should('Set utils', () => {
@@ -16,10 +16,10 @@ describe('password', () => {
     const cc = new Set('qr');
     // prettier-ignore
     assert.deepStrictEqual(pwd.product(aa, bb, cc), new Set([
-        'adq', 'adr', 'aeq', 'aer', 'afq', 'afr',
-        'bdq', 'bdr', 'beq', 'ber', 'bfq', 'bfr',
-        'cdq', 'cdr', 'ceq', 'cer', 'cfq', 'cfr',
-      ]));
+      'adq', 'adr', 'aeq', 'aer', 'afq', 'afr',
+      'bdq', 'bdr', 'beq', 'ber', 'bfq', 'bfr',
+      'cdq', 'cdr', 'ceq', 'cer', 'cfq', 'cfr',
+    ]));
   });
   should('Mask utils', () => {
     assert.deepStrictEqual(pwd.mask('11').cardinality, 100n);

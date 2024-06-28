@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { should, describe } from 'micro-should';
 import { hexToBytes } from '@noble/hashes/utils';
-import * as otp from '../lib/esm/otp.js';
+import * as otp from '../esm/otp.js';
 
 describe('otp', () => {
   should('OTP url parser', () => {
