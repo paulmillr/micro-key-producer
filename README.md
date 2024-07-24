@@ -49,7 +49,7 @@ import { randomBytes } from 'micro-key-producer/utils.js';
 
 Every method takes a seed (key), from which the formatted result is produced.
 
-A seed can be **known** (a.k.a. determinisitc - it will always produce the same result), or **random**.
+A seed can be **known** (a.k.a. deterministic - it will always produce the same result), or **random**.
 
 ```js
 // known: (deterministic) Uses known mnemonic (handled in separate package)

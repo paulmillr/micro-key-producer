@@ -19,7 +19,7 @@
     "micro-packed": "~0.6.2"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.2.0",
+    "@paulmillr/jsbt": "0.2.1",
     "micro-should": "0.4.0",
     "prettier": "3.3.2",
     "typescript": "5.5.2"
