@@ -180,7 +180,7 @@ import slip10 from 'micro-key-producer/slip10.js';
 import { randomBytes } from 'micro-key-producer/utils.js';
 
 const seed = randomBytes(32);
-const hdkey1 = slip10.HDKey.fromMasterSeed(seed);
+const hdkey1 = slip10.fromMasterSeed(seed);
 
 // props
 [hdkey1.depth, hdkey1.index, hdkey1.chainCode];
