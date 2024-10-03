@@ -1,6 +1,6 @@
 {
   "name": "micro-key-producer",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Produces secure keys and passwords. Supports SSH, PGP, BLS, OTP, and many others",
   "main": "./index.js",
   "module": "./esm/index.js",
@@ -12,10 +12,10 @@
     "src"
   ],
   "dependencies": {
-    "@noble/ciphers": "~0.5.3",
-    "@noble/curves": "~1.4.0",
-    "@noble/hashes": "~1.4.0",
-    "@scure/base": "~1.1.6",
+    "@noble/ciphers": "^1.0.0",
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0",
+    "@scure/base": "~1.1.9",
     "micro-packed": "~0.6.2"
   },
   "devDependencies": {
