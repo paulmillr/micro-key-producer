@@ -1,6 +1,6 @@
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256 } from '@noble/hashes/sha256';
-import { concatBytes, hexToBytes, bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import { concatBytes, hexToBytes, bytesToHex, utf8ToBytes, isBytes } from '@noble/hashes/utils';
 import { randomBytes } from '@noble/hashes/utils';
 import { scrypt } from '@noble/hashes/scrypt';
 import { pbkdf2 } from '@noble/hashes/pbkdf2';
@@ -110,7 +110,7 @@ export function deriveSeedTree(seed: Uint8Array, path: string): Uint8Array {
 export const EIP2334_KEY_TYPES = ['withdrawal', 'signing'] as const;
 export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
 export function deriveEIP2334Key(seed: Uint8Array, type: EIP2334KeyType, index: number) {
-  if (!(seed instanceof Uint8Array)) throw new Error('Valid seed expected');
+  if (!isBytes(seed)) throw new Error('Valid seed expected');
   if (!EIP2334_KEY_TYPES.includes(type)) throw new Error('Valid keystore type expected');
   assertUint32(index);
   // m / purpose / coin_type /  account / use

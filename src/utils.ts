@@ -27,6 +27,9 @@ export function base64armor<T>(
   if (!packedUtils.isCoder(inner)) throw new Error('inner must be a valid base coder');
   if (checksum !== undefined && typeof checksum !== 'function')
     throw new Error('checksum must be a function or undefined');
+  const codes = { caretReset: 13, newline: 10 };
+  const nl = String.fromCharCode(codes.newline);
+  const r = String.fromCharCode(codes.caretReset);
   const upcase = name.toUpperCase();
   const markBegin = '-----BEGIN ' + upcase + '-----';
   const markEnd = '-----END ' + upcase + '-----';
@@ -37,11 +40,11 @@ export function base64armor<T>(
       const lines = [];
       for (let i = 0; i < encoded.length; i += lineLen) {
         const s = encoded.slice(i, i + lineLen);
-        if (s.length) lines.push(encoded.slice(i, i + lineLen) + '\n');
+        if (s.length) lines.push(encoded.slice(i, i + lineLen) + nl);
       }
       let body = lines.join('');
-      if (checksum) body += '=' + base64.encode(checksum(data)) + '\n';
-      return markBegin + '\n\n' + body + markEnd + '\n';
+      if (checksum) body += '=' + base64.encode(checksum(data)) + nl;
+      return markBegin + nl + nl + body + markEnd + nl;
     },
     decode(s: string): T {
       if (typeof s !== 'string') throw new Error('string expected');
@@ -49,9 +52,9 @@ export function base64armor<T>(
       const endPos = s.indexOf(markEnd);
       if (beginPos === -1 || endPos === -1 || beginPos >= endPos)
         throw new Error('invalid armor format');
-      let lines = s.replace(markBegin, '').replace(markEnd, '').trim().split('\n');
+      let lines = s.replace(markBegin, '').replace(markEnd, '').trim().split(nl);
       if (lines.length === 0) throw new Error('no data found in armor');
-      lines = lines.map((l) => l.replace('\r', '').trim());
+      lines = lines.map((l) => l.replace(r, '').trim());
       const last = lines.length - 1;
       if (checksum && lines[last].startsWith('=')) {
         const body = base64.decode(lines.slice(0, -1).join(''));
