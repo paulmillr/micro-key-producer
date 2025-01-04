@@ -24,7 +24,11 @@ export function parseAddress(address: string): Uint8Array {
   return skip;
 }
 
-export function getKeys(seed: Uint8Array) {
+export function getKeys(seed: Uint8Array): {
+  publicKeyBytes: Uint8Array;
+  publicKey: string;
+  privateKey: string;
+} {
   const { head, prefix, pointBytes } = ed25519.utils.getExtendedPublicKey(seed);
   const added = concatBytes(head, prefix);
   return {

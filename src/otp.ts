@@ -50,7 +50,7 @@ export function buildURL(opts: OTPOpts): string {
   return `otpauth://totp/?secret=${sec}&interval=${int_}&digits=${opts.digits}&algorithm=${algo}`;
 }
 
-export function hotp(opts: OTPOpts, counter: number | bigint) {
+export function hotp(opts: OTPOpts, counter: number | bigint): string {
   const hash = { sha1, sha256, sha512 }[opts.algorithm];
   if (!hash) throw new Error(`TOTP: unknown hash: ${opts.algorithm}`);
   const mac = hmac(hash, opts.secret, U64BE.encode(BigInt(counter)));
@@ -59,6 +59,6 @@ export function hotp(opts: OTPOpts, counter: number | bigint) {
   return num.toString().slice(-opts.digits).padStart(opts.digits, '0');
 }
 
-export function totp(opts: OTPOpts, ts = Date.now()) {
+export function totp(opts: OTPOpts, ts: number = Date.now()): string {
   return hotp(opts, Math.floor(ts / (opts.interval * 1000)));
 }

@@ -47,7 +47,7 @@ function createAesCfb(len: number) {
 
 // PGP Types
 // Multiprecision Integers [RFC4880](https://datatracker.ietf.org/doc/html/rfc4880)
-export const mpi = P.wrap({
+export const mpi: P.CoderType<bigint> = P.wrap({
   encodeStream: (w: P.Writer, value: bigint) => {
     let bitLen = 0;
     for (let v = value; v > 0n; v >>= 1n, bitLen++);
@@ -63,7 +63,7 @@ export const mpi = P.wrap({
 // More info:
 // - https://www.mhonarc.org/archive/html/ietf-openpgp/2019-10/msg00041.html
 // - https://marc.info/?l=gnupg-devel&m=161518990118244&w=2
-export const opaquempi = P.wrap({
+export const opaquempi: P.CoderType<Uint8Array> = P.wrap({
   encodeStream: (w: P.Writer, value: Bytes) => {
     P.U16BE.encodeStream(w, value.length * 8);
     w.bytes(value);
@@ -76,7 +76,7 @@ export const opaquempi = P.wrap({
 // Others: split in groups of 7 bit chunks, add 0x80 every byte except last(stop flag), like utf8.
 const OID_MSB = 2 ** 7; // mask for 8 bit
 const OID_NO_MSB = 2 ** 7 - 1; // mask for all bits except 8
-export const oid = P.wrap({
+export const oid: P.CoderType<string> = P.wrap({
   encodeStream: (w: P.Writer, value: string) => {
     const items = value.split('.').map((i) => +i);
     let oid = [items[0] * 40];
@@ -104,7 +104,7 @@ export const oid = P.wrap({
   },
 });
 
-export const PacketLen = P.wrap({
+export const PacketLen: P.CoderType<number> = P.wrap({
   encodeStream: (w: P.Writer, value: number) => {
     if (typeof value !== 'number') throw new Error(`PGP.PacketLen invalid length type, ${value}`);
     if (value < 192) w.byte(value);
@@ -219,7 +219,31 @@ const ECDHPub = P.struct({
   ),
 });
 
-export const PubKeyPacket = P.struct({
+export type PubKeyPacketAlgo = P.Values<{
+  EdDSA: {
+    TAG: 'EdDSA';
+    data: P.StructInput<{
+      curve: any;
+      pub: any;
+    }>;
+  };
+  ECDH: {
+    TAG: 'ECDH';
+    data: P.StructInput<{
+      curve: any;
+      pub: any;
+      params: any;
+    }>;
+  };
+}>;
+
+export const PubKeyPacket: P.CoderType<
+  P.StructInput<{
+    version: undefined;
+    created: number;
+    algo: PubKeyPacketAlgo;
+  }>
+> = P.struct({
   version: PGP_PACKET_VERSION,
   created: P.U32BE,
   algo: P.tag(pubKeyEnum, {
@@ -228,6 +252,12 @@ export const PubKeyPacket = P.struct({
   }),
 });
 type PubKeyType = P.UnwrapCoder<typeof PubKeyPacket>;
+type PacketData = P.StructInput<{
+  enc: any;
+  S2K: any;
+  iv: any;
+  secret: any;
+}>;
 
 const PlainSecretKey = P.struct({
   secret: P.bytes(null),
@@ -240,8 +270,33 @@ const EncryptedSecretKey = P.struct({
   iv: P.bytes(16),
   secret: P.bytes(null),
 });
+
 // NOTE: SecretKey is specific packet type as per spec. For user facing API we using 'privateKey'
-const SecretKeyPacket = P.struct({
+const SecretKeyPacket: P.CoderType<
+  P.StructInput<{
+    pub: P.StructInput<{
+      version: undefined;
+      created: number;
+      algo: PubKeyPacketAlgo;
+    }>;
+    type: P.Values<{
+      plain: {
+        TAG: 'plain';
+        data: P.StructInput<{
+          secret: any;
+        }>;
+      };
+      encrypted: {
+        TAG: 'encrypted';
+        data: PacketData;
+      };
+      encrypted2: {
+        TAG: 'encrypted2';
+        data: PacketData;
+      };
+    }>;
+  }>
+> = P.struct({
   pub: PubKeyPacket,
   type: P.mappedTag(P.U8, {
     plain: [0x00, PlainSecretKey],
@@ -481,7 +536,7 @@ const Packet = P.wrap({
   },
 });
 
-export const Stream = P.array(null, Packet);
+export const Stream: P.CoderType<any[]> = P.array(null, Packet);
 
 // Key generation
 const EDSIGN = P.array(null, P.U256BE);
@@ -553,8 +608,18 @@ function createPrivKey(
   return { pub, type: { TAG: 'encrypted', data: { enc, S2K, iv, secret } } };
 }
 
-export const pubArmor = base64armor('PGP PUBLIC KEY BLOCK', 64, Stream, crc24);
-export const privArmor = base64armor('PGP PRIVATE KEY BLOCK', 64, Stream, crc24);
+export const pubArmor: P.Coder<any[], string> = base64armor(
+  'PGP PUBLIC KEY BLOCK',
+  64,
+  Stream,
+  crc24
+);
+export const privArmor: P.Coder<any[], string> = base64armor(
+  'PGP PRIVATE KEY BLOCK',
+  64,
+  Stream,
+  crc24
+);
 function validateDate(timestamp: number) {
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 2 ** 46)
     throw new Error('invalid PGP key creation time: must be a valid UNIX timestamp');
@@ -633,7 +698,7 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0) {
   return { edPubPacket, fingerprint, keyId, cvPubPacket, cvCert, edCert };
 }
 
-export function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0) {
+export function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0): string {
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   return pubArmor.encode([
     { TAG: 'publicKey', data: edPubPacket },
@@ -650,11 +715,11 @@ export function formatPrivate(
   user: string,
   password: string,
   createdAt = 0,
-  edSalt = randomBytes(8),
-  edIV = randomBytes(16),
-  cvSalt = randomBytes(8),
-  cvIV = randomBytes(16)
-) {
+  edSalt: Uint8Array = randomBytes(8),
+  edIV: Uint8Array = randomBytes(16),
+  cvSalt: Uint8Array = randomBytes(8),
+  cvIV: Uint8Array = randomBytes(16)
+): string {
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   const edSecret = createPrivKey(edPubPacket, edPriv, password, edSalt, edIV);
   const cvPrivLE = P.U256BE.encode(P.U256LE.decode(cvPriv));
@@ -672,7 +737,37 @@ export function formatPrivate(
  * Derives PGP key ID from the private key.
  * PGP key depends on its date of creation.
  */
-export function getKeyId(edPrivKey: Bytes, createdAt = 0) {
+export function getKeyId(
+  edPrivKey: Bytes,
+  createdAt = 0
+): {
+  edPubPacket: {
+    readonly created: number;
+    readonly algo: {
+      readonly TAG: 'EdDSA';
+      readonly data: {
+        readonly curve: 'ed25519';
+        readonly pub: bigint;
+      };
+    };
+  };
+  fingerprint: string;
+  keyId: string;
+  cvPubPacket: {
+    readonly created: number;
+    readonly algo: {
+      readonly TAG: 'ECDH';
+      readonly data: {
+        readonly curve: 'curve25519';
+        readonly pub: bigint;
+        readonly params: {
+          readonly hash: 'sha256';
+          readonly encryption: 'aes128';
+        };
+      };
+    };
+  };
+} {
   const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(edPrivKey);
   return getPublicPackets(edPrivKey, cvPrivate, createdAt);
 }
@@ -685,7 +780,16 @@ export function getKeyId(edPrivKey: Bytes, createdAt = 0) {
  * happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI:
  * https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0
  */
-export function getKeys(privKey: Bytes, user: string, password: string, createdAt = 0) {
+export function getKeys(
+  privKey: Bytes,
+  user: string,
+  password: string,
+  createdAt = 0
+): {
+  keyId: string;
+  privateKey: string;
+  publicKey: string;
+} {
   const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(privKey);
   const { keyId } = getPublicPackets(privKey, cvPrivate, createdAt);
   const publicKey = formatPublic(privKey, cvPrivate, user, createdAt);

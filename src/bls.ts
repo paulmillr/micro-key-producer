@@ -74,7 +74,7 @@ function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
  * @param ikm - secret octet string
  * @param keyInfo - additional key information
  */
-export function hkdfModR(ikm: Uint8Array, keyInfo = new Uint8Array()) {
+export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = new Uint8Array()): Uint8Array {
   ikm = ensureBytes('IKM', ikm);
   keyInfo = ensureBytes('key information', keyInfo);
   let salt = utf8ToBytes('BLS-SIG-KEYGEN-SALT-');
@@ -109,7 +109,14 @@ export function deriveSeedTree(seed: Uint8Array, path: string): Uint8Array {
 
 export const EIP2334_KEY_TYPES = ['withdrawal', 'signing'] as const;
 export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
-export function deriveEIP2334Key(seed: Uint8Array, type: EIP2334KeyType, index: number) {
+export function deriveEIP2334Key(
+  seed: Uint8Array,
+  type: EIP2334KeyType,
+  index: number
+): {
+  key: Uint8Array;
+  path: string;
+} {
   if (!isBytes(seed)) throw new Error('Valid seed expected');
   if (!EIP2334_KEY_TYPES.includes(type)) throw new Error('Valid keystore type expected');
   assertUint32(index);
@@ -133,7 +140,7 @@ export function deriveEIP2334Key(seed: Uint8Array, type: EIP2334KeyType, index: 
  * const derivedSigning = bls.deriveEIP2334SigningKey(withdrawal.key);
  * deepStrictEqual(derivedSigning, signing.key);
  */
-export function deriveEIP2334SigningKey(withdrawalKey: Uint8Array, index = 0) {
+export function deriveEIP2334SigningKey(withdrawalKey: Uint8Array, index = 0): Uint8Array {
   withdrawalKey = ensureBytes('withdrawal key', withdrawalKey, 32);
   assertUint32(index);
   return deriveChild(withdrawalKey, index);
@@ -262,7 +269,10 @@ function deriveEIP2335Key(password: string, salt: Uint8Array, kdf: KDFType): Uin
  * @returns decrypted secret and optionally path
  * @example decryptEIP2335Keystore(JSON.parse(keystoreString), 'my_password');
  */
-export function decryptEIP2335Keystore<T extends KDFType>(store: Keystore<T>, password: string) {
+export function decryptEIP2335Keystore<T extends KDFType>(
+  store: Keystore<T>,
+  password: string
+): Uint8Array {
   validateKeystore(store);
   const c = store.crypto;
   const checksumProvided = c.checksum.message;
@@ -381,7 +391,7 @@ export class EIP2335Keystore<T extends KDFType> {
   /**
    * Clean internal key material
    */
-  clean() {
+  clean(): void {
     this.destroyed = true;
     this.key.fill(0);
     this.salt.fill(0);
@@ -417,4 +427,7 @@ export function createDerivedEIP2334Keystores<T extends KDFType>(
 }
 
 // Internal methods for test purposes only
-export const _TEST = /* @__PURE__ */ { normalizePassword, deriveEIP2335Key };
+export const _TEST: {
+  normalizePassword: typeof normalizePassword;
+  deriveEIP2335Key: typeof deriveEIP2335Key;
+} = /* @__PURE__ */ { normalizePassword, deriveEIP2335Key };

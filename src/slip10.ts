@@ -7,7 +7,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { sha512 } from '@noble/hashes/sha512';
 import { bytesToHex, concatBytes, createView, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 
-export const MASTER_SECRET = utf8ToBytes('ed25519 seed');
+export const MASTER_SECRET: Uint8Array = utf8ToBytes('ed25519 seed');
 export const HARDENED_OFFSET: number = 0x80000000;
 const ZERO = new Uint8Array([0]);
 

@@ -34,7 +34,7 @@ DATE.d = 24 * DATE.h;
 DATE.mo = 30 * DATE.d;
 DATE.y = 365 * DATE.mo;
 
-export function formatDuration(dur: number) {
+export function formatDuration(dur: number): string {
   if (Number.isNaN(dur)) return 'never';
   if (dur > DATE.y * 100) return 'centuries';
   let parts = [];
@@ -135,6 +135,27 @@ function passwordScore(cardinality: bigint) {
   return res;
 }
 
+export type PassEstimate = {
+  // Score/guesses based on zxcvbn, it is pretty bad model, but will be ok for now
+  score: string;
+  guesses: {
+    online_throttling: string;
+    online: string;
+    slow: string;
+    fast: string;
+  };
+  // Password is assumed salted.
+  // Non-salted passwords allow multi-target attacks which significantly reduces costs.
+  // Values taken from hashcat 6.1.1 on RTX 3080
+  // https://gist.github.com/Chick3nman/bb22b28ec4ddec0cb5f59df97c994db4
+  costs: {
+    luks: number;
+    filevault2: number;
+    macos: number;
+    pbkdf2: number;
+  };
+};
+
 /**
  * Estimate attack price for a password.
  * @returns `{ luks, filevault2, macos, pbkdf2 }`
@@ -218,7 +239,7 @@ class Mask {
       .join('');
     return { password, entropyLeft };
   }
-  inverse({ password, entropyLeft }: ApplyResult) {
+  inverse({ password, entropyLeft }: ApplyResult): Uint8Array {
     const values = zip(this.sets, password.split('')).map(([s, c]) => Array.from(s).indexOf(c));
     const num = zip(this.sets, values).reduceRight(
       (acc, [s, v]) => acc * BigInt(s.size) + BigInt(v),
@@ -226,12 +247,12 @@ class Mask {
     );
     return numberToVarBytesBE(entropyLeft * this.cardinality + num);
   }
-  estimate() {
+  estimate(): PassEstimate {
     return estimateAttack(this.cardinality);
   }
 }
 
-export const mask = (mask: string) => new Mask(mask);
+export const mask = (mask: string): Mask => new Mask(mask);
 
 /*
 'Safari Keychain Secure Password'-like password:

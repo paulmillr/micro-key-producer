@@ -6,10 +6,15 @@ import { base64 } from '@scure/base';
 import * as P from 'micro-packed';
 import { base64armor } from './utils.js';
 
-export const SSHString = P.string(P.U32BE);
-export const SSHBuf = P.bytes(P.U32BE);
-export const SSHKeyType = P.magic(SSHString, 'ssh-ed25519');
-export const PublicKey = P.struct({ keyType: SSHKeyType, pubKey: P.bytes(P.U32BE) });
+export const SSHString: P.CoderType<string> = P.string(P.U32BE);
+export const SSHBuf: P.CoderType<Uint8Array> = P.bytes(P.U32BE);
+export const SSHKeyType: P.CoderType<undefined> = P.magic(SSHString, 'ssh-ed25519');
+export const PublicKey: P.CoderType<
+  P.StructInput<{
+    keyType: undefined;
+    pubKey: Uint8Array;
+  }>
+> = P.struct({ keyType: SSHKeyType, pubKey: P.bytes(P.U32BE) });
 
 const PrivateKey = P.padRight(
   8,
@@ -24,7 +29,21 @@ const PrivateKey = P.padRight(
   (i: number) => i + 1
 );
 // https://tools.ietf.org/html/draft-miller-ssh-agent-02#section-4.5
-export const AuthData = P.struct({
+export const AuthData: P.CoderType<
+  P.StructInput<{
+    nonce: Uint8Array;
+    userAuthRequest: number;
+    user: string;
+    conn: string;
+    auth: string;
+    haveSig: number;
+    keyType: undefined;
+    pubKey: P.StructInput<{
+      keyType: undefined;
+      pubKey: Uint8Array;
+    }>;
+  }>
+> = P.struct({
   nonce: SSHBuf,
   userAuthRequest: P.U8, // == 50
   user: SSHString,
@@ -37,7 +56,19 @@ export const AuthData = P.struct({
 
 export type AuthDataType = P.UnwrapCoder<typeof AuthData>;
 
-export const PrivateExport = base64armor(
+export const PrivateExport: P.Coder<
+  P.StructInput<{
+    magic: undefined;
+    ciphername: undefined;
+    kdfname: undefined;
+    kdfopts: undefined;
+    keys: P.StructInput<{
+      pubKey: any;
+      privKey: any;
+    }>[];
+  }>,
+  string
+> = base64armor(
   'openssh private key',
   70,
   P.struct({
@@ -69,7 +100,16 @@ export function getFingerprint(bytes: Uint8Array): string {
 }
 
 // For determenistic generation in tests
-export function getKeys(privateKey: Uint8Array, comment?: string, checkBytes = randomBytes(4)) {
+export function getKeys(
+  privateKey: Uint8Array,
+  comment?: string,
+  checkBytes: Uint8Array = randomBytes(4)
+): {
+  publicKeyBytes: Uint8Array;
+  publicKey: string;
+  fingerprint: string;
+  privateKey: string;
+} {
   const pubKey = ed25519.getPublicKey(privateKey);
   return {
     publicKeyBytes: pubKey,
