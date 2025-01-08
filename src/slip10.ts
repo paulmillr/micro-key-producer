@@ -1,6 +1,6 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 import { ed25519 } from '@noble/curves/ed25519';
-import { bytes as assertBytes } from '@noble/hashes/_assert';
+import { abytes } from '@noble/hashes/_assert';
 import { hmac } from '@noble/hashes/hmac';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha256 } from '@noble/hashes/sha256';
@@ -14,7 +14,7 @@ const ZERO = new Uint8Array([0]);
 type Hex = Uint8Array | string;
 function ensureBytes(b: Hex, ...lengths: number[]): Uint8Array {
   if (typeof b === 'string') b = hexToBytes(b);
-  assertBytes(b, ...lengths);
+  abytes(b, ...lengths);
   return b;
 }
 
@@ -80,8 +80,8 @@ export class HDKey {
   constructor(opt: HDKeyOpt) {
     if (!opt || typeof opt !== 'object')
       throw new Error('HDKey.constructor must not be called directly');
-    assertBytes(opt.privateKey, 32);
-    assertBytes(opt.chainCode, 32);
+    abytes(opt.privateKey, 32);
+    abytes(opt.chainCode, 32);
     this.depth = opt.depth || 0;
     this.index = opt.index || 0;
     this.parentFingerprint = opt.parentFingerprint || 0;
