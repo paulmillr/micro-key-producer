@@ -6,7 +6,7 @@ import { base32, base64, utf8 } from '@scure/base';
 
 const ADDRESS_VERSION = new Uint8Array([0x03]);
 
-export function formatPublicKey(pubBytes: Uint8Array) {
+export function formatPublicKey(pubBytes: Uint8Array): string {
   // checksum = H(".onion checksum" || pubkey || version)
   const checksum = sha3_256(concatBytes(utf8.decode('.onion checksum'), pubBytes, ADDRESS_VERSION));
   // onion_address = base32(pubkey || checksum || version);

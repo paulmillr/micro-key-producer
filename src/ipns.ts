@@ -11,7 +11,7 @@ const base36 = utils.chain(
 );
 
 // Formats IPNS public key in bytes array format to 'ipns://k...' string format
-export function formatPublicKey(pubBytes: Uint8Array) {
+export function formatPublicKey(pubBytes: Uint8Array): string {
   return `ipns://k${base36.encode(pubBytes)}`;
 }
 
@@ -40,8 +40,16 @@ export function parseAddress(address: string): Uint8Array {
   throw new Error('Invalid IPNS Key Prefix: ' + hexKey);
 }
 
+export type IpnsKeys = {
+  publicKey: string;
+  privateKey: string;
+  base36: string;
+  base32: string;
+  base16: string;
+  contenthash: string;
+};
 // Generates an ed25519 pubkey from a seed and converts it to several IPNS pubkey formats
-export function getKeys(seed: Uint8Array) {
+export function getKeys(seed: Uint8Array): IpnsKeys {
   //? privKey "seed" should be checked for <ed25519.curve.n?
   if (seed.length !== 32) throw new TypeError('Seed must be 32 bytes in length');
   // Generate ed25519 public key from seed
