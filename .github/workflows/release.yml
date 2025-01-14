@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 jobs:
   publish-jsr:
+    name: Publish to JSR.io
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -14,6 +15,7 @@ jobs:
       - run: npm install -g jsr
       - run: jsr publish
   publish-npm:
+    name: Publish to NPM
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,7 +24,7 @@ jobs:
       - uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2 # v4
       - uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
           cache: npm
       - run: npm ci
@@ -31,7 +33,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
   standalone:
-    name: Upload standalone file to GitHub Releases
+    name: Upload files to GitHub Releases
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -40,7 +42,7 @@ jobs:
       - uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2 # v4
       - uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
           cache: npm
       - run: npm ci

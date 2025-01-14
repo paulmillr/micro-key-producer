@@ -11,7 +11,4 @@ import './slip10/index.test.mjs';
 // Not enabled by default because requires gpg installed && interactive commands
 //require('./pgp_keygen.test.js');
 
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
+should.runWhen(import.meta.url);
