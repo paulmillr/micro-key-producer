@@ -1,3 +1,8 @@
+name: Run JS tests
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
 jobs:
   test-js:
-    uses: paulmillr/jsbt/.github/workflows/test-js.yml@74204f93a7b48a6da2b0d52f1f04106524f00792
+    uses: paulmillr/jsbt/.github/workflows/test-js.yml@d7bb90701e7b7306bc107f20af274674bc012b0a
