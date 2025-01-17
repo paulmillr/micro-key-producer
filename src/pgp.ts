@@ -7,7 +7,7 @@ import { sha1 } from '@noble/hashes/sha1';
 import { sha256 } from '@noble/hashes/sha256';
 import { sha3_256 } from '@noble/hashes/sha3';
 import { sha512 } from '@noble/hashes/sha512';
-import { CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
+import { type CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
 import { hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { base64armor } from './utils.js';

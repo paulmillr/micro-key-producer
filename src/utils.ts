@@ -1,6 +1,6 @@
 import { randomBytes } from '@noble/hashes/utils';
-import { Coder, CoderType, utils as packedUtils } from 'micro-packed';
 import { base64 } from '@scure/base';
+import { type Coder, type CoderType, utils as packedUtils } from 'micro-packed';
 export { randomBytes };
 
 /**

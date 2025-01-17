@@ -4,5 +4,5 @@ on:
   - pull_request
 jobs:
   test-js:
-    name: 'JS'
+    name: 'JS v0.2.2' # v0.2.2 == commit below
     uses: paulmillr/jsbt/.github/workflows/test-js.yml@986dbfea9667eeb0e81bf606cbe9ed169fea89b2

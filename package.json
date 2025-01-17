@@ -19,7 +19,7 @@
     "micro-packed": "~0.7.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.2.1",
+    "@paulmillr/jsbt": "github:paulmillr/jsbt",
     "micro-should": "0.5.0",
     "prettier": "3.3.2",
     "typescript": "5.5.2"
@@ -68,8 +68,8 @@
     }
   },
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
-    "build:release": "tsc && tsc -p tsconfig.esm.json",
+    "build": "tsc && tsc -p tsconfig.cjs.json",
+    "build:release": "tsc && tsc -p tsconfig.cjs.json",
     "lint": "prettier --check src",
     "format": "prettier --write 'src/**/*.{js,ts}' 'test/*.js'",
     "test": "node test/index.js",
