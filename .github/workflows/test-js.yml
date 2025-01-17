@@ -4,4 +4,4 @@ on:
   - pull_request
 jobs:
   test-js:
-    uses: paulmillr/jsbt/.github/workflows/test-js.yml@43fda50523e1135431eba353ecfb83973d855e51
+    uses: paulmillr/jsbt/.github/workflows/test-js.yml@986dbfea9667eeb0e81bf606cbe9ed169fea89b2
