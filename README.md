@@ -13,7 +13,9 @@ Used in: [terminal7 WebRTC terminal multiplexer](https://github.com/tuzig/termin
 
 ## Usage
 
-> npm install micro-key-producer
+> `npm install micro-key-producer`
+
+> `jsr add jsr:@paulmillr/micro-key-producer`
 
 ```ts
 import ssh from 'micro-key-producer/ssh.js';
@@ -27,14 +29,14 @@ import { randomBytes } from 'micro-key-producer/utils.js';
 ```
 
 - [Key generation: known and random seeds](#key-generation-known-and-random-seeds)
-    - [SSH keys](#generate-ssh-keys)
-    - [PGP keys](#generate-pgp-keys)
-    - [Secure passwords](#generate-secure-passwords)
-    - [2FA OTP codes](#generate-2fa-otp-codes)
-    - [BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
-    - [TOR keys and addresses](#generate-tor-keys-and-addresses)
-    - [IPNS addresses](#generate-ipns-addresses)
-    - [SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
+  - [SSH keys](#generate-ssh-keys)
+  - [PGP keys](#generate-pgp-keys)
+  - [Secure passwords](#generate-secure-passwords)
+  - [2FA OTP codes](#generate-2fa-otp-codes)
+  - [BLS keys for ETH validators](#generate-bls-keys-for-eth-validators)
+  - [TOR keys and addresses](#generate-tor-keys-and-addresses)
+  - [IPNS addresses](#generate-ipns-addresses)
+  - [SLIP10 ed25519 hdkeys](#generate-slip10-ed25519-hdkeys)
 - [Low-level API](#low-level-api)
   - [PGP key generation](#pgp-key-generation)
   - [Password generation](#password-generation)
@@ -43,7 +45,6 @@ import { randomBytes } from 'micro-key-producer/utils.js';
     - [Design rationale](#design-rationale)
     - [What do we want from passwords?](#what-do-we-want-from-passwords)
   - [SLIP10 API](#slip10-api)
-
 
 ### Key generation: known and random seeds
 
