@@ -1,6 +1,6 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 import { hmac } from '@noble/hashes/hmac';
-import { sha1 } from '@noble/hashes/sha1';
+import { sha1 } from '@noble/hashes/legacy';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import { base32 } from '@scure/base';
 import { U32BE, U64BE } from 'micro-packed';

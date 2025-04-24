@@ -3,8 +3,7 @@ import { ed25519 } from '@noble/curves/ed25519';
 import { abytes } from '@noble/hashes/_assert';
 import { hmac } from '@noble/hashes/hmac';
 import { ripemd160 } from '@noble/hashes/ripemd160';
-import { sha256 } from '@noble/hashes/sha256';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha256, sha512 } from '@noble/hashes/sha2';
 import { bytesToHex, concatBytes, createView, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 
 export const MASTER_SECRET: Uint8Array = utf8ToBytes('ed25519 seed');

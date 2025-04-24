@@ -2,11 +2,9 @@
 import { cfb } from '@noble/ciphers/aes';
 import { bytesToNumberBE, equalBytes, numberToHexUnpadded } from '@noble/curves/abstract/utils';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { ripemd160 } from '@noble/hashes/ripemd160';
-import { sha1 } from '@noble/hashes/sha1';
-import { sha256 } from '@noble/hashes/sha256';
+import { ripemd160, sha1 } from '@noble/hashes/legacy';
+import { sha256, sha512 } from '@noble/hashes/sha2';
 import { sha3_256 } from '@noble/hashes/sha3';
-import { sha512 } from '@noble/hashes/sha512';
 import { type CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
 import { hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
@@ -625,7 +623,7 @@ function validateDate(timestamp: number) {
     throw new Error('invalid PGP key creation time: must be a valid UNIX timestamp');
 }
 
-function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, createdAt = 0) {
+function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, createdAt: number) {
   validateDate(createdAt);
   const edPub = bytesToNumberBE(concatBytes(new Uint8Array([0x40]), ed25519.getPublicKey(edPriv)));
   const edPubPacket = {
@@ -646,7 +644,7 @@ function getPublicPackets(edPriv: Bytes, cvPriv: Bytes, createdAt = 0) {
   return { edPubPacket, fingerprint, keyId, cvPubPacket };
 }
 
-function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0) {
+function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt: number) {
   // key settings same as in PGP to avoid fingerprinting since they are part of public key
   const preferredEncryptionAlgorithms = ['aes256', 'aes192', 'aes128', 'tripledes'];
   const preferredHashAlgorithms = ['sha512', 'sha384', 'sha256', 'sha224', 'sha1'];
@@ -698,7 +696,12 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0) {
   return { edPubPacket, fingerprint, keyId, cvPubPacket, cvCert, edCert };
 }
 
-export function formatPublic(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt = 0): string {
+export function formatPublic(
+  edPriv: Bytes,
+  cvPriv: Bytes,
+  user: string,
+  createdAt: number
+): string {
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   return pubArmor.encode([
     { TAG: 'publicKey', data: edPubPacket },
