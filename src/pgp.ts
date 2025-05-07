@@ -1,17 +1,21 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 import { cfb } from '@noble/ciphers/aes';
-import { bytesToNumberBE, equalBytes, numberToHexUnpadded } from '@noble/curves/abstract/utils';
+import {
+  bytesToNumberBE,
+  equalBytes,
+  numberToBytesBE,
+  numberToHexUnpadded,
+} from '@noble/curves/abstract/utils';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { ripemd160, sha1 } from '@noble/hashes/legacy';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import { sha3_256 } from '@noble/hashes/sha3';
-import { type CHash, concatBytes, randomBytes } from '@noble/hashes/utils';
+import { type CHash, concatBytes, isBytes, randomBytes } from '@noble/hashes/utils';
 import { hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { base64armor } from './utils.js';
 
 export type Bytes = Uint8Array;
-
 // RFCS:
 // - main: https://datatracker.ietf.org/doc/html/rfc4880
 // - ecdh: https://datatracker.ietf.org/doc/html/rfc6637
@@ -462,7 +466,18 @@ function hashSignature(head: SignatureHeadType, data: any) {
   if (['certGeneric', 'certPersona', 'certCasual', 'certPositive'].includes(head.type))
     h.update(hashSelfCert.encode(data));
   else if (head.type === 'subkeyBinding') h.update(hashSubKeyCert.encode(data));
-  else throw new Error('Unknown signature type');
+  else if (head.type === 'binary') {
+    if (!isBytes(data)) throw new Error('hashSignature: wrong data for type=binary');
+    h.update(data);
+  } else if (head.type === 'text') {
+    // For text document signatures (type 0x01), the
+    // document is canonicalized by converting line endings to <CR><LF>,
+    // and the resulting data is hashed
+    if (typeof data !== 'string') throw new Error('hashSignature: wrong data for type=text');
+    let canonical = data.replace(/\r\n|\n|\r/g, '\r\n');
+    if (!canonical.endsWith('\r\n')) canonical += '\r\n';
+    h.update(utf8.decode(canonical));
+  } else throw new Error('Unknown signature type');
   const sigData = SignatureHead.encode(head);
   h.update(sigData).update(hashTail).update(P.U32BE.encode(sigData.length));
   return h.digest();
@@ -550,18 +565,37 @@ function signData(
   return { head, unhashed, hashPrefix, sig };
 }
 
-function decodeSecretChecksum(secret: Bytes) {
-  const [data, checksum] = [secret.slice(0, -2), P.U16BE.decode(secret.slice(-2))];
-  // Wow, third checksum algorithm in single spec!
-  let ourChecksum = 0;
-  for (let i = 0; i < data.length; i++) ourChecksum += data[i];
-  ourChecksum %= 65536;
-  if (ourChecksum !== checksum) throw new Error('PGP.secretKey: wrong checksum for plain encoding');
-  return mpi.decode(data);
+function verifyData(head: any, data: any, sig: P.UnwrapCoder<typeof EDSIGN>, publicKey: Bytes) {
+  const hash = hashSignature(head, data);
+  const hashPrefix = hash.subarray(0, 2);
+  const verified = ed25519.verify(EDSIGN.encode(sig), hash, publicKey);
+  return { head, hashPrefix, hash, verified };
 }
 
+function secretChecksum(data: Bytes) {
+  // Wow, third checksum algorithm in single spec!
+  let checksum = 0;
+  for (let i = 0; i < data.length; i++) checksum += data[i];
+  checksum %= 65536;
+  return checksum;
+}
+// TODO: cleanup?
+const secretChecksumCoder = {
+  decode(secret: Bytes) {
+    const [data, checksum] = [secret.slice(0, -2), P.U16BE.decode(secret.slice(-2))];
+    let ourChecksum = secretChecksum(data);
+    if (ourChecksum !== checksum)
+      throw new Error('PGP.secretKey: wrong checksum for plain encoding');
+    return mpi.decode(data);
+  },
+  encode(secret: Bytes) {
+    const encoded = mpi.encode(bytesToNumberBE(secret));
+    return concatBytes(encoded, P.U16BE.encode(secretChecksum(encoded)));
+  },
+};
+
 export function decodeSecretKey(password: string, key: SecretKeyType): bigint {
-  if (key.type.TAG === 'plain') return decodeSecretChecksum(key.type.data.secret);
+  if (key.type.TAG === 'plain') return secretChecksumCoder.decode(key.type.data.secret);
   const keyData = key.type.data;
   const data = keyData.S2K.data;
   const keyLen = EncryptionKeySize[keyData.enc];
@@ -582,22 +616,26 @@ export function decodeSecretKey(password: string, key: SecretKeyType): bigint {
   if (!['ECDH', 'ECDSA', 'EdDSA'].includes(key.pub.algo.TAG))
     throw new Error(`PGP.secretKey unsupported publicKey algorithm: ${key.pub.algo.TAG}`);
   // Decoded as generic MPI, not as OpaqueMPI
-  if (key.type.TAG === 'encrypted2') return decodeSecretChecksum(decryptedKey);
+  if (key.type.TAG === 'encrypted2') return secretChecksumCoder.decode(decryptedKey);
   return mpi.decode(decryptedKey);
 }
 
 function createPrivKey(
   pub: PubKeyType,
   key: Bytes,
-  password: string,
-  salt: Bytes,
-  iv: Bytes,
+  password?: string,
+  salt?: Bytes,
+  iv?: Bytes,
   hash = 'sha1',
   count = 240,
   enc = 'aes128'
 ): SecretKeyType {
   const keyLen = EncryptionKeySize[enc];
   if (keyLen === undefined) throw new Error(`PGP.secretKey: unknown encryption mode=${enc}`);
+  // Export key without password
+  if (password === undefined)
+    return { pub, type: { TAG: 'plain', data: { secret: secretChecksumCoder.encode(key) } } };
+  if (!isBytes(iv)) throw new Error('PGP.secretKey: no iv');
   const encKey = deriveKey(hash, keyLen, utf8.decode(password), salt, count);
   const keyBytes = opaquempi.encode(key);
   const secretClear = concatBytes(keyBytes, sha1(keyBytes));
@@ -618,6 +656,8 @@ export const privArmor: P.Coder<any[], string> = base64armor(
   Stream,
   crc24
 );
+export const sigArmor: P.Coder<any[], string> = base64armor('PGP SIGNATURE', 64, Stream, crc24);
+
 function validateDate(timestamp: number) {
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 2 ** 46)
     throw new Error('invalid PGP key creation time: must be a valid UNIX timestamp');
@@ -716,7 +756,7 @@ export function formatPrivate(
   edPriv: Bytes,
   cvPriv: Bytes,
   user: string,
-  password: string,
+  password?: string,
   createdAt = 0,
   edSalt: Uint8Array = randomBytes(8),
   edIV: Uint8Array = randomBytes(16),
@@ -786,19 +826,140 @@ export function getKeyId(
 export function getKeys(
   privKey: Bytes,
   user: string,
-  password: string,
+  password?: string,
   createdAt = 0
 ): {
   keyId: string;
+  fingerprint: string; // full fingerprint
   privateKey: string;
   publicKey: string;
 } {
   const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(privKey);
-  const { keyId } = getPublicPackets(privKey, cvPrivate, createdAt);
+  const { keyId, fingerprint } = getPublicPackets(privKey, cvPrivate, createdAt);
   const publicKey = formatPublic(privKey, cvPrivate, user, createdAt);
   // The slow part
   const privateKey = formatPrivate(privKey, cvPrivate, user, password, createdAt);
-  return { keyId, privateKey, publicKey };
+  return { keyId, fingerprint, privateKey, publicKey };
 }
 
 export default getKeys;
+
+// TODO: there should be two versions of this, one throws on duplication, one doesn't. Then we can apply this to all coders
+// here and make it easier to use, also per-tag type inference. Probably should be in micro-packed itself (pretty useful!)
+// Will be easier to use, but harder to debug. Still need to think about this. But will change exported coders API here.
+// const taggedDict = <T>(inner: P.CoderType<{ TAG: string; data: T }[]>) => {
+//   return P.apply(inner, {
+//     encode: (to) => {
+//       if (!Array.isArray(to)) throw new Error('expected array');
+//       const res: Record<string, any> = {};
+//       for (const i of to) {
+//         const { TAG, data } = i;
+//         if (res.hasOwnProperty(TAG)) throw new Error('duplicate tag=' + TAG);
+//         res[TAG] = data;
+//       }
+//       return res;
+//     },
+//     decode: (from) => {
+//       return Object.entries(from).map(([k, v]) => ({ TAG: k, data: v }));
+//     },
+//   });
+// };
+
+function parseTags<T>(to: { TAG: string; data: T }): Record<string, T> {
+  if (!Array.isArray(to)) throw new Error('expected array');
+  const res: Record<string, any> = {};
+  for (const i of to) {
+    const { TAG, data } = i;
+    if (res.hasOwnProperty(TAG)) throw new Error('duplicate tag=' + TAG);
+    res[TAG] = data;
+  }
+  return res;
+}
+
+function detachedType(data: Bytes | string) {
+  if (!isBytes(data) && typeof data !== 'string') throw new Error('wrong data');
+  return typeof data === 'string' ? 'text' : 'binary';
+}
+
+export function signDetached(
+  privateKey: Bytes,
+  data: Bytes | string,
+  fingerprint: string,
+  signedAt: number = 0
+): string {
+  const dataType = detachedType(data);
+  const keyId = fingerprint.slice(-16);
+  const head = {
+    version: undefined,
+    type: dataType,
+    algo: 'EdDSA',
+    hash: 'sha512',
+    hashed: [
+      { TAG: 'issuerFingerprint', data: { version: undefined, fingerprint } },
+      { TAG: 'signatureCreationTime', data: signedAt },
+    ],
+  };
+  const unhashed = [{ TAG: 'issuer', data: keyId }];
+  const sig = signData(head as any, unhashed, data, privateKey);
+  return sigArmor.encode([{ TAG: 'signature', data: sig }]);
+}
+
+// TODO: verification for pgp probably should have different API, since there can be multiple "trusted" public keys
+// for which we verifying signature
+export function verifyDetached(
+  publicKey: Bytes,
+  signature: string,
+  data: Bytes | string,
+  fingerprint?: string
+): boolean {
+  const sigPacket = sigArmor.decode(signature);
+  // NOTE: in theory there can be multiple signatures inside!
+  if (sigPacket.length !== 1 || sigPacket[0].TAG !== 'signature')
+    throw new Error('wrong signature');
+  const sig = sigPacket[0].data;
+  const dataType = detachedType(data);
+  if (dataType !== sig.head.type)
+    throw new Error('verifyDetached: wrong data type: ' + dataType + ', got:' + sig.head.type);
+  if (fingerprint) {
+    const hashed: Record<string, any> = parseTags(sig.head.hashed);
+    const unhashed = parseTags(sig.unhashed);
+    if (hashed.issuerFingerprint && hashed.issuerFingerprint.fingerprint !== fingerprint)
+      throw new Error('wrong fingerprint');
+    if (unhashed.issuer && unhashed.issuer !== fingerprint.slice(-16))
+      throw new Error('wrong keyId');
+  }
+  const { verified, hashPrefix } = verifyData(sig.head, data, sig.sig, publicKey);
+  if (!equalBytes(hashPrefix, sig.hashPrefix)) return false;
+  return verified;
+}
+
+// This is basic parsing to extract enough information to signDetached signatures.
+// Supports keys generated by us or PGP (ed25519 only + default opts), doesn't extract ECDH (x25519) keys.
+export async function parsePrivateKey(
+  privateKey: string,
+  // NOTE: we cannot just provide password as argument since private key can be unprotected
+  getPassword?: () => Promise<string>
+): Promise<any> {
+  const parsed = privArmor.decode(privateKey);
+  const secretPacket = parsed.filter((i) => i.TAG === 'secretKey');
+  if (secretPacket.length !== 1) throw new Error('multiple or zero secret keys');
+  const secret = secretPacket[0].data;
+  let password = '';
+  if (secret.type.TAG !== 'plain') {
+    if (!getPassword) throw new Error('no getPassword callback provided');
+    // We don't know keyId at this point yet :(
+    password = await getPassword(); // Ask user for password via UI?
+  }
+  const secretScalar = decodeSecretKey(password, secret);
+  const secretBytes = numberToBytesBE(secretScalar, 32);
+  const publicKey = ed25519.getPublicKey(secretBytes);
+  const pubPGP = bytesToNumberBE(concatBytes(new Uint8Array([0x40]), publicKey));
+  if (secret.pub.algo.TAG !== 'EdDSA' || secret.pub.algo.data.curve !== 'ed25519')
+    throw new Error('unknown key format');
+  if (pubPGP !== secret.pub.algo.data.pub) throw new Error('wrong publicKey, decoding failed');
+  const created = secret.pub.created;
+  const { fingerprint, keyId } = getKeyId(secretBytes, created);
+  // TODO: check if there is certPositive with valid fingerprint?
+  // const signatures = parsed.filter((i) => i.TAG === 'signature').map((i) => i.data);
+  return { privateKey: secretBytes, created, fingerprint, keyId, publicKey };
+}
