@@ -474,8 +474,9 @@ function hashSignature(head: SignatureHeadType, data: any) {
     // document is canonicalized by converting line endings to <CR><LF>,
     // and the resulting data is hashed
     if (typeof data !== 'string') throw new Error('hashSignature: wrong data for type=text');
-    let canonical = data.replace(/\r\n|\n|\r/g, '\r\n');
-    if (!canonical.endsWith('\r\n')) canonical += '\r\n';
+    const NL = '\r\n';
+    let canonical = data.replace(/\r\n|\n|\r/g, NL);
+    if (!canonical.endsWith(NL)) canonical += NL;
     h.update(utf8.decode(canonical));
   } else throw new Error('Unknown signature type');
   const sigData = SignatureHead.encode(head);
