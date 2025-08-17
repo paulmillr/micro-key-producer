@@ -1,9 +1,9 @@
-import { deepStrictEqual } from 'node:assert';
-import cp from 'node:child_process';
-import fs from 'node:fs';
-import { randomBytes } from '@noble/hashes/utils';
-import pgp from '../esm/pgp.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 import { should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
+import { spawnSync } from 'node:child_process';
+import { rmSync, writeFileSync } from 'node:fs';
+import { getKeys } from '../src/pgp.ts';
 
 // Warning: this test will execute system command `gpg`
 
@@ -17,7 +17,7 @@ function cmdArgs(command) {
 
 function exec(command, opt = {}) {
   const { cmd, args } = cmdArgs(command);
-  const { status, stdout, stderr } = cp.spawnSync(cmd, args, {
+  const { status, stdout, stderr } = spawnSync(cmd, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
     input: opt && opt.input,
     shell: true,
@@ -31,16 +31,16 @@ function exec(command, opt = {}) {
 should('basic', () => {
   // Deterministic via scrypt
   const seed = randomBytes();
-  let { publicKey, privateKey, keyId } = pgp.getKeys(seed, 'user', 'password');
+  let { publicKey, privateKey, keyId } = getKeys(seed, 'user', 'password');
   const SECRET_KEY_OPT = `--no-tty --batch --yes --passphrase "password"`;
 
   const cleanKeys = () => {
     exec(`gpg  --delete-secret-and-public-key ${keyId}`, { ignoreStatus: true });
-    fs.rmSync(PUB_PATH);
-    fs.rmSync(PRIV_PATH);
+    rmSync(PUB_PATH);
+    rmSync(PRIV_PATH);
   };
-  fs.writeFileSync(PUB_PATH, publicKey);
-  fs.writeFileSync(PRIV_PATH, privateKey);
+  writeFileSync(PUB_PATH, publicKey);
+  writeFileSync(PRIV_PATH, privateKey);
   try {
     exec(`gpg ${SECRET_KEY_OPT} --import ${PRIV_PATH}`, { status: true });
     exec(`gpg ${SECRET_KEY_OPT} --import ${PUB_PATH}`, { status: true });
