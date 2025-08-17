@@ -1,22 +1,22 @@
+import { should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
 import {
   TEST_MNEMONIC_12,
   TEST_MNEMONIC_12_SET,
   TEST_MNEMONIC_24,
   TEST_MNEMONIC_24_PUBLIC_KEY,
+  TEST_MNEMONIC_24_SECRET_BYTEARRAY,
   TEST_MNEMONIC_24_SECRET_KEY,
   TEST_MNEMONIC_24_SET,
-  TEST_MNEMONIC_24_SECRET_BYTEARRAY,
   TEST_PUBLIC_KEY,
   TEST_SECRET_BYTEARRAY,
   TEST_SECRET_KEY,
 } from './bip39.fixture.mjs';
-import { should } from 'micro-should';
-import { deepStrictEqual } from 'node:assert';
 
+import { base58 as bs58 } from '@scure/base';
 import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { Keypair as SolanaKeypair, PublicKey as SolanaPublicKey } from '@solana/web3.js';
-import { base58 as bs58 } from '@scure/base';
+import { Keypair as SolanaKeypair } from '@solana/web3.js';
 import { HDKey } from '../../hdkey.js';
 
 export class Keypair {
@@ -71,7 +71,7 @@ export class Keypair {
   }
 
   static derive(seed, path) {
-    const hd = HDKey.fromMasterSeed(seed.toString('hex'));
+    const hd = HDKey.fromMasterSeed(seed);
     return Keypair.fromSeed(hd.derive(path).privateKey);
   }
 

@@ -1,7 +1,7 @@
-import { deepStrictEqual, throws } from 'node:assert';
-import { HDKey } from '../../esm/slip10.js';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
-import { bytesToHex } from '@noble/hashes/utils';
+import { deepStrictEqual, throws } from 'node:assert';
+import { HDKey } from '../../src/slip10.ts';
 import { fixtures } from './slip-0010.fixture.mjs';
 
 // https://github.com/satoshilabs/slips/blob/master/slip-0010.md
@@ -10,7 +10,7 @@ describe('hdkey', () => {
   for (let i = 0; i < fixtures.length; i++) {
     const t = fixtures[i];
     should(`vector(${i})`, () => {
-      const hd = HDKey.fromMasterSeed(t.seed);
+      const hd = HDKey.fromMasterSeed(hexToBytes(t.seed));
       const child = hd.derive(t.path);
       deepStrictEqual(child.parentFingerprintHex, t.fingerprint, 'fingerprint');
       deepStrictEqual(bytesToHex(child.chainCode), t.chainCode, 'chainCode');
@@ -20,7 +20,7 @@ describe('hdkey', () => {
   }
 
   should('throw on derivation of non-hardened keys', () => {
-    const hd = HDKey.fromMasterSeed('000102030405060708090a0b0c0d0e0f');
+    const hd = HDKey.fromMasterSeed(hexToBytes('000102030405060708090a0b0c0d0e0f'));
     throws(() => hd.derive('m/0'));
     deepStrictEqual(hd.derive('m/0', true), hd.derive("m/0'"));
   });
@@ -29,7 +29,7 @@ describe('hdkey', () => {
     const msgA = new Uint8Array(32);
     const msgB = new Uint8Array(32).fill(8);
     const msgC = new Uint8Array(99).fill(8);
-    const hdkey = HDKey.fromMasterSeed('000102030405060708090a0b0c0d0e0f').derive("m/0'");
+    const hdkey = HDKey.fromMasterSeed(hexToBytes('000102030405060708090a0b0c0d0e0f')).derive("m/0'");
     const sigA = hdkey.sign(msgA);
     const sigB = hdkey.sign(msgB);
     const sigC = hdkey.sign(msgC);
@@ -55,12 +55,12 @@ describe('hdkey', () => {
   });
 
   should('throw on small seed', () => {
-    throws(() => HDKey.fromMasterSeed('00'));
-    throws(() => HDKey.fromMasterSeed('000102030405060708090a0b0c0d0e'));
+    throws(() => HDKey.fromMasterSeed(hexToBytes('00')));
+    throws(() => HDKey.fromMasterSeed(hexToBytes('000102030405060708090a0b0c0d0e')));
   });
 
   should('throw on derivation of wrong indexes', () => {
-    const hdkey = HDKey.fromMasterSeed('000102030405060708090a0b0c0d0e0f');
+    const hdkey = HDKey.fromMasterSeed(hexToBytes('000102030405060708090a0b0c0d0e0f'));
     const invalid = [
       "m/0'/ 1' /2'",
       "m/0'/1.5'/2'",

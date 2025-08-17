@@ -1,7 +1,7 @@
-import { deepStrictEqual } from 'node:assert';
-import { describe, should } from 'micro-should';
-import * as ssh from '../esm/ssh.js';
 import { hex } from '@scure/base';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
+import * as ssh from '../src/ssh.ts';
 
 // Real key from the internet
 const realKey = `-----BEGIN OPENSSH PRIVATE KEY-----

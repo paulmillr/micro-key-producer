@@ -1,7 +1,7 @@
+import { should } from 'micro-should';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
-import { should } from 'micro-should';
-import * as pwd from '../esm/password.js';
+import * as pwd from '../src/password.ts';
 
 const randomBytes = (len) => Uint8Array.from(crypto.randomBytes(len));
 const ITERS = 10000000;
