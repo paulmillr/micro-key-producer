@@ -1,21 +1,13 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
-import { ed25519 } from '@noble/curves/ed25519';
-import { abytes } from '@noble/hashes/_assert';
-import { hmac } from '@noble/hashes/hmac';
-import { ripemd160 } from '@noble/hashes/ripemd160';
-import { sha256, sha512 } from '@noble/hashes/sha2';
-import { bytesToHex, concatBytes, createView, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { ripemd160 } from '@noble/hashes/legacy.js';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { abytes, bytesToHex, concatBytes, createView, utf8ToBytes } from '@noble/hashes/utils.js';
 
 export const MASTER_SECRET: Uint8Array = utf8ToBytes('ed25519 seed');
 export const HARDENED_OFFSET: number = 0x80000000;
-const ZERO = new Uint8Array([0]);
-
-type Hex = Uint8Array | string;
-function ensureBytes(b: Hex, ...lengths: number[]): Uint8Array {
-  if (typeof b === 'string') b = hexToBytes(b);
-  abytes(b, ...lengths);
-  return b;
-}
+const ZERO = Uint8Array.of(0);
 
 const hash160 = (data: Uint8Array) => ripemd160(sha256(data));
 const fromU32 = (data: Uint8Array) => createView(data).getUint32(0, false);
@@ -56,8 +48,8 @@ export class HDKey {
     return bytesToHex(toU32(this.parentFingerprint));
   }
 
-  static fromMasterSeed(seed: Hex): HDKey {
-    seed = ensureBytes(seed);
+  static fromMasterSeed(seed: Uint8Array): HDKey {
+    seed = abytes(seed);
     if (8 * seed.length < 128 || 8 * seed.length > 512) {
       throw new Error(
         `HDKey: wrong seed length=${seed.length}. Should be between 128 and 512 bits; 256 bits is advised)`
@@ -125,12 +117,12 @@ export class HDKey {
     });
   }
 
-  sign(message: Hex): Uint8Array {
+  sign(message: Uint8Array): Uint8Array {
     return ed25519.sign(message, this.privateKey);
   }
 
-  verify(message: Hex, signature: Hex): boolean {
-    signature = ensureBytes(signature, 64);
+  verify(message: Uint8Array, signature: Uint8Array): boolean {
+    signature = abytes(signature, 64);
     return ed25519.verify(signature, message, this.publicKeyRaw);
   }
 }

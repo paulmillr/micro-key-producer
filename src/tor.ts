@@ -1,7 +1,7 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
-import { ed25519 } from '@noble/curves/ed25519';
-import { sha3_256 } from '@noble/hashes/sha3';
-import { concatBytes } from '@noble/hashes/utils';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha3_256 } from '@noble/hashes/sha3.js';
+import { concatBytes } from '@noble/hashes/utils.js';
 import { base32, base64, utf8 } from '@scure/base';
 
 const ADDRESS_VERSION = new Uint8Array([0x03]);

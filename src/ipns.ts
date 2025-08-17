@@ -1,6 +1,6 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
-import { ed25519 } from '@noble/curves/ed25519';
-import { concatBytes } from '@noble/hashes/utils';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { concatBytes } from '@noble/hashes/utils.js';
 import { base32, hex, utils } from '@scure/base';
 
 const base36 = utils.chain(

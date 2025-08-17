@@ -1,22 +1,22 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
-import { bytesToNumberBE, numberToVarBytesBE } from '@noble/curves/abstract/utils';
+import { bytesToNumberBE, numberToVarBytesBE } from '@noble/curves/utils.js';
 
-export function zip<A, B>(a: A[], b: B[]): [A, B][] {
+function zip<A, B>(a: A[], b: B[]): [A, B][] {
   let res: [A, B][] = [];
   for (let i = 0; i < Math.max(a.length, b.length); i++) res.push([a[i], b[i]]);
   return res;
 }
 
 // set utils
-export function or<T>(...sets: Set<T>[]): Set<T> {
+function or<T>(...sets: Set<T>[]): Set<T> {
   return sets.reduce((acc, i) => new Set([...acc, ...i]), new Set());
 }
 
-export function and<T>(...sets: Set<T>[]): Set<T> {
+function and<T>(...sets: Set<T>[]): Set<T> {
   return sets.reduce((acc, i) => new Set(Array.from(acc).filter((j) => i.has(j))));
 }
 
-export function product(...sets: Set<string>[]): Set<string> {
+function product(...sets: Set<string>[]): Set<string> {
   return sets.reduce(
     (acc, i) =>
       new Set(
@@ -27,14 +27,14 @@ export function product(...sets: Set<string>[]): Set<string> {
   );
 }
 
-export const DATE: Record<string, number> = { sec: 1000 };
+const DATE: Record<string, number> = { sec: 1000 };
 DATE.min = 60 * DATE.sec;
 DATE.h = 60 * DATE.min;
 DATE.d = 24 * DATE.h;
 DATE.mo = 30 * DATE.d;
 DATE.y = 365 * DATE.mo;
 
-export function formatDuration(dur: number): string {
+function formatDuration(dur: number): string {
   if (Number.isNaN(dur)) return 'never';
   if (dur > DATE.y * 100) return 'centuries';
   let parts = [];
@@ -83,6 +83,16 @@ function idx<T>(arr: Array<T> | Set<T>, i: number): T {
   return arr[i];
 }
 
+export const utils = {
+  zip: zip as typeof zip,
+  or: or as typeof or,
+  and: and as typeof and,
+  product: product as typeof product,
+  cardinalityBits: cardinalityBits as typeof cardinalityBits,
+  formatDuration: formatDuration as typeof formatDuration,
+  DATE: DATE as typeof DATE,
+};
+
 /**
  * Check if password is correct for rules in design rationale.
  */
@@ -107,7 +117,7 @@ function splitEntropy(lengths: number[], entropy: Uint8Array) {
   return { values, entropyLeft };
 }
 
-export function cardinalityBits(cardinality: bigint): number {
+function cardinalityBits(cardinality: bigint): number {
   let i = 0;
   for (let c = cardinality; c; i++, c >>= 1n);
   return i - 1;

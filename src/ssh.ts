@@ -1,10 +1,10 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
-import { ed25519 } from '@noble/curves/ed25519';
-import { sha256 } from '@noble/hashes/sha2';
-import { concatBytes, randomBytes } from '@noble/hashes/utils';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { concatBytes, randomBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
 import * as P from 'micro-packed';
-import { base64armor } from './utils.js';
+import { base64armor } from './utils.ts';
 
 export const SSHString: P.CoderType<string> = P.string(P.U32BE);
 export const SSHBuf: P.CoderType<Uint8Array> = P.bytes(P.U32BE);

@@ -1,10 +1,10 @@
-import { ctr } from '@noble/ciphers/aes';
-import { ensureBytes, numberToBytesBE } from '@noble/curves/abstract/utils';
-import { bls12_381 } from '@noble/curves/bls12-381';
-import { hkdf } from '@noble/hashes/hkdf';
-import { pbkdf2 } from '@noble/hashes/pbkdf2';
-import { scrypt } from '@noble/hashes/scrypt';
-import { sha256 } from '@noble/hashes/sha2';
+import { ctr } from '@noble/ciphers/aes.js';
+import { bls12_381 } from '@noble/curves/bls12-381.js';
+import { abytes, numberToBytesBE } from '@noble/curves/utils.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
+import { scrypt } from '@noble/hashes/scrypt.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import {
   bytesToHex,
   concatBytes,
@@ -12,7 +12,7 @@ import {
   isBytes,
   randomBytes,
   utf8ToBytes,
-} from '@noble/hashes/utils';
+} from '@noble/hashes/utils.js';
 
 /*
 Implements:
@@ -24,7 +24,7 @@ Implements:
 The standards are not used anywhere outside of eth validator keys as per 2024.
 */
 
-const { getPublicKey } = bls12_381;
+const { getPublicKey } = bls12_381.longSignatures;
 const { Fr } = bls12_381.fields;
 
 // Octet Stream to Integer
@@ -63,7 +63,7 @@ function assertUint32(index: number) {
 }
 
 function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
-  parentSK = ensureBytes('parentSK', parentSK);
+  parentSK = abytes(parentSK, undefined, 'parentSK');
   assertUint32(index);
   const salt = i2osp(index, 4);
   const ikm = parentSK;
@@ -80,9 +80,9 @@ function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
  * @param ikm - secret octet string
  * @param keyInfo - additional key information
  */
-export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = new Uint8Array()): Uint8Array {
-  ikm = ensureBytes('IKM', ikm);
-  keyInfo = ensureBytes('key information', keyInfo);
+export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = Uint8Array.of()): Uint8Array {
+  ikm = abytes(ikm, undefined, 'ikm');
+  keyInfo = abytes(keyInfo, undefined, 'key information');
   let salt = utf8ToBytes('BLS-SIG-KEYGEN-SALT-');
   let SK = 0n;
   const input = concatBytes(ikm, Uint8Array.from([0x00]));
@@ -147,7 +147,7 @@ export function deriveEIP2334Key(
  * deepStrictEqual(derivedSigning, signing.key);
  */
 export function deriveEIP2334SigningKey(withdrawalKey: Uint8Array, index = 0): Uint8Array {
-  withdrawalKey = ensureBytes('withdrawal key', withdrawalKey, 32);
+  withdrawalKey = abytes(withdrawalKey, 32, 'withdrawal key');
   assertUint32(index);
   return deriveChild(withdrawalKey, index);
 }
@@ -295,7 +295,7 @@ export function decryptEIP2335Keystore<T extends KDFType>(
   // verify pubkey
   // NOTE: it is optional, and encrypted value is not neccesarily private key according to EIP2335
   if (store.pubkey !== undefined) {
-    const publicKey = bytesToHex(getPublicKey(secret));
+    const publicKey = bytesToHex(getPublicKey(secret).toBytes());
     if (publicKey !== store.pubkey)
       throw new Error(`Pubkey ${publicKey} does not match ${store.pubkey}`);
   }
@@ -306,7 +306,7 @@ export function decryptEIP2335Keystore<T extends KDFType>(
 }
 
 /**
- * Secure PRNG function like 'randomBytes' from '@noble/hashes/utils'
+ * Secure PRNG function like 'randomBytes' from '@noble/hashes/utils.js'
  */
 export type RandFn = (bytes: number) => Uint8Array;
 
@@ -328,7 +328,7 @@ export class EIP2335Keystore<T extends KDFType> {
    * Creates context for EIP2335 Keystore generation
    * @param password - password
    * @param kdf - scrypt | pbkdf2
-   * @param _random - (optional) secure PRNG function like 'randomBytes' from '@noble/hashes/utils'
+   * @param _random - (optional) secure PRNG function like 'randomBytes' from '@noble/hashes/utils.js'
    */
   constructor(password: string, kdf: T, _random: RandFn = randomBytes) {
     this.kdf = kdf;
@@ -373,7 +373,7 @@ export class EIP2335Keystore<T extends KDFType> {
         },
       },
     };
-    if (pubkey !== undefined) res.pubkey = bytesToHex(ensureBytes('public key', pubkey));
+    if (pubkey !== undefined) res.pubkey = bytesToHex(abytes(pubkey, undefined, 'public key'));
     return res;
   }
   /**
@@ -390,7 +390,7 @@ export class EIP2335Keystore<T extends KDFType> {
     description: string = ''
   ): Keystore<T> {
     const { key: privKey, path } = deriveEIP2334Key(seed, keyType, index);
-    const pubkey = bls12_381.getPublicKey(privKey);
+    const pubkey = bls12_381.longSignatures.getPublicKey(privKey).toBytes();
     return this.create(privKey, path, description, pubkey);
   }
 
