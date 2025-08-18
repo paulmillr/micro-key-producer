@@ -1,5 +1,5 @@
 import { randomBytes } from '@noble/hashes/utils.js';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';

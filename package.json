@@ -1,6 +1,6 @@
 {
   "name": "micro-key-producer",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "description": "Produces secure passwords & keys for WebCrypto, SSH, PGP, SLIP10, OTP and many others",
   "files": [
     "*.js",
@@ -12,17 +12,15 @@
     "gpgkp": "bin/gpgkp.js"
   },
   "dependencies": {
-    "@noble/ciphers": "2.0.0-beta.4",
-    "@noble/curves": "2.0.0-beta.3",
-    "@noble/hashes": "2.0.0-beta.5",
-    "@scure/base": "2.0.0-beta.1",
-    "micro-packed": "0.8.0-beta.1"
+    "@noble/ciphers": "~2.0.0-beta.4",
+    "@noble/curves": "~2.0.0-beta.3",
+    "@noble/hashes": "~2.0.0-beta.5",
+    "@scure/base": "~2.0.0-beta.1",
+    "micro-packed": "~0.8.0-beta.1"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.4.2",
+    "@paulmillr/jsbt": "0.4.3",
     "@types/node": "24.2.1",
-    "micro-bmark": "0.4.2",
-    "micro-should": "0.5.3",
     "prettier": "3.6.2",
     "typescript": "5.9.2"
   },

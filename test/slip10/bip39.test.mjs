@@ -1,16 +1,16 @@
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import {
-  TEST_MNEMONIC_12,
-  TEST_MNEMONIC_12_SET,
-  TEST_MNEMONIC_24,
-  TEST_MNEMONIC_24_PUBLIC_KEY,
-  TEST_MNEMONIC_24_SECRET_BYTEARRAY,
-  TEST_MNEMONIC_24_SECRET_KEY,
-  TEST_MNEMONIC_24_SET,
-  TEST_PUBLIC_KEY,
-  TEST_SECRET_BYTEARRAY,
-  TEST_SECRET_KEY,
+    TEST_MNEMONIC_12,
+    TEST_MNEMONIC_12_SET,
+    TEST_MNEMONIC_24,
+    TEST_MNEMONIC_24_PUBLIC_KEY,
+    TEST_MNEMONIC_24_SECRET_BYTEARRAY,
+    TEST_MNEMONIC_24_SECRET_KEY,
+    TEST_MNEMONIC_24_SET,
+    TEST_PUBLIC_KEY,
+    TEST_SECRET_BYTEARRAY,
+    TEST_SECRET_KEY,
 } from './bip39.fixture.mjs';
 
 import { base58 as bs58 } from '@scure/base';

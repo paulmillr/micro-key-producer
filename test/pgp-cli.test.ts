@@ -8,8 +8,8 @@
 - Run using password `123456789`: `npm run test:gpgkp`
 */
 
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { describe, should } from 'micro-should';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';

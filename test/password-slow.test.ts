@@ -1,4 +1,4 @@
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import * as pwd from '../src/password.ts';

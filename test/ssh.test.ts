@@ -1,5 +1,5 @@
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { describe, should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
 import * as ssh from '../src/ssh.ts';
 

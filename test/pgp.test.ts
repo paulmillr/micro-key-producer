@@ -1,6 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { hex, utf8 } from '@scure/base';
-import { describe, should } from 'micro-should';
 import { deepStrictEqual, rejects } from 'node:assert';
 import * as pgp from '../src/pgp.ts';
 
