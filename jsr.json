@@ -4,11 +4,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./bls.js": "./src/bls.ts",
+    "./convert.js": "./src/convert.ts",
     "./ipns.js": "./src/ipns.ts",
-    "./slip10.js": "./src/slip10.ts",
     "./otp.js": "./src/otp.ts",
     "./password.js": "./src/password.ts",
     "./pgp.js": "./src/pgp.ts",
+    "./slip10.js": "./src/slip10.ts",
     "./ssh.js": "./src/ssh.ts",
     "./tor.js": "./src/tor.ts",
     "./utils.js": "./src/utils.ts"
@@ -26,9 +27,6 @@
       "jsr.json",
       "LICENSE",
       "README.md"
-    ],
-    "exclude": [
-      "src/cryptoNode.ts"
     ]
   },
   "license": "MIT"

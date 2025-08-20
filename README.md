@@ -143,8 +143,19 @@ SLIP10 (ed25519 BIP32) HDKey implementation has been funded by the Kin Foundatio
 ### convert: key converter for JWK, DER, PKCS, SPKI
 
 ```ts
-import * as webconv from 'micro-key-producer/convert.js';
+import { p256 } from '@noble/curves/nist.js';
+import { p256_der, p256_jwk, p256_jwk_ecdh } from 'micro-key-producer/convert.js';
+const { publicKey, secretKey } = p256.keygen();
+console.log(
+  secretKey,
+  p256_der.secretKey.encode(secretKey),
+  p256_der.secretKey.decode(p256_der.secretKey.encode(secretKey)),
+  p256_jwk.secretKey.encode(secretKey),
+  p256_jwk_ecdh.secretKey.encode(secretKey)
+)
 ```
+
+The module allows to convert between "raw" noble-curves format and WebCrypto formats (JWK, DER, PKCS, SPKI).
 
 ### tor: keys and addresses
 

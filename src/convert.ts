@@ -71,7 +71,7 @@ interface JsonWebKey {
 type ECConverter<T, Opts = {}> = {
   publicKey: P.Coder<Uint8Array, T>;
   secretKey: {
-    encode(from: Uint8Array, opts: Opts): T;
+    encode(from: Uint8Array, opts?: Opts): T;
     decode(to: T): Uint8Array;
   };
 };
