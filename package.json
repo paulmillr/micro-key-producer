@@ -31,7 +31,8 @@
     "test": "node --experimental-strip-types --no-warnings test/index.ts",
     "test:bun": "bun test/index.ts",
     "test:deno": "deno --allow-env --allow-read test/index.ts",
-    "test:gpgkp": "node test/pgp-integration.test.ts"
+    "test:gpgkp": "node test/pgp-cli.test.ts",
+    "test:gpgkp2": "node test/pgp-keygen.test.ts"
   },
   "keywords": [
     "ed25519",
