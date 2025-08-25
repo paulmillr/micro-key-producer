@@ -45,6 +45,7 @@ describe('convert', () => {
     }
   });
   for (const name in CURVES) {
+    if (['ed448', 'x448', 'x25519', 'ed25519'].includes(name) && process.versions.bun) continue;
     describe(name, () => {
       const { lib, web, jwk, der } = CURVES[name];
       const other = CURVES[name === 'p256' ? 'p384' : 'p256'];
