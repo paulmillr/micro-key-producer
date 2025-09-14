@@ -35,6 +35,19 @@
     "test:gpgkp": "node test/pgp-cli.test.ts",
     "test:gpgkp2": "node test/pgp-keygen.test.ts"
   },
+  "exports": {
+    ".": "./index.js",
+    "./bls.js": "./bls.js",
+    "./convert.js": "./convert.js",
+    "./ipns.js": "./ipns.js",
+    "./otp.js": "./otp.js",
+    "./password.js": "./password.js",
+    "./pgp.js": "./pgp.js",
+    "./slip10.js": "./slip10.js",
+    "./ssh.js": "./ssh.js",
+    "./tor.js": "./tor.js",
+    "./utils.js": "./utils.js"
+  },
   "keywords": [
     "ed25519",
     "PGP",
