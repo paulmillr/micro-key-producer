@@ -1,6 +1,6 @@
 {
   "name": "@paulmillr/micro-key-producer",
-  "version": "0.8.0",
+  "version": "0.8.2",
   "exports": {
     ".": "./src/index.ts",
     "./bls.js": "./src/bls.ts",

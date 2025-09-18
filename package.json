@@ -1,6 +1,6 @@
 {
   "name": "micro-key-producer",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Produces secure passwords & keys for WebCrypto, SSH, PGP, SLIP10, OTP and many others",
   "files": [
     "*.js",
