@@ -110,14 +110,26 @@ The PGP (GPG) keys conform to
 
 #### gpgkp(1): Sign git commits without gnupg
 
-```sh
+`gpgkp` binary is installed by the package. You can use it to sign and verify git commits.
 
-git config commit.gpgsign true
-git config user.signingkey <KEY_ID>
-git config gpg.program <PATH_TO_KEY_PRODUCER>/bin/gpgkp.js
+Enable PGP commit signing:
+
+```sh
+git config --global commit.gpgsign true
+git config --global tag.gpgSign true
+git config --global user.signingkey 125679DA6845B812
 ```
 
-`gpgkp` binary is installed by the package. You can use it to sign and verify git commits.
+Set gpgkp from key-producer as preferred signing program:
+
+```sh
+git config --global gpg.program $(which gpgkp)
+```
+
+```sh
+git config --global user.name "Alice"
+git config --global user.email "alice@example.com"
+```
 
 ### slip10: bip32-like ed25519 keys
 
