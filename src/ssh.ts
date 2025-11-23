@@ -1,4 +1,8 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+/**
+ * Deterministic producer of ed25519 SSH keys.
+ * @module
+ */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { concatBytes, randomBytes } from '@noble/hashes/utils.js';
@@ -99,7 +103,7 @@ export function getFingerprint(bytes: Uint8Array): string {
   return `SHA256:${base64.encode(sha256(blob)).replace(/=$/, '')}`;
 }
 
-// For determenistic generation in tests
+/** For deterministic generation */
 export function getKeys(
   privateKey: Uint8Array,
   comment?: string,
@@ -133,7 +137,7 @@ export function getKeys(
   };
 }
 
-// For SSH Agents
+/** For SSH Agents */
 export function authSign(privateKey: Uint8Array, data: AuthDataType): Uint8Array {
   return ed25519.sign(AuthData.encode(data), privateKey);
 }

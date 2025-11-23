@@ -1,4 +1,8 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+/**
+ * 2FA HOTP and TOTP codes. Conforms to [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238).
+ * @module
+ */
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha1 } from '@noble/hashes/legacy.js';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';

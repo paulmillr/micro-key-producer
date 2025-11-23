@@ -1,4 +1,8 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+/**
+ * Allows to work with SLIP-0010 HD keys.
+ * @module
+ */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
@@ -28,6 +32,7 @@ interface HDKeyOpt {
   privateKey: Uint8Array;
 }
 
+/** HD key for ed25519, SLIP10 format */
 export class HDKey {
   get publicKeyRaw(): Uint8Array {
     return ed25519.getPublicKey(this.privateKey);

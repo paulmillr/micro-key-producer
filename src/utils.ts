@@ -1,3 +1,8 @@
+/*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+/**
+ * Utilities.
+ * @module
+ */
 import { randomBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
 import { type Coder, type CoderType, utils as packedUtils } from 'micro-packed';

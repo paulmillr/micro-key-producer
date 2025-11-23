@@ -1,4 +1,8 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+/**
+ * IPNS (IPFS) key / address producer.
+ * @module
+ */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { concatBytes } from '@noble/hashes/utils.js';
 import { base32, hex, utils } from '@scure/base';
@@ -10,14 +14,16 @@ const base36 = utils.chain(
   utils.join('')
 );
 
-// Formats IPNS public key in bytes array format to 'ipns://k...' string format
+/** Formats IPNS public key in bytes array format to 'ipns://k...' string format */
 export function formatPublicKey(pubBytes: Uint8Array): string {
   return `ipns://k${base36.encode(pubBytes)}`;
 }
 
-// Takes an IPNS pubkey (address) string as input and returns bytes array of the key
-// Supports various formats ('ipns://k', 'ipns://b', 'ipns://f')
-// Handles decoding and validation of the key before returning pubkey bytes
+/**
+ * Takes an IPNS pubkey (address) string as input and returns bytes array of the key.
+ * Supports various formats ('ipns://k', 'ipns://b', 'ipns://f').
+ * Handles decoding and validation of the key before returning pubkey bytes
+ */
 export function parseAddress(address: string): Uint8Array {
   address = address.toLowerCase();
   if (address.startsWith('ipns://')) address = address.slice(7);
@@ -48,7 +54,7 @@ export type IpnsKeys = {
   base16: string;
   contenthash: string;
 };
-// Generates an ed25519 pubkey from a seed and converts it to several IPNS pubkey formats
+/** Generates an ed25519 pubkey from a seed and converts it to several IPNS pubkey formats */
 export function getKeys(seed: Uint8Array): IpnsKeys {
   //? privKey "seed" should be checked for <ed25519.curve.n?
   if (seed.length !== 32) throw new TypeError('Seed must be 32 bytes in length');
@@ -56,7 +62,7 @@ export function getKeys(seed: Uint8Array): IpnsKeys {
   const pubKey = ed25519.getPublicKey(seed);
   // Create public key bytes by concatenating prefix bytes and pubKey
   const pubKeyBytes = concatBytes(
-    new Uint8Array([0x01, 0x72, 0x00, 0x24, 0x08, 0x01, 0x12, 0x20]),
+    Uint8Array.from([0x01, 0x72, 0x00, 0x24, 0x08, 0x01, 0x12, 0x20]),
     pubKey
   );
   const hexKey = hex.encode(pubKeyBytes).toLowerCase();
@@ -64,7 +70,7 @@ export function getKeys(seed: Uint8Array): IpnsKeys {
   return {
     publicKey: `0x${hexKey}`,
     privateKey: `0x${hex.encode(
-      concatBytes(new Uint8Array([0x08, 0x01, 0x12, 0x40]), seed, pubKey)
+      concatBytes(Uint8Array.from([0x08, 0x01, 0x12, 0x40]), seed, pubKey)
     )}`,
     base36: `ipns://k${base36.encode(pubKeyBytes)}`,
     base32: `ipns://b${base32.encode(pubKeyBytes).toLowerCase()}`,

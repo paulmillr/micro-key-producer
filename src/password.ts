@@ -1,4 +1,10 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
+/**
+ * Allows to create secure passwords, using masks.
+ * Supports iOS / macOS Safari Secure Password from Keychain.
+ * Optional zxcvbn score for password bruteforce estimation.
+ * @module
+ */
 import { bytesToNumberBE, numberToVarBytesBE } from '@noble/curves/utils.js';
 
 function zip<A, B>(a: A[], b: B[]): [A, B][] {
@@ -295,6 +301,16 @@ for (let upper = 0; upper < 17; upper++) {
 
 export type MaskType = { [K in keyof Mask]: Mask[K] };
 
+/**
+ * Secure password mask, iOS keychain format.
+ * @example
+```js
+import { mask, secureMask } from 'micro-key-producer/password.js';
+import { randomBytes } from '@noble/hashes/utils.js';
+const seed = randomBytes(32);
+const pass = secureMask.apply(seed).password;
+```
+ */
 export const secureMask: MaskType = (() => {
   const size = BigInt(secureMasks.length);
   const cardinality = mask(secureMasks[0]).cardinality * size;

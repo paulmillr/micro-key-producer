@@ -1,3 +1,12 @@
+/**
+ * Deterministic producer of ETH validator keys. Implements:
+ *
+ * - [EIP-2333](https://eips.ethereum.org/EIPS/eip-2333): BLS12-381 Key Generation
+ * - [EIP-2334](https://eips.ethereum.org/EIPS/eip-2334): BLS12-381 Deterministic Account Hierarchy
+ * - [EIP-2335](https://eips.ethereum.org/EIPS/eip-2335): BLS12-381 Keystore
+ *
+ * @module
+ */
 import { ctr } from '@noble/ciphers/aes.js';
 import { bls12_381 } from '@noble/curves/bls12-381.js';
 import { abytes, numberToBytesBE } from '@noble/curves/utils.js';
@@ -13,16 +22,6 @@ import {
   randomBytes,
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
-
-/*
-Implements:
-
-- EIP-2333: BLS12-381 Key Generation
-- EIP-2334: BLS12-381 Deterministic Account Hierarchy
-- EIP-2335: BLS12-381 Keystore
-
-The standards are not used anywhere outside of eth validator keys as per 2024.
-*/
 
 const { getPublicKey } = bls12_381.longSignatures;
 const { Fr } = bls12_381.fields;
