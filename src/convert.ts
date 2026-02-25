@@ -505,6 +505,488 @@ const KeyAlgorithm = /* @__PURE__ */ ASN1.sequence({
 //   })
 // );
 const Attributes = /* @__PURE__ */ ASN1.set(P.bytes(null));
+type RSAKey = {
+  version: bigint;
+  modulus: bigint;
+  publicExponent: bigint;
+  privateExponent: bigint;
+  prime1: bigint;
+  prime2: bigint;
+  exponent1: bigint;
+  exponent2: bigint;
+  coefficient: bigint;
+};
+type ECParams =
+  | { TAG: 'namedCurve'; data: string }
+  | { TAG: 'implicitCurve'; data: null }
+  | { TAG: 'specifiedCurve'; data: unknown };
+type KeyInfo =
+  | { TAG: 'EC'; data: ECParams }
+  | { TAG: 'X25519'; data: null }
+  | { TAG: 'X448'; data: null }
+  | { TAG: 'Ed25519'; data: null }
+  | { TAG: 'Ed448'; data: null }
+  | { TAG: 'rsaEncryption'; data: null }
+  | { TAG: 'DSA'; data: unknown };
+type Algo = { info: KeyInfo };
+type PKCS8Secret =
+  | {
+      TAG: 'raw';
+      data: Uint8Array;
+    }
+  | {
+      TAG: 'struct';
+      data: {
+        version: bigint;
+        privateKey: Uint8Array;
+        parameters?: ECParams;
+        publicKey?: Uint8Array;
+      };
+    };
+type PKCS8Key = {
+  version: bigint;
+  algorithm: Algo;
+  privateKey: PKCS8Secret;
+  attributes?: Uint8Array[];
+  publicKey?: Uint8Array;
+};
+type SPKIKey = { algorithm: Algo; publicKey: Uint8Array };
+type ASN1TagCoder<T> = P.CoderType<T> & {
+  tagByte: number;
+  constructed: number;
+  inner: P.CoderType<T>;
+};
+type ASN1Pub = {
+  debug: P.CoderType<any>;
+  Integer: ASN1TagCoder<bigint>;
+  OctetString: ASN1TagCoder<Uint8Array>;
+  OID: ASN1TagCoder<string>;
+  BitString: ASN1TagCoder<Uint8Array>;
+  UTF8: ASN1TagCoder<string>;
+  null: ASN1TagCoder<null>;
+  choice: <T extends Record<string, P.CoderType<any>>>(
+    variants: T
+  ) => P.CoderType<{ [K in keyof T]: { TAG: K; data: P.UnwrapCoder<T[K]> } }[keyof T]>;
+  sequence: <T extends Record<string, any>>(fields: P.StructRecord<T>) => ASN1TagCoder<T>;
+  set: <T>(inner: P.CoderType<T>) => ASN1TagCoder<T[]>;
+  explicit: <T>(number: number, inner: P.CoderType<T>) => ASN1TagCoder<T>;
+  implicit: <T>(number: number, inner: ASN1TagCoder<T>) => ASN1TagCoder<T>;
+  optional: <T>(inner: ASN1TagCoder<T>) => ASN1TagCoder<T | undefined>;
+};
+type DERUtilsPub = {
+  BER: {
+    decode: (
+      src: Uint8Array,
+      opts?: { allowBER?: boolean }
+    ) => { nodes: BerNode[]; der: Uint8Array };
+    encode: (nodes: BerNode[], der: Uint8Array) => Uint8Array;
+    normalize: (src: Uint8Array, opts?: { allowBER?: boolean }) => Uint8Array;
+  };
+  ASN1: ASN1Pub;
+  RSAPrivateKey: P.CoderType<RSAKey>;
+  PKCS8SecretKey: P.CoderType<PKCS8Secret>;
+  PKCS8: P.CoderType<PKCS8Key>;
+  SPKI: P.CoderType<SPKIKey>;
+};
+const cat = (parts: Uint8Array[]): Uint8Array => {
+  const len = parts.reduce((a, b) => a + b.length, 0);
+  const out = new Uint8Array(len);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+};
+const lenDer = (len: number): Uint8Array => {
+  if (!Number.isSafeInteger(len) || len < 0) throw new Error(`invalid length ${len}`);
+  if (len < 0x80) return Uint8Array.from([len]);
+  const out: number[] = [];
+  for (let n = len; n > 0; n >>= 8) out.unshift(n & 0xff);
+  return Uint8Array.from([0x80 | out.length, ...out]);
+};
+type BerNode = {
+  len: number;
+  lenBytes: number;
+  indefinite: boolean;
+  bitUnused?: number;
+  children?: BerNode[];
+  cls: number;
+  tagNum: number;
+  cons: boolean;
+};
+type BerRawNode = {
+  tag: Uint8Array;
+  len: Uint8Array;
+  indefinite: boolean;
+  children?: BerRawNode[];
+  der: Uint8Array;
+  value: Uint8Array;
+  pos: number;
+  cls: number;
+  tagNum: number;
+  cons: boolean;
+};
+const berParseTag = (
+  src: Uint8Array,
+  pos: number
+): { bytes: Uint8Array; pos: number; cls: number; cons: boolean; tagNum: number } => {
+  const a = src[pos++];
+  if (a === undefined) throw new Error('unexpected end of input');
+  const cls = a >>> 6;
+  const cons = !!(a & 0x20);
+  let tagNum = a & 0x1f;
+  const out: number[] = [a];
+  if (tagNum !== 0x1f) return { bytes: Uint8Array.from(out), pos, cls, cons, tagNum };
+  tagNum = 0;
+  while (true) {
+    const b = src[pos++];
+    if (b === undefined) throw new Error('unexpected end of high-tag-number');
+    out.push(b);
+    tagNum = (tagNum << 7) | (b & 0x7f);
+    if (!(b & 0x80)) break;
+  }
+  return { bytes: Uint8Array.from(out), pos, cls, cons, tagNum };
+};
+const berParseLen = (
+  src: Uint8Array,
+  pos: number
+): { pos: number; len?: number; indefinite: boolean } => {
+  const a = src[pos++];
+  if (a === undefined) throw new Error('unexpected end of length');
+  if (a < 0x80) return { pos, len: a, indefinite: false };
+  if (a === 0x80) return { pos, indefinite: true };
+  const n = a & 0x7f;
+  if (!n) throw new Error('invalid length header');
+  if (pos + n > src.length) throw new Error('length overrun');
+  let len = 0;
+  for (let i = 0; i < n; i++) len = (len << 8) | src[pos + i];
+  return { pos: pos + n, len, indefinite: false };
+};
+const berParse = (src: Uint8Array, pos: number, allowBER: boolean): BerRawNode => {
+  const tg = berParseTag(src, pos);
+  pos = tg.pos;
+  const ln = berParseLen(src, pos);
+  const lenBytes = src.slice(pos, ln.pos);
+  pos = ln.pos;
+  const child = (): BerRawNode => berParse(src, pos, allowBER);
+  const primitiveTypes = new Set([
+    1, 2, 3, 4, 5, 6, 9, 10, 12, 13, 18, 19, 20, 21, 22, 23, 24, 26, 27, 30,
+  ]);
+  if (ln.indefinite) {
+    if (!allowBER) throw new Error('BER indefinite length is not allowed');
+    if (!tg.cons) throw new Error('BER indefinite length requires constructed tag');
+    const nodes: BerRawNode[] = [];
+    while (true) {
+      if (src[pos] === 0x00 && src[pos + 1] === 0x00) {
+        pos += 2;
+        break;
+      }
+      const n = child();
+      nodes.push(n);
+      pos = n.pos;
+    }
+    const constructed = cat(nodes.map((i) => i.der));
+    if (tg.cls === 0 && primitiveTypes.has(tg.tagNum) && tg.tagNum !== 16 && tg.tagNum !== 17) {
+      if (!allowBER) throw new Error('BER constructed primitive is not allowed');
+      const outTag = tg.bytes.slice();
+      outTag[0] &= ~0x20;
+      if (tg.tagNum === 3) {
+        if (!nodes.length)
+          return {
+            tag: tg.bytes,
+            len: lenBytes,
+            indefinite: true,
+            children: nodes,
+            der: cat([outTag, lenDer(1), Uint8Array.from([0])]),
+            value: Uint8Array.from([0]),
+            pos,
+            cls: tg.cls,
+            tagNum: tg.tagNum,
+            cons: tg.cons,
+          };
+        const parts: Uint8Array[] = [];
+        let unused = 0;
+        for (let i = 0; i < nodes.length; i++) {
+          const v = nodes[i].value;
+          if (!v.length) throw new Error('invalid constructed BIT STRING chunk');
+          const u = v[0];
+          if (i < nodes.length - 1 && u !== 0)
+            throw new Error('invalid constructed BIT STRING intermediate chunk');
+          unused = u;
+          parts.push(v.slice(1));
+        }
+        const value = cat([Uint8Array.from([unused]), ...parts]);
+        return {
+          tag: tg.bytes,
+          len: lenBytes,
+          indefinite: true,
+          children: nodes,
+          der: cat([outTag, lenDer(value.length), value]),
+          value,
+          pos,
+          cls: tg.cls,
+          tagNum: tg.tagNum,
+          cons: tg.cons,
+        };
+      }
+      const value = cat(nodes.map((i) => i.value));
+      return {
+        tag: tg.bytes,
+        len: lenBytes,
+        indefinite: true,
+        children: nodes,
+        der: cat([outTag, lenDer(value.length), value]),
+        value,
+        pos,
+        cls: tg.cls,
+        tagNum: tg.tagNum,
+        cons: tg.cons,
+      };
+    }
+    return {
+      tag: tg.bytes,
+      len: lenBytes,
+      indefinite: true,
+      children: nodes,
+      der: cat([tg.bytes, lenDer(constructed.length), constructed]),
+      value: constructed,
+      pos,
+      cls: tg.cls,
+      tagNum: tg.tagNum,
+      cons: tg.cons,
+    };
+  }
+  if (ln.len === undefined) throw new Error('length missing');
+  if (pos + ln.len > src.length) throw new Error('length overrun');
+  const valueRaw = src.slice(pos, pos + ln.len);
+  pos += ln.len;
+  if (!tg.cons)
+    return {
+      tag: tg.bytes,
+      len: lenBytes,
+      indefinite: false,
+      der: cat([tg.bytes, lenDer(valueRaw.length), valueRaw]),
+      value: valueRaw,
+      pos,
+      cls: tg.cls,
+      tagNum: tg.tagNum,
+      cons: tg.cons,
+    };
+  const nodes: BerRawNode[] = [];
+  let at = 0;
+  while (at < valueRaw.length) {
+    const n = berParse(valueRaw, at, allowBER);
+    nodes.push(n);
+    at = n.pos;
+  }
+  if (at !== valueRaw.length) throw new Error('constructed value parse mismatch');
+  const constructed = cat(nodes.map((i) => i.der));
+  if (tg.cls === 0 && primitiveTypes.has(tg.tagNum) && tg.tagNum !== 16 && tg.tagNum !== 17) {
+    if (!allowBER) throw new Error('BER constructed primitive is not allowed');
+    const outTag = tg.bytes.slice();
+    outTag[0] &= ~0x20;
+    const value =
+      tg.tagNum === 3
+        ? (() => {
+            if (!nodes.length) return Uint8Array.from([0]);
+            const parts: Uint8Array[] = [];
+            let unused = 0;
+            for (let i = 0; i < nodes.length; i++) {
+              const v = nodes[i].value;
+              if (!v.length) throw new Error('invalid constructed BIT STRING chunk');
+              const u = v[0];
+              if (i < nodes.length - 1 && u !== 0)
+                throw new Error('invalid constructed BIT STRING intermediate chunk');
+              unused = u;
+              parts.push(v.slice(1));
+            }
+            return cat([Uint8Array.from([unused]), ...parts]);
+          })()
+        : cat(nodes.map((i) => i.value));
+    return {
+      tag: tg.bytes,
+      len: lenBytes,
+      indefinite: false,
+      children: nodes,
+      der: cat([outTag, lenDer(value.length), value]),
+      value,
+      pos,
+      cls: tg.cls,
+      tagNum: tg.tagNum,
+      cons: tg.cons,
+    };
+  }
+  return {
+    tag: tg.bytes,
+    len: lenBytes,
+    indefinite: false,
+    children: nodes,
+    der: cat([tg.bytes, lenDer(constructed.length), constructed]),
+    value: constructed,
+    pos,
+    cls: tg.cls,
+    tagNum: tg.tagNum,
+    cons: tg.cons,
+  };
+};
+const berTag = (cls: number, cons: boolean, tagNum: number): Uint8Array => {
+  if (!Number.isInteger(cls) || cls < 0 || cls > 3) throw new Error(`invalid BER class ${cls}`);
+  if (!Number.isInteger(tagNum) || tagNum < 0) throw new Error(`invalid BER tag number ${tagNum}`);
+  const c = cons ? 0x20 : 0x00;
+  if (tagNum < 31) return Uint8Array.from([(cls << 6) | c | tagNum]);
+  const out: number[] = [(cls << 6) | c | 0x1f];
+  const parts: number[] = [];
+  for (let n = tagNum; n > 0; n >>= 7) parts.unshift(n & 0x7f);
+  if (!parts.length) parts.push(0);
+  for (let i = 0; i < parts.length - 1; i++) out.push(parts[i] | 0x80);
+  out.push(parts[parts.length - 1]);
+  return Uint8Array.from(out);
+};
+const berMeta = (n: BerRawNode): BerNode => ({
+  len: n.value.length,
+  lenBytes: n.indefinite ? 0 : n.len[0] < 0x80 ? 1 : 1 + (n.len[0] & 0x7f),
+  indefinite: n.indefinite,
+  bitUnused: n.cls === 0 && n.tagNum === 3 && !n.cons && n.value.length ? n.value[0] : undefined,
+  children: n.children?.map(berMeta),
+  cls: n.cls,
+  tagNum: n.tagNum,
+  cons: n.cons,
+});
+const berBuildRaw = (cls: number, tagNum: number, value: Uint8Array): BerRawNode => ({
+  tag: berTag(cls, false, tagNum),
+  len: lenDer(value.length),
+  indefinite: false,
+  der: cat([berTag(cls, false, tagNum), lenDer(value.length), value]),
+  value,
+  pos: 0,
+  cls,
+  tagNum,
+  cons: false,
+});
+const berSplitPrimitive = (n: BerRawNode, metaChildren: BerNode[]): BerRawNode[] | undefined => {
+  if (n.cls !== 0) return undefined;
+  if (n.tagNum === 4) {
+    let at = 0;
+    const out: BerRawNode[] = [];
+    for (const m of metaChildren) {
+      const len = m.len;
+      if (!Number.isInteger(len) || len < 0 || at + len > n.value.length) return undefined;
+      const v = n.value.slice(at, at + len);
+      out.push(berBuildRaw(n.cls, n.tagNum, v));
+      at += len;
+    }
+    if (at !== n.value.length) return undefined;
+    return out;
+  }
+  if (n.tagNum === 3) {
+    if (!n.value.length) return undefined;
+    const u = n.value[0];
+    const bits = n.value.slice(1);
+    let at = 0;
+    const out: BerRawNode[] = [];
+    for (let i = 0; i < metaChildren.length; i++) {
+      const m = metaChildren[i];
+      if (!Number.isInteger(m.len) || m.len < 1) return undefined;
+      const dlen = m.len - 1;
+      if (at + dlen > bits.length) return undefined;
+      const cu = i + 1 === metaChildren.length ? u : m.bitUnused || 0;
+      const v = cat([Uint8Array.from([cu]), bits.slice(at, at + dlen)]);
+      out.push(berBuildRaw(n.cls, n.tagNum, v));
+      at += dlen;
+    }
+    if (at !== bits.length) return undefined;
+    return out;
+  }
+  return undefined;
+};
+const berLen = (len: number, lenBytes: number): Uint8Array => {
+  if (!Number.isSafeInteger(len) || len < 0) throw new Error(`invalid BER length ${len}`);
+  if (!Number.isSafeInteger(lenBytes) || lenBytes < 1)
+    throw new Error(`invalid BER length-size ${lenBytes}`);
+  if (lenBytes === 1) {
+    if (len >= 0x80) throw new Error(`short BER length cannot encode ${len}`);
+    return Uint8Array.from([len]);
+  }
+  const width = lenBytes - 1;
+  let n = len;
+  const out = new Uint8Array(lenBytes);
+  out[0] = 0x80 | width;
+  for (let i = lenBytes - 1; i >= 1; i--) {
+    out[i] = n & 0xff;
+    n >>>= 8;
+  }
+  if (n) throw new Error(`BER length ${len} does not fit ${width} bytes`);
+  return out;
+};
+const berNode = (n: BerRawNode, meta: BerNode): Uint8Array => {
+  if (meta.cls !== n.cls || meta.tagNum !== n.tagNum)
+    throw new Error(
+      `BER tag mismatch expected cls=${meta.cls} tag=${meta.tagNum}, got cls=${n.cls} tag=${n.tagNum}`
+    );
+  const tag = berTag(meta.cls, meta.cons, meta.tagNum);
+  if (!meta.cons) {
+    const v = n.value;
+    if (meta.indefinite) throw new Error('BER primitive cannot use indefinite length');
+    return cat([tag, berLen(v.length, meta.lenBytes), v]);
+  }
+  const srcChildren = n.cons ? n.children || [] : berSplitPrimitive(n, meta.children || []);
+  const mm = meta.children || [];
+  if (!srcChildren || srcChildren.length !== mm.length) throw new Error('BER child shape mismatch');
+  const body = cat(srcChildren.map((c, i) => berNode(c, mm[i])));
+  if (meta.indefinite)
+    return cat([tag, Uint8Array.from([0x80]), body, Uint8Array.from([0x00, 0x00])]);
+  return cat([tag, berLen(body.length, meta.lenBytes), body]);
+};
+const BER = {
+  decode: (src: Uint8Array, opts: { allowBER?: boolean } = {}) => {
+    const allowBER = !!opts.allowBER;
+    const nodes: BerNode[] = [];
+    const der: Uint8Array[] = [];
+    let pos = 0;
+    while (pos < src.length) {
+      const n = berParse(src, pos, allowBER);
+      nodes.push(berMeta(n));
+      der.push(n.der);
+      pos = n.pos;
+    }
+    return { nodes, der: cat(der) };
+  },
+  encode: (nodes: BerNode[], der: Uint8Array) => {
+    const rawNodes: BerRawNode[] = [];
+    let pos = 0;
+    while (pos < der.length) {
+      const n = berParse(der, pos, false);
+      rawNodes.push(n);
+      pos = n.pos;
+    }
+    if (rawNodes.length !== nodes.length) throw new Error('BER root node count mismatch');
+    return cat(rawNodes.map((n, i) => berNode(n, nodes[i])));
+  },
+  normalize: (src: Uint8Array, opts: { allowBER?: boolean } = {}): Uint8Array => {
+    const allowBER = !!opts.allowBER;
+    const out: Uint8Array[] = [];
+    let pos = 0;
+    while (pos < src.length) {
+      const n = berParse(src, pos, allowBER);
+      out.push(n.der);
+      pos = n.pos;
+    }
+    return cat(out);
+  },
+} as const;
+// RFC 8017 A.1.2: RSAPrivateKey structure (PKCS #1 v2.2).
+const RSAPrivateKey = /* @__PURE__ */ ASN1.sequence({
+  version: ASN1.Integer,
+  modulus: ASN1.Integer,
+  publicExponent: ASN1.Integer,
+  privateExponent: ASN1.Integer,
+  prime1: ASN1.Integer,
+  prime2: ASN1.Integer,
+  exponent1: ASN1.Integer,
+  exponent2: ASN1.Integer,
+  coefficient: ASN1.Integer,
+});
 const PKCS8SecretKey = /* @__PURE__ */ ASN1.choice({
   raw: ASN1.OctetString,
   struct: ASN1.sequence({
@@ -527,11 +1009,13 @@ const SPKI = /* @__PURE__ */ ASN1.sequence({
 });
 
 // Could be beautifully typed, but because of isolatedDeclarations, we return garbage.
-export const DERUtils = /* @__PURE__ */ {
-  ASN1: ASN1 as any,
-  PKCS8SecretKey: PKCS8SecretKey as any,
-  PKCS8: PKCS8 as any,
-  SPKI: SPKI as any,
+export const DERUtils: DERUtilsPub = /* @__PURE__ */ {
+  BER,
+  ASN1: ASN1 as unknown as ASN1Pub,
+  RSAPrivateKey: RSAPrivateKey as unknown as P.CoderType<RSAKey>,
+  PKCS8SecretKey: PKCS8SecretKey as unknown as P.CoderType<PKCS8Secret>,
+  PKCS8: PKCS8 as unknown as P.CoderType<PKCS8Key>,
+  SPKI: SPKI as unknown as P.CoderType<SPKIKey>,
 };
 
 type DEROpts = {
@@ -540,6 +1024,16 @@ type DEROpts = {
 };
 
 type DERConverter = ECConverter<Uint8Array, DEROpts>;
+export const CurveOID = {
+  'P-256': '1.2.840.10045.3.1.7',
+  'P-384': '1.3.132.0.34',
+  'P-521': '1.3.132.0.35',
+} as const;
+export const curveOID = (oid: string): keyof typeof CurveOID => {
+  for (const c in CurveOID)
+    if (CurveOID[c as keyof typeof CurveOID] === oid) return c as keyof typeof CurveOID;
+  throw new Error(`unsupported EC namedCurve OID ${oid}`);
+};
 function derConverter(
   curve: Curve,
   info: P.UnwrapCoder<typeof KeyAlgorithm>['info']
@@ -643,7 +1137,7 @@ export const p256_jwk_ecdh: JWKConverter = /* @__PURE__ */ jwkConverter(
 );
 export const p256_der: DERConverter = /* @__PURE__ */ derConverter(p256, {
   TAG: 'EC',
-  data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+  data: { TAG: 'namedCurve', data: CurveOID['P-256'] },
 });
 
 const p384PC = /* @__PURE__ */ jwkPointCoder(p384.Point);
@@ -661,7 +1155,7 @@ export const p384_jwk_ecdh: JWKConverter = /* @__PURE__ */ jwkConverter(
 );
 export const p384_der: DERConverter = /* @__PURE__ */ derConverter(p384, {
   TAG: 'EC',
-  data: { TAG: 'namedCurve', data: '1.3.132.0.34' },
+  data: { TAG: 'namedCurve', data: CurveOID['P-384'] },
 });
 
 const p521PC = /* @__PURE__ */ jwkPointCoder(p521.Point);
@@ -679,7 +1173,7 @@ export const p521_jwk_ecdh: JWKConverter = /* @__PURE__ */ jwkConverter(
 );
 export const p521_der: DERConverter = /* @__PURE__ */ derConverter(p521, {
   TAG: 'EC',
-  data: { TAG: 'namedCurve', data: '1.3.132.0.35' },
+  data: { TAG: 'namedCurve', data: CurveOID['P-521'] },
 });
 
 export const ed25519_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(

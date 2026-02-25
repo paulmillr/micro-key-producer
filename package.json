@@ -46,7 +46,8 @@
     "./slip10.js": "./slip10.js",
     "./ssh.js": "./ssh.js",
     "./tor.js": "./tor.js",
-    "./utils.js": "./utils.js"
+    "./utils.js": "./utils.js",
+    "./x509.js": "./src/x509.ts"
   },
   "keywords": [
     "ed25519",
