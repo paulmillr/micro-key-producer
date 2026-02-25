@@ -1,6 +1,6 @@
 {
   "name": "micro-key-producer",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Produces secure passwords & keys for WebCrypto, SSH, PGP, SLIP10, OTP and many others",
   "files": [
     "*.js",
@@ -60,7 +60,8 @@
     "onion",
     "key generation",
     "ec",
-    "elliptic"
+    "elliptic",
+    "x509"
   ],
   "funding": "https://paulmillr.com/funding/",
   "repository": {

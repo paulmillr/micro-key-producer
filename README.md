@@ -6,6 +6,7 @@ Produces secure passwords & keys for WebCrypto, SSH, PGP, SLIP10, OTP and many o
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🎲 Create deterministic (known) or random keys
 - 🔑 SSH, PGP, TOR, IPNS, SLIP10, BLS12-381 ETH keys
+- X509 certificates
 - 💾 WebCrypto-compatible JWK, DER, PKCS#8, SPKI converter
 - 🔗 gpgkp(1): Sign git commits without gnupg
 - 📟 Generate secure passwords & OTP 2FA codes
@@ -242,6 +243,12 @@ totp(parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS'), 0); // 549419
 ```
 
 Conforms to [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238).
+
+### x509: certificates
+
+```js
+import * as x509 from 'micro-key-producer/x509.js';
+```
 
 ## Internals
 

@@ -1,6 +1,7 @@
 import { should } from '@paulmillr/jsbt/test.js';
 
 import './bls.test.ts';
+// import './x509.test.ts';
 import './convert.test.ts';
 import './ipns.test.ts';
 import './otp.test.ts';
