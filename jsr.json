@@ -1,6 +1,6 @@
 {
   "name": "@paulmillr/micro-key-producer",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "exports": {
     ".": "./src/index.ts",
     "./bls.js": "./src/bls.ts",
@@ -12,7 +12,8 @@
     "./slip10.js": "./src/slip10.ts",
     "./ssh.js": "./src/ssh.ts",
     "./tor.js": "./src/tor.ts",
-    "./utils.js": "./src/utils.ts"
+    "./utils.js": "./src/utils.ts",
+    "./x509.js": "./src/x509.ts"
   },
   "imports": {
     "@noble/ciphers": "jsr:@noble/ciphers@^2.0.0",
