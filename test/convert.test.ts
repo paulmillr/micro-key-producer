@@ -20,6 +20,20 @@ const CURVES = {
 };
 
 describe('convert', () => {
+  should('curveOID fallback + strict DER conversion', () => {
+    deepStrictEqual(convert.curveOID('1.2.840.10045.3.1.7'), 'P-256');
+    deepStrictEqual(
+      convert.curveOID('1.3.6.1.4.1.8301.3.1.2.9.0.33'),
+      'OID:1.3.6.1.4.1.8301.3.1.2.9.0.33'
+    );
+    const bad = convert.DERUtils.SPKI.encode({
+      algorithm: {
+        info: { TAG: 'EC', data: { TAG: 'namedCurve', data: '1.3.6.1.4.1.8301.3.1.2.9.0.33' } },
+      },
+      publicKey: new Uint8Array(65),
+    });
+    throws(() => convert.p256_der.publicKey.decode(bad));
+  });
   should('ASN.1', () => {
     const { ASN1, PKCS8, SPKI } = convert.DERUtils;
     for (const { name, type, pem, decoded, notImplemented, shouldFail } of DER_VECTORS) {

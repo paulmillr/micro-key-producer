@@ -46,6 +46,7 @@ import { bytesToNumberBE } from '@noble/ciphers/utils.js';
 import type { CurvePoint, CurvePointCons } from '@noble/curves/abstract/curve.js';
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { ed448, x448 } from '@noble/curves/ed448.js';
+import { concatBytes } from '@noble/hashes/utils.js';
 import { p256, p384, p521 } from '@noble/curves/nist.js';
 import { equalBytes, numberToVarBytesBE } from '@noble/curves/utils.js';
 import { base64urlnopad, utils as baseUtils } from '@scure/base';
@@ -242,12 +243,15 @@ const ASN1 = /* @__PURE__ */ (() => {
   const tlv = /* @__PURE__ */ P.struct({ tag, data: P.bytes(length) });
   type ASN1Coder<T> = P.CoderType<T> & {
     tagByte: number;
+    tagBytes: number[];
     constructed: number;
     inner: P.CoderType<T>;
   };
   const basic = <T>(typeTag: P.UnwrapCoder<typeof tag>, inner: P.CoderType<T>): ASN1Coder<T> => {
+    const tagByte = tag.encode(typeTag)[0];
     return {
-      tagByte: tag.encode(typeTag)[0],
+      tagByte,
+      tagBytes: [tagByte],
       constructed: typeTag.data.constructed,
       inner,
       ...P.wrap({
@@ -362,22 +366,43 @@ const ASN1 = /* @__PURE__ */ (() => {
   }[keyof T];
   const choice = <T extends Record<string, ASN1Coder<any>>>(
     variants: T
-  ): P.CoderType<ChoiceResult<T>> =>
-    P.wrap({
-      encodeStream(w, value: ChoiceResult<T>) {
-        if (!value.TAG || !variants[value.TAG])
-          throw new Error('ASN1.choice: unknown variant=' + (value.TAG as string));
-        variants[value.TAG].encodeStream(w, value.data);
-      },
-      decodeStream(r): ChoiceResult<T> {
-        const tag = r.byte(true);
-        for (const k in variants) {
-          const v = variants[k];
-          if (v.tagByte === tag) return { TAG: k, data: v.decodeStream(r) };
-        }
-        throw new Error('ASN1.choice: unknown variant=' + tag);
-      },
+  ): ASN1Coder<ChoiceResult<T>> => {
+    const keys = Object.keys(variants) as (keyof T)[];
+    if (!keys.length) throw new Error('ASN1.choice: empty variants');
+    const tagBytes = keys.flatMap((k) => {
+      const v = variants[k] as ASN1Coder<unknown>;
+      if (v.tagBytes && v.tagBytes.length) return v.tagBytes;
+      return v.tagByte === undefined ? [] : [v.tagByte];
     });
+    return {
+      tagByte: tagBytes[0],
+      tagBytes,
+      constructed: variants[keys[0]].constructed,
+      inner: P.bytes(null) as unknown as P.CoderType<ChoiceResult<T>>,
+      ...P.wrap({
+        encodeStream(w, value: ChoiceResult<T>) {
+          if (!value.TAG || !variants[value.TAG])
+            throw new Error('ASN1.choice: unknown variant=' + (value.TAG as string));
+          variants[value.TAG].encodeStream(w, value.data);
+        },
+        decodeStream(r): ChoiceResult<T> {
+          const tag = r.byte(true);
+          for (const k in variants) {
+            const v = variants[k] as ASN1Coder<unknown>;
+            const tags =
+              v.tagBytes && v.tagBytes.length
+                ? v.tagBytes
+                : v.tagByte === undefined
+                  ? []
+                  : [v.tagByte];
+            if (tags.length && !tags.includes(tag)) continue;
+            return { TAG: k, data: v.decodeStream(r) as ChoiceResult<T>['data'] };
+          }
+          throw new Error('ASN1.choice: unknown variant=' + tag);
+        },
+      }),
+    };
+  };
 
   // Small schema-less parser for debug. Useful to see whats going on inside, but not enough for schema parsing.
   const debug: P.CoderType<any> = P.apply(tlv, {
@@ -419,8 +444,15 @@ const ASN1 = /* @__PURE__ */ (() => {
         inner.inner
       ), // hides actual tag
     optional: <T>(inner: ASN1Coder<T>): ASN1Coder<T | undefined> => {
+      const tagBytes =
+        inner.tagBytes && inner.tagBytes.length
+          ? inner.tagBytes
+          : inner.tagByte === undefined
+            ? []
+            : [inner.tagByte];
       return {
         tagByte: inner.tagByte,
+        tagBytes,
         inner: inner.inner as P.CoderType<T | undefined>,
         constructed: inner.constructed,
         ...P.wrap({
@@ -430,8 +462,10 @@ const ASN1 = /* @__PURE__ */ (() => {
           },
           decodeStream(r) {
             if (r.isEnd()) return undefined;
+            if (!tagBytes.length)
+              throw new Error('ASN1.optional: inner coder has no tag information');
             const tag = r.byte(true);
-            if (tag !== inner.tagByte) return undefined;
+            if (!tagBytes.includes(tag)) return undefined;
             return inner.decodeStream(r);
           },
         }),
@@ -516,11 +550,11 @@ type RSAKey = {
   exponent2: bigint;
   coefficient: bigint;
 };
-type ECParams =
+export type ECParams =
   | { TAG: 'namedCurve'; data: string }
   | { TAG: 'implicitCurve'; data: null }
   | { TAG: 'specifiedCurve'; data: unknown };
-type KeyInfo =
+export type KeyInfo =
   | { TAG: 'EC'; data: ECParams }
   | { TAG: 'X25519'; data: null }
   | { TAG: 'X448'; data: null }
@@ -528,7 +562,7 @@ type KeyInfo =
   | { TAG: 'Ed448'; data: null }
   | { TAG: 'rsaEncryption'; data: null }
   | { TAG: 'DSA'; data: unknown };
-type Algo = { info: KeyInfo };
+export type Algo = { info: KeyInfo };
 type PKCS8Secret =
   | {
       TAG: 'raw';
@@ -543,16 +577,17 @@ type PKCS8Secret =
         publicKey?: Uint8Array;
       };
     };
-type PKCS8Key = {
+export type PKCS8Key = {
   version: bigint;
   algorithm: Algo;
   privateKey: PKCS8Secret;
   attributes?: Uint8Array[];
   publicKey?: Uint8Array;
 };
-type SPKIKey = { algorithm: Algo; publicKey: Uint8Array };
+export type SPKIKey = { algorithm: Algo; publicKey: Uint8Array };
 type ASN1TagCoder<T> = P.CoderType<T> & {
   tagByte: number;
+  tagBytes: number[];
   constructed: number;
   inner: P.CoderType<T>;
 };
@@ -588,16 +623,6 @@ type DERUtilsPub = {
   PKCS8: P.CoderType<PKCS8Key>;
   SPKI: P.CoderType<SPKIKey>;
 };
-const cat = (parts: Uint8Array[]): Uint8Array => {
-  const len = parts.reduce((a, b) => a + b.length, 0);
-  const out = new Uint8Array(len);
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return out;
-};
 const lenDer = (len: number): Uint8Array => {
   if (!Number.isSafeInteger(len) || len < 0) throw new Error(`invalid length ${len}`);
   if (len < 0x80) return Uint8Array.from([len]);
@@ -627,102 +652,108 @@ type BerRawNode = {
   tagNum: number;
   cons: boolean;
 };
-const berParseTag = (
-  src: Uint8Array,
-  pos: number
-): { bytes: Uint8Array; pos: number; cls: number; cons: boolean; tagNum: number } => {
-  const a = src[pos++];
-  if (a === undefined) throw new Error('unexpected end of input');
-  const cls = a >>> 6;
-  const cons = !!(a & 0x20);
-  let tagNum = a & 0x1f;
-  const out: number[] = [a];
-  if (tagNum !== 0x1f) return { bytes: Uint8Array.from(out), pos, cls, cons, tagNum };
-  tagNum = 0;
-  while (true) {
-    const b = src[pos++];
-    if (b === undefined) throw new Error('unexpected end of high-tag-number');
-    out.push(b);
-    tagNum = (tagNum << 7) | (b & 0x7f);
-    if (!(b & 0x80)) break;
-  }
-  return { bytes: Uint8Array.from(out), pos, cls, cons, tagNum };
-};
-const berParseLen = (
-  src: Uint8Array,
-  pos: number
-): { pos: number; len?: number; indefinite: boolean } => {
-  const a = src[pos++];
-  if (a === undefined) throw new Error('unexpected end of length');
-  if (a < 0x80) return { pos, len: a, indefinite: false };
-  if (a === 0x80) return { pos, indefinite: true };
-  const n = a & 0x7f;
-  if (!n) throw new Error('invalid length header');
-  if (pos + n > src.length) throw new Error('length overrun');
-  let len = 0;
-  for (let i = 0; i < n; i++) len = (len << 8) | src[pos + i];
-  return { pos: pos + n, len, indefinite: false };
-};
-const berParse = (src: Uint8Array, pos: number, allowBER: boolean): BerRawNode => {
-  const tg = berParseTag(src, pos);
-  pos = tg.pos;
-  const ln = berParseLen(src, pos);
-  const lenBytes = src.slice(pos, ln.pos);
-  pos = ln.pos;
-  const child = (): BerRawNode => berParse(src, pos, allowBER);
-  const primitiveTypes = new Set([
-    1, 2, 3, 4, 5, 6, 9, 10, 12, 13, 18, 19, 20, 21, 22, 23, 24, 26, 27, 30,
-  ]);
-  if (ln.indefinite) {
-    if (!allowBER) throw new Error('BER indefinite length is not allowed');
-    if (!tg.cons) throw new Error('BER indefinite length requires constructed tag');
-    const nodes: BerRawNode[] = [];
-    while (true) {
-      if (src[pos] === 0x00 && src[pos + 1] === 0x00) {
-        pos += 2;
-        break;
+const BER = {
+  parse: (src: Uint8Array, pos: number, allowBER: boolean): BerRawNode => {
+    const aTag = src[pos++];
+    if (aTag === undefined) throw new Error('unexpected end of input');
+    const cls = aTag >>> 6;
+    const cons = !!(aTag & 0x20);
+    let tagNum = aTag & 0x1f;
+    const tagBytes: number[] = [aTag];
+    if (tagNum === 0x1f) {
+      tagNum = 0;
+      while (true) {
+        const b = src[pos++];
+        if (b === undefined) throw new Error('unexpected end of high-tag-number');
+        tagBytes.push(b);
+        tagNum = (tagNum << 7) | (b & 0x7f);
+        if (!(b & 0x80)) break;
       }
-      const n = child();
-      nodes.push(n);
-      pos = n.pos;
     }
-    const constructed = cat(nodes.map((i) => i.der));
-    if (tg.cls === 0 && primitiveTypes.has(tg.tagNum) && tg.tagNum !== 16 && tg.tagNum !== 17) {
-      if (!allowBER) throw new Error('BER constructed primitive is not allowed');
-      const outTag = tg.bytes.slice();
-      outTag[0] &= ~0x20;
-      if (tg.tagNum === 3) {
-        if (!nodes.length)
+    const tg = { bytes: Uint8Array.from(tagBytes), cls, cons, tagNum };
+    const lenAt = pos;
+    const aLen = src[pos++];
+    if (aLen === undefined) throw new Error('unexpected end of length');
+    let ln: { len?: number; indefinite: boolean };
+    if (aLen < 0x80) ln = { len: aLen, indefinite: false };
+    else if (aLen === 0x80) ln = { indefinite: true };
+    else {
+      const n = aLen & 0x7f;
+      if (!n) throw new Error('invalid length header');
+      if (pos + n > src.length) throw new Error('length overrun');
+      let len = 0;
+      for (let i = 0; i < n; i++) len = (len << 8) | src[pos + i];
+      pos += n;
+      ln = { len, indefinite: false };
+    }
+    const lenBytes = src.slice(lenAt, pos);
+    const primitiveTypes = new Set([
+      1, 2, 3, 4, 5, 6, 9, 10, 12, 13, 18, 19, 20, 21, 22, 23, 24, 26, 27, 30,
+    ]);
+    if (ln.indefinite) {
+      if (!allowBER) throw new Error('BER indefinite length is not allowed');
+      if (!tg.cons) throw new Error('BER indefinite length requires constructed tag');
+      const nodes: BerRawNode[] = [];
+      while (true) {
+        if (src[pos] === 0x00 && src[pos + 1] === 0x00) {
+          pos += 2;
+          break;
+        }
+        const n = BER.parse(src, pos, allowBER);
+        nodes.push(n);
+        pos = n.pos;
+      }
+      const constructed = concatBytes(...nodes.map((i) => i.der));
+      if (tg.cls === 0 && primitiveTypes.has(tg.tagNum) && tg.tagNum !== 16 && tg.tagNum !== 17) {
+        if (!allowBER) throw new Error('BER constructed primitive is not allowed');
+        const outTag = tg.bytes.slice();
+        outTag[0] &= ~0x20;
+        if (tg.tagNum === 3) {
+          if (!nodes.length)
+            return {
+              tag: tg.bytes,
+              len: lenBytes,
+              indefinite: true,
+              children: nodes,
+              der: concatBytes(...[outTag, lenDer(1), Uint8Array.from([0])]),
+              value: Uint8Array.from([0]),
+              pos,
+              cls: tg.cls,
+              tagNum: tg.tagNum,
+              cons: tg.cons,
+            };
+          const parts: Uint8Array[] = [];
+          let unused = 0;
+          for (let i = 0; i < nodes.length; i++) {
+            const v = nodes[i].value;
+            if (!v.length) throw new Error('invalid constructed BIT STRING chunk');
+            const u = v[0];
+            if (i < nodes.length - 1 && u !== 0)
+              throw new Error('invalid constructed BIT STRING intermediate chunk');
+            unused = u;
+            parts.push(v.slice(1));
+          }
+          const value = concatBytes(...[Uint8Array.from([unused]), ...parts]);
           return {
             tag: tg.bytes,
             len: lenBytes,
             indefinite: true,
             children: nodes,
-            der: cat([outTag, lenDer(1), Uint8Array.from([0])]),
-            value: Uint8Array.from([0]),
+            der: concatBytes(...[outTag, lenDer(value.length), value]),
+            value,
             pos,
             cls: tg.cls,
             tagNum: tg.tagNum,
             cons: tg.cons,
           };
-        const parts: Uint8Array[] = [];
-        let unused = 0;
-        for (let i = 0; i < nodes.length; i++) {
-          const v = nodes[i].value;
-          if (!v.length) throw new Error('invalid constructed BIT STRING chunk');
-          const u = v[0];
-          if (i < nodes.length - 1 && u !== 0)
-            throw new Error('invalid constructed BIT STRING intermediate chunk');
-          unused = u;
-          parts.push(v.slice(1));
         }
-        const value = cat([Uint8Array.from([unused]), ...parts]);
+        const value = concatBytes(...nodes.map((i) => i.value));
         return {
           tag: tg.bytes,
           len: lenBytes,
           indefinite: true,
           children: nodes,
-          der: cat([outTag, lenDer(value.length), value]),
+          der: concatBytes(...[outTag, lenDer(value.length), value]),
           value,
           pos,
           cls: tg.cls,
@@ -730,13 +761,72 @@ const berParse = (src: Uint8Array, pos: number, allowBER: boolean): BerRawNode =
           cons: tg.cons,
         };
       }
-      const value = cat(nodes.map((i) => i.value));
       return {
         tag: tg.bytes,
         len: lenBytes,
         indefinite: true,
         children: nodes,
-        der: cat([outTag, lenDer(value.length), value]),
+        der: concatBytes(...[tg.bytes, lenDer(constructed.length), constructed]),
+        value: constructed,
+        pos,
+        cls: tg.cls,
+        tagNum: tg.tagNum,
+        cons: tg.cons,
+      };
+    }
+    if (ln.len === undefined) throw new Error('length missing');
+    if (pos + ln.len > src.length) throw new Error('length overrun');
+    const valueRaw = src.slice(pos, pos + ln.len);
+    pos += ln.len;
+    if (!tg.cons)
+      return {
+        tag: tg.bytes,
+        len: lenBytes,
+        indefinite: false,
+        der: concatBytes(...[tg.bytes, lenDer(valueRaw.length), valueRaw]),
+        value: valueRaw,
+        pos,
+        cls: tg.cls,
+        tagNum: tg.tagNum,
+        cons: tg.cons,
+      };
+    const nodes: BerRawNode[] = [];
+    let at = 0;
+    while (at < valueRaw.length) {
+      const n = BER.parse(valueRaw, at, allowBER);
+      nodes.push(n);
+      at = n.pos;
+    }
+    if (at !== valueRaw.length) throw new Error('constructed value parse mismatch');
+    const constructed = concatBytes(...nodes.map((i) => i.der));
+    if (tg.cls === 0 && primitiveTypes.has(tg.tagNum) && tg.tagNum !== 16 && tg.tagNum !== 17) {
+      if (!allowBER) throw new Error('BER constructed primitive is not allowed');
+      const outTag = tg.bytes.slice();
+      outTag[0] &= ~0x20;
+      const value =
+        tg.tagNum === 3
+          ? (() => {
+              if (!nodes.length) return Uint8Array.from([0]);
+              const parts: Uint8Array[] = [];
+              let unused = 0;
+              for (let i = 0; i < nodes.length; i++) {
+                const v = nodes[i].value;
+                if (!v.length) throw new Error('invalid constructed BIT STRING chunk');
+                const u = v[0];
+                if (i < nodes.length - 1 && u !== 0)
+                  throw new Error('invalid constructed BIT STRING intermediate chunk');
+                unused = u;
+                parts.push(v.slice(1));
+              }
+              return concatBytes(...[Uint8Array.from([unused]), ...parts]);
+            })()
+          : concatBytes(...nodes.map((i) => i.value));
+      return {
+        tag: tg.bytes,
+        len: lenBytes,
+        indefinite: false,
+        children: nodes,
+        der: concatBytes(...[outTag, lenDer(value.length), value]),
         value,
         pos,
         cls: tg.cls,
@@ -747,232 +837,157 @@ const berParse = (src: Uint8Array, pos: number, allowBER: boolean): BerRawNode =
     return {
       tag: tg.bytes,
       len: lenBytes,
-      indefinite: true,
+      indefinite: false,
       children: nodes,
-      der: cat([tg.bytes, lenDer(constructed.length), constructed]),
+      der: concatBytes(...[tg.bytes, lenDer(constructed.length), constructed]),
       value: constructed,
       pos,
       cls: tg.cls,
       tagNum: tg.tagNum,
       cons: tg.cons,
     };
-  }
-  if (ln.len === undefined) throw new Error('length missing');
-  if (pos + ln.len > src.length) throw new Error('length overrun');
-  const valueRaw = src.slice(pos, pos + ln.len);
-  pos += ln.len;
-  if (!tg.cons)
-    return {
-      tag: tg.bytes,
-      len: lenBytes,
-      indefinite: false,
-      der: cat([tg.bytes, lenDer(valueRaw.length), valueRaw]),
-      value: valueRaw,
-      pos,
-      cls: tg.cls,
-      tagNum: tg.tagNum,
-      cons: tg.cons,
-    };
-  const nodes: BerRawNode[] = [];
-  let at = 0;
-  while (at < valueRaw.length) {
-    const n = berParse(valueRaw, at, allowBER);
-    nodes.push(n);
-    at = n.pos;
-  }
-  if (at !== valueRaw.length) throw new Error('constructed value parse mismatch');
-  const constructed = cat(nodes.map((i) => i.der));
-  if (tg.cls === 0 && primitiveTypes.has(tg.tagNum) && tg.tagNum !== 16 && tg.tagNum !== 17) {
-    if (!allowBER) throw new Error('BER constructed primitive is not allowed');
-    const outTag = tg.bytes.slice();
-    outTag[0] &= ~0x20;
-    const value =
-      tg.tagNum === 3
-        ? (() => {
-            if (!nodes.length) return Uint8Array.from([0]);
-            const parts: Uint8Array[] = [];
-            let unused = 0;
-            for (let i = 0; i < nodes.length; i++) {
-              const v = nodes[i].value;
-              if (!v.length) throw new Error('invalid constructed BIT STRING chunk');
-              const u = v[0];
-              if (i < nodes.length - 1 && u !== 0)
-                throw new Error('invalid constructed BIT STRING intermediate chunk');
-              unused = u;
-              parts.push(v.slice(1));
-            }
-            return cat([Uint8Array.from([unused]), ...parts]);
-          })()
-        : cat(nodes.map((i) => i.value));
-    return {
-      tag: tg.bytes,
-      len: lenBytes,
-      indefinite: false,
-      children: nodes,
-      der: cat([outTag, lenDer(value.length), value]),
-      value,
-      pos,
-      cls: tg.cls,
-      tagNum: tg.tagNum,
-      cons: tg.cons,
-    };
-  }
-  return {
-    tag: tg.bytes,
-    len: lenBytes,
+  },
+  tag: (cls: number, cons: boolean, tagNum: number): Uint8Array => {
+    if (!Number.isInteger(cls) || cls < 0 || cls > 3) throw new Error(`invalid BER class ${cls}`);
+    if (!Number.isInteger(tagNum) || tagNum < 0)
+      throw new Error(`invalid BER tag number ${tagNum}`);
+    const c = cons ? 0x20 : 0x00;
+    if (tagNum < 31) return Uint8Array.from([(cls << 6) | c | tagNum]);
+    const out: number[] = [(cls << 6) | c | 0x1f];
+    const parts: number[] = [];
+    for (let n = tagNum; n > 0; n >>= 7) parts.unshift(n & 0x7f);
+    if (!parts.length) parts.push(0);
+    for (let i = 0; i < parts.length - 1; i++) out.push(parts[i] | 0x80);
+    out.push(parts[parts.length - 1]);
+    return Uint8Array.from(out);
+  },
+  meta: (n: BerRawNode): BerNode => ({
+    len: n.value.length,
+    lenBytes: n.indefinite ? 0 : n.len[0] < 0x80 ? 1 : 1 + (n.len[0] & 0x7f),
+    indefinite: n.indefinite,
+    bitUnused: n.cls === 0 && n.tagNum === 3 && !n.cons && n.value.length ? n.value[0] : undefined,
+    children: n.children?.map(BER.meta),
+    cls: n.cls,
+    tagNum: n.tagNum,
+    cons: n.cons,
+  }),
+  buildRaw: (cls: number, tagNum: number, value: Uint8Array): BerRawNode => ({
+    tag: BER.tag(cls, false, tagNum),
+    len: lenDer(value.length),
     indefinite: false,
-    children: nodes,
-    der: cat([tg.bytes, lenDer(constructed.length), constructed]),
-    value: constructed,
-    pos,
-    cls: tg.cls,
-    tagNum: tg.tagNum,
-    cons: tg.cons,
-  };
-};
-const berTag = (cls: number, cons: boolean, tagNum: number): Uint8Array => {
-  if (!Number.isInteger(cls) || cls < 0 || cls > 3) throw new Error(`invalid BER class ${cls}`);
-  if (!Number.isInteger(tagNum) || tagNum < 0) throw new Error(`invalid BER tag number ${tagNum}`);
-  const c = cons ? 0x20 : 0x00;
-  if (tagNum < 31) return Uint8Array.from([(cls << 6) | c | tagNum]);
-  const out: number[] = [(cls << 6) | c | 0x1f];
-  const parts: number[] = [];
-  for (let n = tagNum; n > 0; n >>= 7) parts.unshift(n & 0x7f);
-  if (!parts.length) parts.push(0);
-  for (let i = 0; i < parts.length - 1; i++) out.push(parts[i] | 0x80);
-  out.push(parts[parts.length - 1]);
-  return Uint8Array.from(out);
-};
-const berMeta = (n: BerRawNode): BerNode => ({
-  len: n.value.length,
-  lenBytes: n.indefinite ? 0 : n.len[0] < 0x80 ? 1 : 1 + (n.len[0] & 0x7f),
-  indefinite: n.indefinite,
-  bitUnused: n.cls === 0 && n.tagNum === 3 && !n.cons && n.value.length ? n.value[0] : undefined,
-  children: n.children?.map(berMeta),
-  cls: n.cls,
-  tagNum: n.tagNum,
-  cons: n.cons,
-});
-const berBuildRaw = (cls: number, tagNum: number, value: Uint8Array): BerRawNode => ({
-  tag: berTag(cls, false, tagNum),
-  len: lenDer(value.length),
-  indefinite: false,
-  der: cat([berTag(cls, false, tagNum), lenDer(value.length), value]),
-  value,
-  pos: 0,
-  cls,
-  tagNum,
-  cons: false,
-});
-const berSplitPrimitive = (n: BerRawNode, metaChildren: BerNode[]): BerRawNode[] | undefined => {
-  if (n.cls !== 0) return undefined;
-  if (n.tagNum === 4) {
-    let at = 0;
-    const out: BerRawNode[] = [];
-    for (const m of metaChildren) {
-      const len = m.len;
-      if (!Number.isInteger(len) || len < 0 || at + len > n.value.length) return undefined;
-      const v = n.value.slice(at, at + len);
-      out.push(berBuildRaw(n.cls, n.tagNum, v));
-      at += len;
+    der: concatBytes(...[BER.tag(cls, false, tagNum), lenDer(value.length), value]),
+    value,
+    pos: 0,
+    cls,
+    tagNum,
+    cons: false,
+  }),
+  len: (len: number, lenBytes: number): Uint8Array => {
+    if (!Number.isSafeInteger(len) || len < 0) throw new Error(`invalid BER length ${len}`);
+    if (!Number.isSafeInteger(lenBytes) || lenBytes < 1)
+      throw new Error(`invalid BER length-size ${lenBytes}`);
+    if (lenBytes === 1) {
+      if (len >= 0x80) throw new Error(`short BER length cannot encode ${len}`);
+      return Uint8Array.from([len]);
     }
-    if (at !== n.value.length) return undefined;
-    return out;
-  }
-  if (n.tagNum === 3) {
-    if (!n.value.length) return undefined;
-    const u = n.value[0];
-    const bits = n.value.slice(1);
-    let at = 0;
-    const out: BerRawNode[] = [];
-    for (let i = 0; i < metaChildren.length; i++) {
-      const m = metaChildren[i];
-      if (!Number.isInteger(m.len) || m.len < 1) return undefined;
-      const dlen = m.len - 1;
-      if (at + dlen > bits.length) return undefined;
-      const cu = i + 1 === metaChildren.length ? u : m.bitUnused || 0;
-      const v = cat([Uint8Array.from([cu]), bits.slice(at, at + dlen)]);
-      out.push(berBuildRaw(n.cls, n.tagNum, v));
-      at += dlen;
+    const width = lenBytes - 1;
+    let n = len;
+    const out = new Uint8Array(lenBytes);
+    out[0] = 0x80 | width;
+    for (let i = lenBytes - 1; i >= 1; i--) {
+      out[i] = n & 0xff;
+      n >>>= 8;
     }
-    if (at !== bits.length) return undefined;
+    if (n) throw new Error(`BER length ${len} does not fit ${width} bytes`);
     return out;
-  }
-  return undefined;
-};
-const berLen = (len: number, lenBytes: number): Uint8Array => {
-  if (!Number.isSafeInteger(len) || len < 0) throw new Error(`invalid BER length ${len}`);
-  if (!Number.isSafeInteger(lenBytes) || lenBytes < 1)
-    throw new Error(`invalid BER length-size ${lenBytes}`);
-  if (lenBytes === 1) {
-    if (len >= 0x80) throw new Error(`short BER length cannot encode ${len}`);
-    return Uint8Array.from([len]);
-  }
-  const width = lenBytes - 1;
-  let n = len;
-  const out = new Uint8Array(lenBytes);
-  out[0] = 0x80 | width;
-  for (let i = lenBytes - 1; i >= 1; i--) {
-    out[i] = n & 0xff;
-    n >>>= 8;
-  }
-  if (n) throw new Error(`BER length ${len} does not fit ${width} bytes`);
-  return out;
-};
-const berNode = (n: BerRawNode, meta: BerNode): Uint8Array => {
-  if (meta.cls !== n.cls || meta.tagNum !== n.tagNum)
-    throw new Error(
-      `BER tag mismatch expected cls=${meta.cls} tag=${meta.tagNum}, got cls=${n.cls} tag=${n.tagNum}`
-    );
-  const tag = berTag(meta.cls, meta.cons, meta.tagNum);
-  if (!meta.cons) {
-    const v = n.value;
-    if (meta.indefinite) throw new Error('BER primitive cannot use indefinite length');
-    return cat([tag, berLen(v.length, meta.lenBytes), v]);
-  }
-  const srcChildren = n.cons ? n.children || [] : berSplitPrimitive(n, meta.children || []);
-  const mm = meta.children || [];
-  if (!srcChildren || srcChildren.length !== mm.length) throw new Error('BER child shape mismatch');
-  const body = cat(srcChildren.map((c, i) => berNode(c, mm[i])));
-  if (meta.indefinite)
-    return cat([tag, Uint8Array.from([0x80]), body, Uint8Array.from([0x00, 0x00])]);
-  return cat([tag, berLen(body.length, meta.lenBytes), body]);
-};
-const BER = {
+  },
+  node: (n: BerRawNode, meta: BerNode): Uint8Array => {
+    if (meta.cls !== n.cls || meta.tagNum !== n.tagNum)
+      throw new Error(
+        `BER tag mismatch expected cls=${meta.cls} tag=${meta.tagNum}, got cls=${n.cls} tag=${n.tagNum}`
+      );
+    const tag = BER.tag(meta.cls, meta.cons, meta.tagNum);
+    if (!meta.cons) {
+      const v = n.value;
+      if (meta.indefinite) throw new Error('BER primitive cannot use indefinite length');
+      return concatBytes(...[tag, BER.len(v.length, meta.lenBytes), v]);
+    }
+    const mm = meta.children || [];
+    let srcChildren: BerRawNode[] | undefined;
+    if (n.cons) srcChildren = n.children || [];
+    else if (n.cls === 0 && n.tagNum === 4) {
+      let at = 0;
+      const out: BerRawNode[] = [];
+      for (const m of mm) {
+        const len = m.len;
+        if (!Number.isInteger(len) || len < 0 || at + len > n.value.length)
+          throw new Error('BER child shape mismatch');
+        const v = n.value.slice(at, at + len);
+        out.push(BER.buildRaw(n.cls, n.tagNum, v));
+        at += len;
+      }
+      if (at !== n.value.length) throw new Error('BER child shape mismatch');
+      srcChildren = out;
+    } else if (n.cls === 0 && n.tagNum === 3) {
+      if (!n.value.length) throw new Error('BER child shape mismatch');
+      const u = n.value[0];
+      const bits = n.value.slice(1);
+      let at = 0;
+      const out: BerRawNode[] = [];
+      for (let i = 0; i < mm.length; i++) {
+        const m = mm[i];
+        if (!Number.isInteger(m.len) || m.len < 1) throw new Error('BER child shape mismatch');
+        const dlen = m.len - 1;
+        if (at + dlen > bits.length) throw new Error('BER child shape mismatch');
+        const cu = i + 1 === mm.length ? u : m.bitUnused || 0;
+        const v = concatBytes(...[Uint8Array.from([cu]), bits.slice(at, at + dlen)]);
+        out.push(BER.buildRaw(n.cls, n.tagNum, v));
+        at += dlen;
+      }
+      if (at !== bits.length) throw new Error('BER child shape mismatch');
+      srcChildren = out;
+    }
+    if (!srcChildren || srcChildren.length !== mm.length)
+      throw new Error('BER child shape mismatch');
+    const body = concatBytes(...srcChildren.map((c, i) => BER.node(c, mm[i])));
+    if (meta.indefinite)
+      return concatBytes(...[tag, Uint8Array.from([0x80]), body, Uint8Array.from([0x00, 0x00])]);
+    return concatBytes(...[tag, BER.len(body.length, meta.lenBytes), body]);
+  },
   decode: (src: Uint8Array, opts: { allowBER?: boolean } = {}) => {
     const allowBER = !!opts.allowBER;
     const nodes: BerNode[] = [];
     const der: Uint8Array[] = [];
     let pos = 0;
     while (pos < src.length) {
-      const n = berParse(src, pos, allowBER);
-      nodes.push(berMeta(n));
+      const n = BER.parse(src, pos, allowBER);
+      nodes.push(BER.meta(n));
       der.push(n.der);
       pos = n.pos;
     }
-    return { nodes, der: cat(der) };
+    return { nodes, der: concatBytes(...der) };
   },
   encode: (nodes: BerNode[], der: Uint8Array) => {
     const rawNodes: BerRawNode[] = [];
     let pos = 0;
     while (pos < der.length) {
-      const n = berParse(der, pos, false);
+      const n = BER.parse(der, pos, false);
       rawNodes.push(n);
       pos = n.pos;
     }
     if (rawNodes.length !== nodes.length) throw new Error('BER root node count mismatch');
-    return cat(rawNodes.map((n, i) => berNode(n, nodes[i])));
+    return concatBytes(...rawNodes.map((n, i) => BER.node(n, nodes[i])));
   },
   normalize: (src: Uint8Array, opts: { allowBER?: boolean } = {}): Uint8Array => {
     const allowBER = !!opts.allowBER;
     const out: Uint8Array[] = [];
     let pos = 0;
     while (pos < src.length) {
-      const n = berParse(src, pos, allowBER);
+      const n = BER.parse(src, pos, allowBER);
       out.push(n.der);
       pos = n.pos;
     }
-    return cat(out);
+    return concatBytes(...out);
   },
 } as const;
 // RFC 8017 A.1.2: RSAPrivateKey structure (PKCS #1 v2.2).
@@ -1028,11 +1043,14 @@ export const CurveOID = {
   'P-256': '1.2.840.10045.3.1.7',
   'P-384': '1.3.132.0.34',
   'P-521': '1.3.132.0.35',
+  brainpoolP256r1: '1.3.36.3.3.2.8.1.1.7',
+  brainpoolP384r1: '1.3.36.3.3.2.8.1.1.11',
+  brainpoolP512r1: '1.3.36.3.3.2.8.1.1.13',
 } as const;
-export const curveOID = (oid: string): keyof typeof CurveOID => {
+export const curveOID = (oid: string): keyof typeof CurveOID | `OID:${string}` => {
   for (const c in CurveOID)
     if (CurveOID[c as keyof typeof CurveOID] === oid) return c as keyof typeof CurveOID;
-  throw new Error(`unsupported EC namedCurve OID ${oid}`);
+  return `OID:${oid}`;
 };
 function derConverter(
   curve: Curve,
