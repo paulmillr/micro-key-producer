@@ -1,6 +1,6 @@
 {
   "name": "micro-key-producer",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "Produces secure passwords & keys for WebCrypto, SSH, PGP, SLIP10, OTP and many others",
   "files": [
     "*.js",
@@ -47,7 +47,7 @@
     "./ssh.js": "./ssh.js",
     "./tor.js": "./tor.js",
     "./utils.js": "./utils.js",
-    "./x509.js": "./src/x509.ts"
+    "./x509.js": "./x509.js"
   },
   "keywords": [
     "ed25519",
