@@ -35,6 +35,15 @@ function bytesToNumberBE(item) {
 }
 
 describe('BLS', () => {
+  should('derivation validators', () => {
+    const seed = hexToBytes(vectors[0][0]);
+    throws(() => bls.deriveSeedTree(seed, 1 as any), TypeError);
+    throws(() => bls.deriveSeedTree(seed, 'x/12381/3600/0/0'), RangeError);
+    throws(() => bls.deriveEIP2334Key('x' as any, 'signing', 0), TypeError);
+    throws(() => bls.deriveEIP2334Key(seed, 1 as any, 0), TypeError);
+    throws(() => bls.deriveEIP2334Key(seed, 'other' as any, 0), RangeError);
+    throws(() => bls.deriveEIP2334Key(seed, 'signing', -1), RangeError);
+  });
   describe('EIP2333', () => {
     vectors.forEach((vector, i) => {
       should(`run vector ${i}`, () => {

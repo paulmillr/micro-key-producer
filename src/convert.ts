@@ -477,51 +477,54 @@ const ASN1 = /* @__PURE__ */ (() => {
 // https://www.rfc-editor.org/rfc/rfc5915
 // https://www.rfc-editor.org/rfc/rfc5958
 // https://www.rfc-editor.org/rfc/rfc8410
-const SpecifiedECDomain = /* @__PURE__ */ ASN1.sequence({
-  version: ASN1.Integer, // 1 | 2 | 3. 1 -> hash optional, 2|3 -> hash mandatory, 3 -> maybe extra params
-  fieldId: ASN1.sequence({
-    info: P.mappedTag(ASN1.OID, {
-      primeField: ['1.2.840.10045.1.1', ASN1.Integer],
-      binaryField: ['1.2.840.10045.1.2', P.bytes(null)], // a lot of stuff, basises, polynominals, too complex
+const SpecifiedECDomain = /* @__PURE__ */ (() =>
+  ASN1.sequence({
+    version: ASN1.Integer, // 1 | 2 | 3. 1 -> hash optional, 2|3 -> hash mandatory, 3 -> maybe extra params
+    fieldId: ASN1.sequence({
+      info: P.mappedTag(ASN1.OID, {
+        primeField: ['1.2.840.10045.1.1', ASN1.Integer],
+        binaryField: ['1.2.840.10045.1.2', P.bytes(null)], // a lot of stuff, basises, polynominals, too complex
+      }),
     }),
-  }),
-  curve: ASN1.sequence({
-    a: ASN1.OctetString,
-    b: ASN1.OctetString,
-    seed: ASN1.optional(ASN1.BitString),
-  }),
-  base: ASN1.OctetString,
-  order: ASN1.Integer,
-  cofactor: ASN1.optional(ASN1.Integer),
-  hash: ASN1.optional(ASN1.sequence({ algorithm: ASN1.OID, rest: P.bytes(null) })),
-  rest: P.bytes(null),
-});
+    curve: ASN1.sequence({
+      a: ASN1.OctetString,
+      b: ASN1.OctetString,
+      seed: ASN1.optional(ASN1.BitString),
+    }),
+    base: ASN1.OctetString,
+    order: ASN1.Integer,
+    cofactor: ASN1.optional(ASN1.Integer),
+    hash: ASN1.optional(ASN1.sequence({ algorithm: ASN1.OID, rest: P.bytes(null) })),
+    rest: P.bytes(null),
+  }))();
 
-const ECParameters = /* @__PURE__ */ ASN1.choice({
-  namedCurve: ASN1.OID,
-  implicitCurve: ASN1.null,
-  specifiedCurve: SpecifiedECDomain,
-});
+const ECParameters = /* @__PURE__ */ (() =>
+  ASN1.choice({
+    namedCurve: ASN1.OID,
+    implicitCurve: ASN1.null,
+    specifiedCurve: SpecifiedECDomain,
+  }))();
 // We can re-use for pub/secret only without RSA. RSA algorithm is different.
-const KeyAlgorithm = /* @__PURE__ */ ASN1.sequence({
-  info: P.mappedTag(ASN1.OID, {
-    // Maps webcrypto stuff, Ed/X attached
-    EC: ['1.2.840.10045.2.1', ECParameters],
-    X25519: ['1.3.101.110', P.constant(null)], // X25519
-    X448: ['1.3.101.111', P.constant(null)], // X448
-    Ed25519: ['1.3.101.112', P.constant(null)], // Ed25519
-    Ed448: ['1.3.101.113', P.constant(null)], // Ed448
-    rsaEncryption: ['1.2.840.113549.1.1.1', ASN1.null],
-    // For micro-rsa-dsa-dh support: don't want to add yet, because it's an extra dependency.
-    // rsassaPss: ['1.2.840.113549.1.1.10', sequence(hashAlgorithm, maskGenAlgorithm, saltLength, trailerField)]
-    // rsaesOaep: ['1.2.840.113549.1.1.7', sequence(hashAlgorithm, maskGenAlgorithm, pSourceAlgorithm)]
-    // Easy to parse, works as additional test for parser structure.
-    DSA: [
-      '1.2.840.10040.4.1',
-      ASN1.sequence({ p: ASN1.Integer, q: ASN1.Integer, g: ASN1.Integer }),
-    ],
-  }),
-});
+const KeyAlgorithm = /* @__PURE__ */ (() =>
+  ASN1.sequence({
+    info: P.mappedTag(ASN1.OID, {
+      // Maps webcrypto stuff, Ed/X attached
+      EC: ['1.2.840.10045.2.1', ECParameters],
+      X25519: ['1.3.101.110', P.constant(null)], // X25519
+      X448: ['1.3.101.111', P.constant(null)], // X448
+      Ed25519: ['1.3.101.112', P.constant(null)], // Ed25519
+      Ed448: ['1.3.101.113', P.constant(null)], // Ed448
+      rsaEncryption: ['1.2.840.113549.1.1.1', ASN1.null],
+      // For micro-rsa-dsa-dh support: don't want to add yet, because it's an extra dependency.
+      // rsassaPss: ['1.2.840.113549.1.1.10', sequence(hashAlgorithm, maskGenAlgorithm, saltLength, trailerField)]
+      // rsaesOaep: ['1.2.840.113549.1.1.7', sequence(hashAlgorithm, maskGenAlgorithm, pSourceAlgorithm)]
+      // Easy to parse, works as additional test for parser structure.
+      DSA: [
+        '1.2.840.10040.4.1',
+        ASN1.sequence({ p: ASN1.Integer, q: ASN1.Integer, g: ASN1.Integer }),
+      ],
+    }),
+  }))();
 // TODO: this is nice, but we cannot put all OIDS here, so, lets do P.bytes(null)?
 // On other hand, if there is some issues with encoding, we will convert key, but other stuff will fail on it
 // const DirectoryString = ASN1.choice({
@@ -538,7 +541,7 @@ const KeyAlgorithm = /* @__PURE__ */ ASN1.sequence({
 //     }),
 //   })
 // );
-const Attributes = /* @__PURE__ */ ASN1.set(P.bytes(null));
+const Attributes = /* @__PURE__ */ (() => ASN1.set(P.bytes(null)))();
 type RSAKey = {
   version: bigint;
   modulus: bigint;
@@ -550,10 +553,12 @@ type RSAKey = {
   exponent2: bigint;
   coefficient: bigint;
 };
+/** Elliptic-curve parameter encoding used by DER key structures. */
 export type ECParams =
   | { TAG: 'namedCurve'; data: string }
   | { TAG: 'implicitCurve'; data: null }
   | { TAG: 'specifiedCurve'; data: unknown };
+/** Algorithm identifier payload for DER key structures. */
 export type KeyInfo =
   | { TAG: 'EC'; data: ECParams }
   | { TAG: 'X25519'; data: null }
@@ -562,7 +567,11 @@ export type KeyInfo =
   | { TAG: 'Ed448'; data: null }
   | { TAG: 'rsaEncryption'; data: null }
   | { TAG: 'DSA'; data: unknown };
-export type Algo = { info: KeyInfo };
+/** Top-level algorithm wrapper for DER key structures. */
+export type Algo = {
+  /** Algorithm identifier and its associated parameters. */
+  info: KeyInfo;
+};
 type PKCS8Secret =
   | {
       TAG: 'raw';
@@ -577,14 +586,26 @@ type PKCS8Secret =
         publicKey?: Uint8Array;
       };
     };
+/** Decoded PKCS#8 private-key structure. */
 export type PKCS8Key = {
+  /** PKCS#8 version field. */
   version: bigint;
+  /** Algorithm identifier describing the wrapped private key. */
   algorithm: Algo;
+  /** Raw or structured private-key payload. */
   privateKey: PKCS8Secret;
+  /** Optional PKCS#8 attributes carried alongside the key. */
   attributes?: Uint8Array[];
+  /** Optional public key attached to the private-key structure. */
   publicKey?: Uint8Array;
 };
-export type SPKIKey = { algorithm: Algo; publicKey: Uint8Array };
+/** Decoded SubjectPublicKeyInfo structure. */
+export type SPKIKey = {
+  /** Algorithm identifier describing the public key. */
+  algorithm: Algo;
+  /** Encoded public-key bytes. */
+  publicKey: Uint8Array;
+};
 type ASN1TagCoder<T> = P.CoderType<T> & {
   tagByte: number;
   tagBytes: number[];
@@ -990,48 +1011,66 @@ const BER = {
     return concatBytes(...out);
   },
 } as const;
-// RFC 8017 A.1.2: RSAPrivateKey structure (PKCS #1 v2.2).
-const RSAPrivateKey = /* @__PURE__ */ ASN1.sequence({
-  version: ASN1.Integer,
-  modulus: ASN1.Integer,
-  publicExponent: ASN1.Integer,
-  privateExponent: ASN1.Integer,
-  prime1: ASN1.Integer,
-  prime2: ASN1.Integer,
-  exponent1: ASN1.Integer,
-  exponent2: ASN1.Integer,
-  coefficient: ASN1.Integer,
-});
-const PKCS8SecretKey = /* @__PURE__ */ ASN1.choice({
-  raw: ASN1.OctetString,
-  struct: ASN1.sequence({
+const PKCS8SecretKey = /* @__PURE__ */ (() =>
+  ASN1.choice({
+    raw: ASN1.OctetString,
+    struct: /* @__PURE__ */ ASN1.sequence({
+      version: ASN1.Integer,
+      privateKey: ASN1.OctetString,
+      parameters: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.explicit(0, ECParameters)),
+      publicKey: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.explicit(1, ASN1.BitString)),
+    }),
+  }))();
+// treeshake: these schema objects still stay alive through member reads unless the whole declaration is pure.
+const PKCS8 = /* @__PURE__ */ (() =>
+  ASN1.sequence({
     version: ASN1.Integer,
-    privateKey: ASN1.OctetString,
-    parameters: ASN1.optional(ASN1.explicit(0, ECParameters)),
-    publicKey: ASN1.optional(ASN1.explicit(1, ASN1.BitString)),
-  }),
-});
-const PKCS8 = /* @__PURE__ */ ASN1.sequence({
-  version: ASN1.Integer,
-  algorithm: KeyAlgorithm,
-  privateKey: P.apply(ASN1.OctetString, P.coders.reverse(PKCS8SecretKey)),
-  attributes: ASN1.optional(ASN1.implicit(0, Attributes)),
-  publicKey: ASN1.optional(ASN1.implicit(1, ASN1.BitString)),
-});
-const SPKI = /* @__PURE__ */ ASN1.sequence({
-  algorithm: KeyAlgorithm,
-  publicKey: ASN1.BitString,
-});
+    algorithm: KeyAlgorithm,
+    privateKey: /* @__PURE__ */ P.apply(
+      ASN1.OctetString,
+      /* @__PURE__ */ P.coders.reverse(PKCS8SecretKey)
+    ),
+    attributes: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(0, Attributes)),
+    publicKey: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(1, ASN1.BitString)),
+  }))();
+const SPKI = /* @__PURE__ */ (() =>
+  ASN1.sequence({
+    algorithm: KeyAlgorithm,
+    publicKey: ASN1.BitString,
+  }))();
 
 // Could be beautifully typed, but because of isolatedDeclarations, we return garbage.
-export const DERUtils: DERUtilsPub = /* @__PURE__ */ {
-  BER,
-  ASN1: ASN1 as unknown as ASN1Pub,
-  RSAPrivateKey: RSAPrivateKey as unknown as P.CoderType<RSAKey>,
-  PKCS8SecretKey: PKCS8SecretKey as unknown as P.CoderType<PKCS8Secret>,
-  PKCS8: PKCS8 as unknown as P.CoderType<PKCS8Key>,
-  SPKI: SPKI as unknown as P.CoderType<SPKIKey>,
-};
+/**
+ * Low-level DER, BER, ASN.1, PKCS#8, and SPKI helpers.
+ * @example
+ * Reach for the raw ASN.1 coders when you need to inspect key structures by hand.
+ * ```ts
+ * import { DERUtils } from 'micro-key-producer/convert.js';
+ * DERUtils.ASN1.OID.encode('1.2.840.10045.3.1.7');
+ * ```
+ */
+export const DERUtils: DERUtilsPub = /* @__PURE__ */ (() => {
+  // treeshake: RSA PKCS#1 structure is only needed through DERUtils, not every converter bundle.
+  const RSAPrivateKey = /* @__PURE__ */ ASN1.sequence({
+    version: ASN1.Integer,
+    modulus: ASN1.Integer,
+    publicExponent: ASN1.Integer,
+    privateExponent: ASN1.Integer,
+    prime1: ASN1.Integer,
+    prime2: ASN1.Integer,
+    exponent1: ASN1.Integer,
+    exponent2: ASN1.Integer,
+    coefficient: ASN1.Integer,
+  });
+  return {
+    BER,
+    ASN1: ASN1 as unknown as ASN1Pub,
+    RSAPrivateKey: RSAPrivateKey as unknown as P.CoderType<RSAKey>,
+    PKCS8SecretKey: PKCS8SecretKey as unknown as P.CoderType<PKCS8Secret>,
+    PKCS8: PKCS8 as unknown as P.CoderType<PKCS8Key>,
+    SPKI: SPKI as unknown as P.CoderType<SPKIKey>,
+  };
+})();
 
 type DEROpts = {
   noPublicKey?: boolean;
@@ -1039,6 +1078,7 @@ type DEROpts = {
 };
 
 type DERConverter = ECConverter<Uint8Array, DEROpts>;
+/** Named-curve OID table used by the DER helpers. */
 export const CurveOID = {
   'P-256': '1.2.840.10045.3.1.7',
   'P-384': '1.3.132.0.34',
@@ -1047,6 +1087,17 @@ export const CurveOID = {
   brainpoolP384r1: '1.3.36.3.3.2.8.1.1.11',
   brainpoolP512r1: '1.3.36.3.3.2.8.1.1.13',
 } as const;
+/**
+ * Maps a named-curve OID to its public curve name.
+ * @param oid - Object identifier string.
+ * @returns Known curve name or `OID:...` fallback.
+ * @example
+ * Convert a DER named-curve OID into the public curve name used by this package.
+ * ```ts
+ * import { CurveOID, curveOID } from 'micro-key-producer/convert.js';
+ * curveOID(CurveOID['P-256']);
+ * ```
+ */
 export const curveOID = (oid: string): keyof typeof CurveOID | `OID:${string}` => {
   for (const c in CurveOID)
     if (CurveOID[c as keyof typeof CurveOID] === oid) return c as keyof typeof CurveOID;
@@ -1140,99 +1191,242 @@ function derConverter(
 }
 
 // Per-curve definitions
-const p256PC = /* @__PURE__ */ jwkPointCoder(p256.Point);
-export const p256_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
-  p256,
-  p256PC,
-  { kty: 'EC', crv: 'P-256' },
-  false
-);
-export const p256_jwk_ecdh: JWKConverter = /* @__PURE__ */ jwkConverter(
-  p256,
-  p256PC,
-  { kty: 'EC', crv: 'P-256' },
-  true
-);
+/**
+ * JWK converter for P-256 signing keys.
+ * @example
+ * Encode a freshly generated P-256 signing key as JWK.
+ * ```ts
+ * import { p256 } from '@noble/curves/nist.js';
+ * import { p256_jwk } from 'micro-key-producer/convert.js';
+ * p256_jwk.secretKey.encode(p256.utils.randomSecretKey());
+ * ```
+ */
+export const p256_jwk: JWKConverter = /* @__PURE__ */ (() =>
+  jwkConverter(p256, jwkPointCoder(p256.Point), { kty: 'EC', crv: 'P-256' }, false))();
+/**
+ * JWK converter for P-256 ECDH keys.
+ * @example
+ * Encode a P-256 private key for ECDH-oriented JWK consumers.
+ * ```ts
+ * import { p256 } from '@noble/curves/nist.js';
+ * import { p256_jwk_ecdh } from 'micro-key-producer/convert.js';
+ * p256_jwk_ecdh.secretKey.encode(p256.utils.randomSecretKey());
+ * ```
+ */
+export const p256_jwk_ecdh: JWKConverter = /* @__PURE__ */ (() =>
+  jwkConverter(p256, jwkPointCoder(p256.Point), { kty: 'EC', crv: 'P-256' }, true))();
+/**
+ * DER converter for P-256 keys.
+ * @example
+ * Encode the same P-256 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { p256 } from '@noble/curves/nist.js';
+ * import { p256_der } from 'micro-key-producer/convert.js';
+ * p256_der.secretKey.encode(p256.utils.randomSecretKey());
+ * ```
+ */
 export const p256_der: DERConverter = /* @__PURE__ */ derConverter(p256, {
   TAG: 'EC',
-  data: { TAG: 'namedCurve', data: CurveOID['P-256'] },
+  data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
 });
 
-const p384PC = /* @__PURE__ */ jwkPointCoder(p384.Point);
-export const p384_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
-  p384,
-  p384PC,
-  { kty: 'EC', crv: 'P-384' },
-  false
-);
-export const p384_jwk_ecdh: JWKConverter = /* @__PURE__ */ jwkConverter(
-  p384,
-  p384PC,
-  { kty: 'EC', crv: 'P-384' },
-  true
-);
+/**
+ * JWK converter for P-384 signing keys.
+ * @example
+ * Encode a freshly generated P-384 signing key as JWK.
+ * ```ts
+ * import { p384 } from '@noble/curves/nist.js';
+ * import { p384_jwk } from 'micro-key-producer/convert.js';
+ * p384_jwk.secretKey.encode(p384.utils.randomSecretKey());
+ * ```
+ */
+export const p384_jwk: JWKConverter = /* @__PURE__ */ (() =>
+  jwkConverter(p384, jwkPointCoder(p384.Point), { kty: 'EC', crv: 'P-384' }, false))();
+/**
+ * JWK converter for P-384 ECDH keys.
+ * @example
+ * Encode a P-384 private key for ECDH-oriented JWK consumers.
+ * ```ts
+ * import { p384 } from '@noble/curves/nist.js';
+ * import { p384_jwk_ecdh } from 'micro-key-producer/convert.js';
+ * p384_jwk_ecdh.secretKey.encode(p384.utils.randomSecretKey());
+ * ```
+ */
+export const p384_jwk_ecdh: JWKConverter = /* @__PURE__ */ (() =>
+  jwkConverter(p384, jwkPointCoder(p384.Point), { kty: 'EC', crv: 'P-384' }, true))();
+/**
+ * DER converter for P-384 keys.
+ * @example
+ * Encode the same P-384 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { p384 } from '@noble/curves/nist.js';
+ * import { p384_der } from 'micro-key-producer/convert.js';
+ * p384_der.secretKey.encode(p384.utils.randomSecretKey());
+ * ```
+ */
 export const p384_der: DERConverter = /* @__PURE__ */ derConverter(p384, {
   TAG: 'EC',
-  data: { TAG: 'namedCurve', data: CurveOID['P-384'] },
+  data: { TAG: 'namedCurve', data: '1.3.132.0.34' },
 });
 
-const p521PC = /* @__PURE__ */ jwkPointCoder(p521.Point);
-export const p521_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
-  p521,
-  p521PC,
-  { kty: 'EC', crv: 'P-521' },
-  false
-);
-export const p521_jwk_ecdh: JWKConverter = /* @__PURE__ */ jwkConverter(
-  p521,
-  p521PC,
-  { kty: 'EC', crv: 'P-521' },
-  true
-);
+/**
+ * JWK converter for P-521 signing keys.
+ * @example
+ * Encode a freshly generated P-521 signing key as JWK.
+ * ```ts
+ * import { p521 } from '@noble/curves/nist.js';
+ * import { p521_jwk } from 'micro-key-producer/convert.js';
+ * p521_jwk.secretKey.encode(p521.utils.randomSecretKey());
+ * ```
+ */
+export const p521_jwk: JWKConverter = /* @__PURE__ */ (() =>
+  jwkConverter(p521, jwkPointCoder(p521.Point), { kty: 'EC', crv: 'P-521' }, false))();
+/**
+ * JWK converter for P-521 ECDH keys.
+ * @example
+ * Encode a P-521 private key for ECDH-oriented JWK consumers.
+ * ```ts
+ * import { p521 } from '@noble/curves/nist.js';
+ * import { p521_jwk_ecdh } from 'micro-key-producer/convert.js';
+ * p521_jwk_ecdh.secretKey.encode(p521.utils.randomSecretKey());
+ * ```
+ */
+export const p521_jwk_ecdh: JWKConverter = /* @__PURE__ */ (() =>
+  jwkConverter(p521, jwkPointCoder(p521.Point), { kty: 'EC', crv: 'P-521' }, true))();
+/**
+ * DER converter for P-521 keys.
+ * @example
+ * Encode the same P-521 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { p521 } from '@noble/curves/nist.js';
+ * import { p521_der } from 'micro-key-producer/convert.js';
+ * p521_der.secretKey.encode(p521.utils.randomSecretKey());
+ * ```
+ */
 export const p521_der: DERConverter = /* @__PURE__ */ derConverter(p521, {
   TAG: 'EC',
-  data: { TAG: 'namedCurve', data: CurveOID['P-521'] },
+  data: { TAG: 'namedCurve', data: '1.3.132.0.35' },
 });
 
+/**
+ * JWK converter for Ed25519 keys.
+ * @example
+ * Encode an Ed25519 secret key into JWK form.
+ * ```ts
+ * import { ed25519 } from '@noble/curves/ed25519.js';
+ * import { ed25519_jwk } from 'micro-key-producer/convert.js';
+ * ed25519_jwk.secretKey.encode(ed25519.utils.randomSecretKey());
+ * ```
+ */
 export const ed25519_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
   ed25519,
   jwkBytesCoder,
   { kty: 'OKP', crv: 'Ed25519', alg: 'Ed25519' },
   false
 );
+/**
+ * DER converter for Ed25519 keys.
+ * @example
+ * Encode the same Ed25519 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { ed25519 } from '@noble/curves/ed25519.js';
+ * import { ed25519_der } from 'micro-key-producer/convert.js';
+ * ed25519_der.secretKey.encode(ed25519.utils.randomSecretKey());
+ * ```
+ */
 export const ed25519_der: DERConverter = /* @__PURE__ */ derConverter(ed25519, {
   TAG: 'Ed25519',
   data: null,
 });
 
+/**
+ * JWK converter for Ed448 keys.
+ * @example
+ * Encode an Ed448 secret key into JWK form.
+ * ```ts
+ * import { ed448 } from '@noble/curves/ed448.js';
+ * import { ed448_jwk } from 'micro-key-producer/convert.js';
+ * ed448_jwk.secretKey.encode(ed448.utils.randomSecretKey());
+ * ```
+ */
 export const ed448_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
   ed448,
   jwkBytesCoder,
   { kty: 'OKP', crv: 'Ed448', alg: 'Ed448' },
   false
 );
+/**
+ * DER converter for Ed448 keys.
+ * @example
+ * Encode the same Ed448 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { ed448 } from '@noble/curves/ed448.js';
+ * import { ed448_der } from 'micro-key-producer/convert.js';
+ * ed448_der.secretKey.encode(ed448.utils.randomSecretKey());
+ * ```
+ */
 export const ed448_der: DERConverter = /* @__PURE__ */ derConverter(ed448, {
   TAG: 'Ed448',
   data: null,
 });
 
+/**
+ * JWK converter for X25519 keys.
+ * @example
+ * Encode an X25519 private key into JWK form.
+ * ```ts
+ * import { x25519 } from '@noble/curves/ed25519.js';
+ * import { x25519_jwk } from 'micro-key-producer/convert.js';
+ * x25519_jwk.secretKey.encode(x25519.utils.randomSecretKey());
+ * ```
+ */
 export const x25519_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
   x25519,
   jwkBytesCoder,
   { kty: 'OKP', crv: 'X25519' },
   true
 );
+/**
+ * DER converter for X25519 keys.
+ * @example
+ * Encode the same X25519 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { x25519 } from '@noble/curves/ed25519.js';
+ * import { x25519_der } from 'micro-key-producer/convert.js';
+ * x25519_der.secretKey.encode(x25519.utils.randomSecretKey());
+ * ```
+ */
 export const x25519_der: DERConverter = /* @__PURE__ */ derConverter(x25519, {
   TAG: 'X25519',
   data: null,
 });
 
+/**
+ * JWK converter for X448 keys.
+ * @example
+ * Encode an X448 private key into JWK form.
+ * ```ts
+ * import { x448 } from '@noble/curves/ed448.js';
+ * import { x448_jwk } from 'micro-key-producer/convert.js';
+ * x448_jwk.secretKey.encode(x448.utils.randomSecretKey());
+ * ```
+ */
 export const x448_jwk: JWKConverter = /* @__PURE__ */ jwkConverter(
   x448,
   jwkBytesCoder,
   { kty: 'OKP', crv: 'X448' },
   true
 );
+/**
+ * DER converter for X448 keys.
+ * @example
+ * Encode the same X448 secret key into DER/PKCS#8 form.
+ * ```ts
+ * import { x448 } from '@noble/curves/ed448.js';
+ * import { x448_der } from 'micro-key-producer/convert.js';
+ * x448_der.secretKey.encode(x448.utils.randomSecretKey());
+ * ```
+ */
 export const x448_der: DERConverter = /* @__PURE__ */ derConverter(x448, {
   TAG: 'X448',
   data: null,

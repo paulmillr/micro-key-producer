@@ -14,7 +14,19 @@ const base36 = utils.chain(
   utils.join('')
 );
 
-/** Formats IPNS public key in bytes array format to 'ipns://k...' string format */
+/**
+ * Formats an IPNS public key into the canonical `ipns://k...` form.
+ * @param pubBytes - Encoded multicodec public key bytes.
+ * @returns Base36 IPNS address string.
+ * @example
+ * Round-trip an IPNS address string back to bytes and into the canonical display form.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { formatPublicKey, getKeys, parseAddress } from 'micro-key-producer/ipns.js';
+ * const seed = randomBytes(32);
+ * formatPublicKey(parseAddress(getKeys(seed).base36));
+ * ```
+ */
 export function formatPublicKey(pubBytes: Uint8Array): string {
   return `ipns://k${base36.encode(pubBytes)}`;
 }
@@ -23,6 +35,17 @@ export function formatPublicKey(pubBytes: Uint8Array): string {
  * Takes an IPNS pubkey (address) string as input and returns bytes array of the key.
  * Supports various formats ('ipns://k', 'ipns://b', 'ipns://f').
  * Handles decoding and validation of the key before returning pubkey bytes
+ * @param address - IPNS address in base36, base32, or base16 form.
+ * @returns Decoded multicodec public key bytes.
+ * @throws If the IPNS address format or key prefix is invalid. {@link Error}
+ * @example
+ * Parse any exported IPNS address back into the multicodec public-key bytes.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeys, parseAddress } from 'micro-key-producer/ipns.js';
+ * const seed = randomBytes(32);
+ * parseAddress(getKeys(seed).base36);
+ * ```
  */
 export function parseAddress(address: string): Uint8Array {
   address = address.toLowerCase();
@@ -46,15 +69,35 @@ export function parseAddress(address: string): Uint8Array {
   throw new Error('Invalid IPNS Key Prefix: ' + hexKey);
 }
 
+/** Deterministic IPNS key material in several address encodings. */
 export type IpnsKeys = {
+  /** Hex-encoded multicodec public key with `0x` prefix. */
   publicKey: string;
+  /** Hex-encoded multicodec private key with `0x` prefix. */
   privateKey: string;
+  /** Canonical base36 `ipns://k...` address. */
   base36: string;
+  /** Base32 `ipns://b...` address. */
   base32: string;
+  /** Base16 `ipns://f...` address. */
   base16: string;
+  /** EIP-1577 contenthash form of the same key. */
   contenthash: string;
 };
-/** Generates an ed25519 pubkey from a seed and converts it to several IPNS pubkey formats */
+/**
+ * Derives IPNS key material from an ed25519 seed.
+ * @param seed - 32-byte ed25519 seed.
+ * @returns Public and private key encodings plus multiple IPNS address formats.
+ * @throws On wrong seed length. {@link TypeError}
+ * @example
+ * Start from a fresh Ed25519 seed and export all supported IPNS address forms.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeys } from 'micro-key-producer/ipns.js';
+ * const seed = randomBytes(32);
+ * getKeys(seed).contenthash;
+ * ```
+ */
 export function getKeys(seed: Uint8Array): IpnsKeys {
   //? privKey "seed" should be checked for <ed25519.curve.n?
   if (seed.length !== 32) throw new TypeError('Seed must be 32 bytes in length');
@@ -79,4 +122,18 @@ export function getKeys(seed: Uint8Array): IpnsKeys {
   };
 }
 
+/**
+ * Default export for deterministic IPNS key derivation.
+ * @param seed - 32-byte ed25519 seed.
+ * @returns Public and private key encodings plus multiple IPNS address formats.
+ * @throws On wrong seed length. {@link TypeError}
+ * @example
+ * Use the default export when you only need the derived IPNS key bundle.
+ * ```ts
+ * import getKeys from 'micro-key-producer/ipns.js';
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * const seed = randomBytes(32);
+ * getKeys(seed).base36;
+ * ```
+ */
 export default getKeys;

@@ -61,6 +61,8 @@ Every method takes a seed (key), from which the formatted result is produced.
 
 A seed can be **deterministic** (a.k.a. known - it will always produce the same result), or **random**.
 
+> `npm install @scure/bip39` for mnemonic-based examples
+
 ```js
 // known: (deterministic) Uses known mnemonic (handled in separate package)
 import { mnemonicToSeedSync } from '@scure/bip39';
@@ -95,7 +97,7 @@ import { randomBytes } from 'micro-key-producer/utils.js';
 const seed = randomBytes(32);
 const email = 'user@example.com';
 const pass = 'password';
-const createdAt = Date.now(); // optional; timestamp >= 0. 0 is 1970-01-01 00:00:00
+const createdAt = Math.floor(Date.now() / 1000); // optional; unix timestamp
 
 const keyId = getKeyId(seed);
 const key = pgp(seed, email, pass, createdAt);
@@ -136,17 +138,20 @@ git config --global user.email "alice@example.com"
 
 ```js
 import slip10 from 'micro-key-producer/slip10.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { randomBytes } from 'micro-key-producer/utils.js';
 
 const seed = randomBytes(32);
-const hdkey1 = slip10.fromMasterSeed(seed);
+const root = slip10.fromMasterSeed(seed);
+const account0 = root.derive("m/0'");
+const signing = root.derive("m/0/2147483647'/1'", true);
+const msgHash = sha256(new TextEncoder().encode('hello slip10'));
 
 // props
-[hdkey1.depth, hdkey1.index, hdkey1.chainCode];
-console.log(hdkey2.privateKey, hdkey2.publicKey);
-console.log(hdkey3.derive("m/0/2147483647'/1'"));
-const sig = hdkey3.sign(hash);
-hdkey3.verify(hash, sig);
+[root.depth, root.index, root.chainCode];
+[account0.privateKey, account0.publicKey];
+const sig = signing.sign(msgHash);
+signing.verify(msgHash, sig);
 ```
 
 SLIP10 (ed25519 BIP32) HDKey implementation has been funded by the Kin Foundation for
@@ -200,6 +205,8 @@ console.log(k.privateKey, k.publicKey, k.base16, k.base32, k.base36, k.contentha
 
 ### bls: EIP-2333 keys for ETH validators
 
+> `npm install @scure/bip39`
+
 ```js
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { createDerivedEIP2334Keystores } from 'micro-key-producer/bls.js';
@@ -210,7 +217,7 @@ const keyType = 'signing'; // or 'withdrawal'
 const indexes = [0, 1, 2, 3]; // create 4 keys
 
 const keystores = createDerivedEIP2334Keystores(
-  password
+  password,
   'scrypt',
   mnemonicToSeedSync(mnemonic, ''),
   keyType,
@@ -263,8 +270,8 @@ import * as x509 from 'micro-key-producer/x509.js';
    [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
 
 ```js
-import * as pgp from 'micro-key-producer/pgp';
-import { randomBytes } from 'micro-key-producer/utils';
+import * as pgp from 'micro-key-producer/pgp.js';
+import { randomBytes } from 'micro-key-producer/utils.js';
 const pseed = randomBytes(32);
 pgp.getKeyId(pseed); // fast
 const pkeys = pgp.getKeys(pseed, 'user@example.com', 'password');
@@ -273,8 +280,8 @@ console.log(pkeys.privateKey);
 console.log(pkeys.publicKey);
 
 // Also, you can explore existing keys internal structure
-console.log(pgp.pubArmor.decode(keys.publicKey));
-const privDecoded = pgp.privArmor.decode(keys.privateKey);
+console.log(pgp.pubArmor.decode(pkeys.publicKey));
+const privDecoded = pgp.privArmor.decode(pkeys.privateKey);
 console.log(privDecoded);
 // And receive raw private keys as bigint
 console.log({
@@ -289,27 +296,27 @@ console.log({
 
 ```js
 import { secureMask, mask } from 'micro-key-producer/password.js';
-console.log(pwd.secureMask.estimate);
+console.log(secureMask.estimate());
 
 // Output
-{
-  score: 'somewhat guessable', // ZXCVBN Score
-  // Guess times
-  guesses: {
-    online_throttling: '1y 115mo', // Throttled online attack
-    online: '1mo 10d', // Online attack
-    // Offline attack (salte, slow hash function like bcrypt, scrypt, PBKDF2, argon, etc)
-    slow: '57min 36sec',
-    fast: '0 sec' // Offline attack
-  },
-  // Estimated attack costs (in $)
-  costs: {
-    luks: 1.536122841572242, // LUKS (Linux FDE)
-    filevault2: 0.2308740987992559, // FileVault 2 (macOS FDE)
-    macos: 0.03341598798410283, // MaccOS v10.8+ passwords
-    pbkdf2: 0.011138662661367609 // PBKDF2 (PBKDF2-HMAC-SHA256)
-  }
-}
+// {
+//   score: 'somewhat guessable', // ZXCVBN Score
+//   // Guess times
+//   guesses: {
+//     online_throttling: '1y 115mo', // Throttled online attack
+//     online: '1mo 10d', // Online attack
+//     // Offline attack (salte, slow hash function like bcrypt, scrypt, PBKDF2, argon, etc)
+//     slow: '57min 36sec',
+//     fast: '0 sec' // Offline attack
+//   },
+//   // Estimated attack costs (in $)
+//   costs: {
+//     luks: 1.536122841572242, // LUKS (Linux FDE)
+//     filevault2: 0.2308740987992559, // FileVault 2 (macOS FDE)
+//     macos: 0.03341598798410283, // MaccOS v10.8+ passwords
+//     pbkdf2: 0.011138662661367609 // PBKDF2 (PBKDF2-HMAC-SHA256)
+//   }
+// }
 ```
 
 #### Mask control characters
@@ -384,15 +391,15 @@ guarded from unauthorized access.
 
 The full API is:
 
-```js
-class HDKey {
+```ts
+declare class HDKey {
   public static HARDENED_OFFSET: number;
   public static fromMasterSeed(seed: Uint8Array | string): HDKey;
 
-  readonly depth: number = 0;
-  readonly index: number = 0;
-  readonly chainCode: Uint8Array | null = null;
-  readonly parentFingerprint: number = 0;
+  readonly depth: number;
+  readonly index: number;
+  readonly chainCode: Uint8Array | null;
+  readonly parentFingerprint: number;
   public readonly privateKey: Uint8Array;
 
   get fingerprint(): number;
@@ -402,7 +409,7 @@ class HDKey {
   get publicKey(): Uint8Array;
   get publicKeyRaw(): Uint8Array;
 
-  derive(path: string, forceHardened = false): HDKey;
+  derive(path: string, forceHardened?: boolean): HDKey;
   deriveChild(index: number): HDKey;
   sign(hash: Uint8Array): Uint8Array;
   verify(hash: Uint8Array, signature: Uint8Array): boolean;

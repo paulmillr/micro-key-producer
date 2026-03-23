@@ -20,6 +20,14 @@ const CURVES = {
 };
 
 describe('convert', () => {
+  should('base64armor validators', () => {
+    throws(() => base64armor(1 as any, 64, P.bytes(null)), TypeError);
+    throws(() => base64armor('', 64, P.bytes(null)), RangeError);
+    throws(() => base64armor('MESSAGE', '64' as any, P.bytes(null)), TypeError);
+    throws(() => base64armor('MESSAGE', 0, P.bytes(null)), RangeError);
+    throws(() => base64armor('MESSAGE', 64, 1 as any), TypeError);
+    throws(() => base64armor('MESSAGE', 64, P.bytes(null), 1 as any), TypeError);
+  });
   should('curveOID fallback + strict DER conversion', () => {
     deepStrictEqual(convert.curveOID('1.2.840.10045.3.1.7'), 'P-256');
     deepStrictEqual(

@@ -34,6 +34,7 @@ import { hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { base64armor } from './utils.ts';
 
+/** Byte-array alias used across the PGP helpers. */
 export type Bytes = Uint8Array;
 function runAesCfb(keyLen: number, data: Bytes, key: Bytes, iv: Bytes, decrypt = false) {
   // NOTE: we need to validate key length here since file can be malformed
@@ -62,7 +63,16 @@ function createAesCfb(len: number) {
 
 // PGP Types
 // Multiprecision Integers [RFC4880](https://datatracker.ietf.org/doc/html/rfc4880)
-export const mpi: P.CoderType<bigint> = P.wrap({
+/**
+ * RFC 4880 multi-precision integer coder.
+ * @example
+ * Encode one RFC 4880 multi-precision integer.
+ * ```ts
+ * import { mpi } from 'micro-key-producer/pgp.js';
+ * mpi.encode(1n);
+ * ```
+ */
+export const mpi: P.CoderType<bigint> = /* @__PURE__ */ P.wrap({
   encodeStream: (w: P.Writer, value: bigint) => {
     let bitLen = 0;
     for (let v = value; v > 0n; v >>= 1n, bitLen++);
@@ -78,7 +88,16 @@ export const mpi: P.CoderType<bigint> = P.wrap({
 // More info:
 // - https://www.mhonarc.org/archive/html/ietf-openpgp/2019-10/msg00041.html
 // - https://marc.info/?l=gnupg-devel&m=161518990118244&w=2
-export const opaquempi: P.CoderType<Uint8Array> = P.wrap({
+/**
+ * Opaque MPI coder used by OpenPGP secret-key packets.
+ * @example
+ * Encode one opaque MPI for an OpenPGP secret-key packet.
+ * ```ts
+ * import { opaquempi } from 'micro-key-producer/pgp.js';
+ * opaquempi.encode(new Uint8Array([1, 2]));
+ * ```
+ */
+export const opaquempi: P.CoderType<Uint8Array> = /* @__PURE__ */ P.wrap({
   encodeStream: (w: P.Writer, value: Bytes) => {
     P.U16BE.encodeStream(w, value.length * 8);
     w.bytes(value);
@@ -89,9 +108,18 @@ export const opaquempi: P.CoderType<Uint8Array> = P.wrap({
 // ASN.1 OID (object identifier) without tag & length
 // First two elements: [i0 * 40 + i1].
 // Others: split in groups of 7 bit chunks, add 0x80 every byte except last(stop flag), like utf8.
-const OID_MSB = 2 ** 7; // mask for 8 bit
-const OID_NO_MSB = 2 ** 7 - 1; // mask for all bits except 8
-export const oid: P.CoderType<string> = P.wrap({
+const OID_MSB = /* @__PURE__ */ (() => 2 ** 7)(); // mask for 8 bit
+const OID_NO_MSB = /* @__PURE__ */ (() => 2 ** 7 - 1)(); // mask for all bits except 8
+/**
+ * ASN.1 OID coder without DER tag/length wrappers.
+ * @example
+ * Encode one ASN.1 object identifier without DER tag and length bytes.
+ * ```ts
+ * import { oid } from 'micro-key-producer/pgp.js';
+ * oid.encode('1.3.6.1.4.1.11591.15.1');
+ * ```
+ */
+export const oid: P.CoderType<string> = /* @__PURE__ */ P.wrap({
   encodeStream: (w: P.Writer, value: string) => {
     const items = value.split('.').map((i) => +i);
     let oid = [items[0] * 40];
@@ -119,7 +147,16 @@ export const oid: P.CoderType<string> = P.wrap({
   },
 });
 
-export const PacketLen: P.CoderType<number> = P.wrap({
+/**
+ * OpenPGP packet-length coder.
+ * @example
+ * Encode one OpenPGP packet length.
+ * ```ts
+ * import { PacketLen } from 'micro-key-producer/pgp.js';
+ * PacketLen.encode(191);
+ * ```
+ */
+export const PacketLen: P.CoderType<number> = /* @__PURE__ */ P.wrap({
   encodeStream: (w: P.Writer, value: number) => {
     if (typeof value !== 'number') throw new Error(`PGP.PacketLen invalid length type, ${value}`);
     if (value < 192) w.byte(value);
@@ -143,16 +180,16 @@ export const PacketLen: P.CoderType<number> = P.wrap({
 });
 
 // PGP Structures
-const PGP_PACKET_VERSION = P.magic(P.hex(1), '04'); // only version 4 is supported
+const PGP_PACKET_VERSION = /* @__PURE__ */ P.magic(/* @__PURE__ */ P.hex(1), '04'); // only version 4 is supported
 
 // Other (RSA/ElGamal/etc) is unsupported
-const pubKeyEnum = P.map(P.U8, {
+const pubKeyEnum = /* @__PURE__ */ P.map(P.U8, {
   ECDH: 18,
   ECDSA: 19,
   EdDSA: 22,
 });
 
-const ECEnum = P.map(P.prefix(P.U8, oid), {
+const ECEnum = /* @__PURE__ */ P.map(/* @__PURE__ */ P.prefix(P.U8, oid), {
   nistP256: '1.2.840.10045.3.1.7',
   nistP384: '1.3.132.0.34',
   nistP521: '1.3.132.0.35',
@@ -164,7 +201,7 @@ const ECEnum = P.map(P.prefix(P.U8, oid), {
   ed25519: '1.3.6.1.4.1.11591.15.1',
 });
 
-const HashEnum = P.map(P.U8, {
+const HashEnum = /* @__PURE__ */ P.map(P.U8, {
   md5: 1,
   sha1: 2,
   ripemd160: 3,
@@ -178,7 +215,7 @@ const HashEnum = P.map(P.U8, {
 
 const Hash: Record<string, CHash> = { ripemd160, sha256, sha512, sha3_256, sha1 };
 
-const EncryptionEnum = P.map(P.U8, {
+const EncryptionEnum = /* @__PURE__ */ P.map(P.U8, {
   plaintext: 0,
   idea: 1,
   tripledes: 2,
@@ -197,43 +234,48 @@ const EncryptionKeySize: Record<string, number> = {
   aes256: 32,
 };
 
-const CompressionEnum = P.map(P.U8, {
+const CompressionEnum = /* @__PURE__ */ P.map(P.U8, {
   uncompressed: 0,
   zip: 1,
   zlib: 2,
   bzip2: 3,
 });
 // bis4880
-const AEADEnum = P.map(P.U8, {
+const AEADEnum = /* @__PURE__ */ P.map(P.U8, {
   None: 0,
   EAX: 1,
   OCB: 2,
 });
 
 // https://datatracker.ietf.org/doc/html/rfc4880#section-3.7.1
-const S2KEnum = P.map(P.U8, { simple: 0, salted: 1, iterated: 3 });
-const S2K = P.tag(S2KEnum, {
-  simple: P.struct({ hash: HashEnum }),
-  salted: P.struct({ hash: HashEnum, salt: P.bytes(8) }),
-  iterated: P.struct({ hash: HashEnum, salt: P.bytes(8), count: P.U8 }),
+const S2KEnum = /* @__PURE__ */ P.map(P.U8, { simple: 0, salted: 1, iterated: 3 });
+const S2K = /* @__PURE__ */ P.tag(S2KEnum, {
+  simple: /* @__PURE__ */ P.struct({ hash: HashEnum }),
+  salted: /* @__PURE__ */ P.struct({ hash: HashEnum, salt: /* @__PURE__ */ P.bytes(8) }),
+  iterated: /* @__PURE__ */ P.struct({
+    hash: HashEnum,
+    salt: /* @__PURE__ */ P.bytes(8),
+    count: P.U8,
+  }),
 });
 
 // https://datatracker.ietf.org/doc/html/rfc6637#section-9
-const ECDSAPub = P.struct({ curve: ECEnum, pub: mpi });
+const ECDSAPub = /* @__PURE__ */ P.struct({ curve: ECEnum, pub: mpi });
 
-const ECDHPub = P.struct({
+const ECDHPub = /* @__PURE__ */ P.struct({
   curve: ECEnum,
   pub: mpi,
-  params: P.prefix(
+  params: /* @__PURE__ */ P.prefix(
     P.U8,
-    P.struct({
-      magic: P.magic(P.hex(1), '01'),
+    /* @__PURE__ */ P.struct({
+      magic: /* @__PURE__ */ P.magic(/* @__PURE__ */ P.hex(1), '01'),
       hash: HashEnum,
       encryption: EncryptionEnum,
     })
   ),
 });
 
+/** Supported OpenPGP public-key packet algorithms. */
 export type PubKeyPacketAlgo = P.Values<{
   EdDSA: {
     TAG: 'EdDSA';
@@ -252,20 +294,43 @@ export type PubKeyPacketAlgo = P.Values<{
   };
 }>;
 
+/**
+ * OpenPGP public-key packet coder.
+ * @example
+ * Encode one Ed25519 OpenPGP public-key packet.
+ * ```ts
+ * import { PubKeyPacket } from 'micro-key-producer/pgp.js';
+ * import { ed25519 } from '@noble/curves/ed25519.js';
+ * import { bytesToNumberBE } from '@noble/curves/utils.js';
+ * import { concatBytes } from '@noble/hashes/utils.js';
+ * const secretKey = ed25519.utils.randomSecretKey();
+ * PubKeyPacket.encode({
+ *   created: 0,
+ *   algo: {
+ *     TAG: 'EdDSA',
+ *     data: {
+ *       curve: 'ed25519',
+ *       pub: bytesToNumberBE(concatBytes(Uint8Array.of(0x40), ed25519.getPublicKey(secretKey))),
+ *     },
+ *   },
+ * });
+ * ```
+ */
 export const PubKeyPacket: P.CoderType<
   P.StructInput<{
     version: undefined;
     created: number;
     algo: PubKeyPacketAlgo;
   }>
-> = P.struct({
-  version: PGP_PACKET_VERSION,
-  created: P.U32BE,
-  algo: P.tag(pubKeyEnum, {
-    EdDSA: ECDSAPub,
-    ECDH: ECDHPub,
-  }),
-});
+> = /* @__PURE__ */ (() =>
+  P.struct({
+    version: PGP_PACKET_VERSION,
+    created: P.U32BE,
+    algo: P.tag(pubKeyEnum, {
+      EdDSA: ECDSAPub,
+      ECDH: ECDHPub,
+    }),
+  }))();
 type PubKeyType = P.UnwrapCoder<typeof PubKeyPacket>;
 type PacketData = P.StructInput<{
   enc: any;
@@ -274,17 +339,19 @@ type PacketData = P.StructInput<{
   secret: any;
 }>;
 
-const PlainSecretKey = P.struct({
-  secret: P.bytes(null),
-});
+const PlainSecretKey = /* @__PURE__ */ (() =>
+  P.struct({
+    secret: P.bytes(null),
+  }))();
 
-const EncryptedSecretKey = P.struct({
-  enc: EncryptionEnum,
-  S2K,
-  // IV as blocksize of algo. For AES it is 16 bytes, others is not supported
-  iv: P.bytes(16),
-  secret: P.bytes(null),
-});
+const EncryptedSecretKey = /* @__PURE__ */ (() =>
+  P.struct({
+    enc: EncryptionEnum,
+    S2K,
+    // IV as blocksize of algo. For AES it is 16 bytes, others is not supported
+    iv: P.bytes(16),
+    secret: P.bytes(null),
+  }))();
 
 // NOTE: SecretKey is specific packet type as per spec. For user facing API we using 'privateKey'
 const SecretKeyPacket: P.CoderType<
@@ -311,20 +378,21 @@ const SecretKeyPacket: P.CoderType<
       };
     }>;
   }>
-> = P.struct({
-  pub: PubKeyPacket,
-  type: P.mappedTag(P.U8, {
-    plain: [0x00, PlainSecretKey],
-    // Skipping 'Any other value is a symmetric-key encryption algorithm identifier.'
-    encrypted: [254, EncryptedSecretKey],
-    // Same as above, but secret is with checksum
-    encrypted2: [255, EncryptedSecretKey],
-  }),
-});
+> = /* @__PURE__ */ (() =>
+  P.struct({
+    pub: PubKeyPacket,
+    type: P.mappedTag(P.U8, {
+      plain: [0x00, PlainSecretKey],
+      // Skipping 'Any other value is a symmetric-key encryption algorithm identifier.'
+      encrypted: [254, EncryptedSecretKey],
+      // Same as above, but secret is with checksum
+      encrypted2: [255, EncryptedSecretKey],
+    }),
+  }))();
 type SecretKeyType = P.UnwrapCoder<typeof SecretKeyPacket>;
 
 // https://datatracker.ietf.org/doc/html/rfc4880#section-5.2.1
-const SigTypeEnum = P.map(P.U8, {
+const SigTypeEnum = /* @__PURE__ */ P.map(P.U8, {
   binary: 0x00,
   text: 0x01,
   standalone: 0x02,
@@ -343,7 +411,7 @@ const SigTypeEnum = P.map(P.U8, {
 });
 
 // https://datatracker.ietf.org/doc/html/rfc4880.html#section-5.2.3.1
-const signatureSubpacket = P.map(P.U8, {
+const signatureSubpacket = /* @__PURE__ */ P.map(P.U8, {
   signatureCreationTime: 2,
   signatureExpirationTime: 3,
   exportableCertification: 4,
@@ -376,12 +444,15 @@ const signatureSubpacket = P.map(P.U8, {
   keyBlock: 38,
 });
 
-const SignatureSubpacket = P.prefix(
+const SignatureSubpacket = /* @__PURE__ */ P.prefix(
   PacketLen,
-  P.tag(signatureSubpacket, {
-    issuerFingerprint: P.struct({ version: PGP_PACKET_VERSION, fingerprint: P.hex(20) }),
+  /* @__PURE__ */ P.tag(signatureSubpacket, {
+    issuerFingerprint: /* @__PURE__ */ P.struct({
+      version: PGP_PACKET_VERSION,
+      fingerprint: /* @__PURE__ */ P.hex(20),
+    }),
     signatureCreationTime: P.U32BE,
-    keyFlags: P.bitset([
+    keyFlags: /* @__PURE__ */ P.bitset([
       '_r',
       'shared',
       'auth',
@@ -391,19 +462,31 @@ const SignatureSubpacket = P.prefix(
       'sign',
       'certify',
     ]),
-    preferredEncryptionAlgorithms: P.array(null, EncryptionEnum),
-    preferredHashAlgorithms: P.array(null, HashEnum),
-    preferredCompressionAlgorithms: P.array(null, CompressionEnum),
-    preferredAEADAlgorithms: P.array(null, AEADEnum),
-    features: P.bitset(['_r', '_r', '_r', '_r', '_r', 'v5Keys', 'aead', 'modDetect']),
-    keyServerPreferences: P.bitset(['modDetect'], true),
-    issuer: P.hex(8),
+    preferredEncryptionAlgorithms: /* @__PURE__ */ P.array(null, EncryptionEnum),
+    preferredHashAlgorithms: /* @__PURE__ */ P.array(null, HashEnum),
+    preferredCompressionAlgorithms: /* @__PURE__ */ P.array(null, CompressionEnum),
+    preferredAEADAlgorithms: /* @__PURE__ */ P.array(null, AEADEnum),
+    features: /* @__PURE__ */ P.bitset([
+      '_r',
+      '_r',
+      '_r',
+      '_r',
+      '_r',
+      'v5Keys',
+      'aead',
+      'modDetect',
+    ]),
+    keyServerPreferences: /* @__PURE__ */ P.bitset(['modDetect'], true),
+    issuer: /* @__PURE__ */ P.hex(8),
     primaryUserID: P.bool,
   })
 );
-const SignatureSubpackets = P.prefix(P.U16BE, P.array(null, SignatureSubpacket));
+const SignatureSubpackets = /* @__PURE__ */ P.prefix(
+  P.U16BE,
+  /* @__PURE__ */ P.array(null, SignatureSubpacket)
+);
 
-const SignatureHead = P.struct({
+const SignatureHead = /* @__PURE__ */ P.struct({
   version: PGP_PACKET_VERSION,
   type: SigTypeEnum,
   algo: pubKeyEnum,
@@ -413,17 +496,18 @@ const SignatureHead = P.struct({
 
 type SignatureHeadType = P.UnwrapCoder<typeof SignatureHead>;
 
-const SignaturePacket = P.struct({
-  head: SignatureHead,
-  unhashed: SignatureSubpackets,
-  hashPrefix: P.bytes(2),
-  // 2: ec + dsa, 1 for rsa
-  sig: P.array(null, mpi),
-});
+const SignaturePacket = /* @__PURE__ */ (() =>
+  P.struct({
+    head: SignatureHead,
+    unhashed: SignatureSubpackets,
+    hashPrefix: P.bytes(2),
+    // 2: ec + dsa, 1 for rsa
+    sig: P.array(null, mpi),
+  }))();
 
 type SignatureType = P.UnwrapCoder<typeof SignaturePacket>;
 
-const UserPacket = P.string(null);
+const UserPacket = /* @__PURE__ */ P.string(null);
 
 // PGP Functions
 const EXPBIAS6 = (count: number) => (16 + (count & 15)) << ((count >> 4) + 6);
@@ -451,26 +535,26 @@ function deriveKey(hash: string, len: number, password: Bytes, salt?: Bytes, cou
 }
 
 const Encryption: Record<string, ReturnType<typeof createAesCfb>> = {
-  aes128: createAesCfb(128),
-  aes192: createAesCfb(192),
-  aes256: createAesCfb(256),
+  aes128: /* @__PURE__ */ createAesCfb(128),
+  aes192: /* @__PURE__ */ createAesCfb(192),
+  aes256: /* @__PURE__ */ createAesCfb(256),
 };
 
 // https://datatracker.ietf.org/doc/html/rfc4880#section-5.2.4
-const hashTail = Uint8Array.from([0x04, 0xff]);
+const hashTail = /* @__PURE__ */ Uint8Array.from([0x04, 0xff]);
 
-const hashPubKey = P.struct({
-  magic: P.magic(P.hex(1), '99'),
-  pubKey: P.prefix(P.U16BE, PubKeyPacket),
+const hashPubKey = /* @__PURE__ */ P.struct({
+  magic: /* @__PURE__ */ P.magic(/* @__PURE__ */ P.hex(1), '99'),
+  pubKey: /* @__PURE__ */ P.prefix(P.U16BE, PubKeyPacket),
 });
 
-const hashUser = P.struct({
-  magic: P.magic(P.hex(1), 'b4'),
-  user: P.prefix(P.U32BE, UserPacket),
+const hashUser = /* @__PURE__ */ P.struct({
+  magic: /* @__PURE__ */ P.magic(/* @__PURE__ */ P.hex(1), 'b4'),
+  user: /* @__PURE__ */ P.prefix(P.U32BE, UserPacket),
 });
 
-const hashSelfCert = P.struct({ pubKey: hashPubKey, user: hashUser });
-const hashSubKeyCert = P.struct({ pubKey: hashPubKey, subKey: hashPubKey });
+const hashSelfCert = /* @__PURE__ */ P.struct({ pubKey: hashPubKey, user: hashUser });
+const hashSubKeyCert = /* @__PURE__ */ P.struct({ pubKey: hashPubKey, subKey: hashPubKey });
 
 function hashSignature(head: SignatureHeadType, data: any) {
   const hashC = Hash[head.hash];
@@ -521,33 +605,34 @@ const PacketTags: Record<string, any> = {
 // https://datatracker.ietf.org/doc/html/rfc4880#section-4.2
 // Old packet: [1, version: 0, tag(4), lenType(2)] -- 8 bits
 // New packet: [1, version: 1, tag(6)] + len(bytes) -> not supported, GPG generates version 0 for now
-const PacketHead = P.struct({
-  magic: P.magic(P.bits(1), 1),
-  version: P.magic(P.bits(1), 0),
-  // https://datatracker.ietf.org/doc/html/rfc4880#section-4.3
-  tag: P.map(P.bits(4), {
-    public_key_encrypted_session_key: 1,
-    signature: 2,
-    symmetric_key_encrypted_session_key: 3,
-    onePassSignature: 4,
-    secretKey: 5,
-    publicKey: 6,
-    secretSubkey: 7,
-    compressedData: 8,
-    encryptedData: 9,
-    marker: 10,
-    literalData: 11,
-    trust: 12,
-    userId: 13,
-    publicSubkey: 14,
-    userAttribute: 17,
-    encryptedProtectedData: 18,
-    modificationDetectionCode: 19,
-  }),
-  lenType: P.bits(2),
-});
+const PacketHead = /* @__PURE__ */ (() =>
+  P.struct({
+    magic: P.magic(P.bits(1), 1),
+    version: P.magic(P.bits(1), 0),
+    // https://datatracker.ietf.org/doc/html/rfc4880#section-4.3
+    tag: P.map(P.bits(4), {
+      public_key_encrypted_session_key: 1,
+      signature: 2,
+      symmetric_key_encrypted_session_key: 3,
+      onePassSignature: 4,
+      secretKey: 5,
+      publicKey: 6,
+      secretSubkey: 7,
+      compressedData: 8,
+      encryptedData: 9,
+      marker: 10,
+      literalData: 11,
+      trust: 12,
+      userId: 13,
+      publicSubkey: 14,
+      userAttribute: 17,
+      encryptedProtectedData: 18,
+      modificationDetectionCode: 19,
+    }),
+    lenType: P.bits(2),
+  }))();
 
-const Packet = P.wrap({
+const Packet = /* @__PURE__ */ P.wrap({
   encodeStream: (w: P.Writer, value: any) => {
     const data = PacketTags[value.TAG].encode(value.data);
     const lenType = data.length < 2 ** 8 ? 0 : data.length < 2 ** 16 ? 1 : 2;
@@ -563,10 +648,19 @@ const Packet = P.wrap({
   },
 });
 
-export const Stream: P.CoderType<any[]> = P.array(null, Packet);
+/**
+ * OpenPGP packet-stream coder.
+ * @example
+ * Encode a short sequence of OpenPGP packets into the binary stream format.
+ * ```ts
+ * import { Stream } from 'micro-key-producer/pgp.js';
+ * Stream.encode([{ TAG: 'userId', data: 'alice@example.com' }]);
+ * ```
+ */
+export const Stream: P.CoderType<any[]> = /* @__PURE__ */ P.array(null, Packet);
 
 // Key generation
-const EDSIGN = P.array(null, P.U256BE);
+const EDSIGN = /* @__PURE__ */ P.array(null, P.U256BE);
 function signData(
   head: SignatureHeadType,
   unhashed: any,
@@ -608,6 +702,22 @@ const secretChecksumCoder = {
   },
 };
 
+/**
+ * Decrypts the secret scalar from a PGP secret-key packet.
+ * @param password - Secret-key passphrase.
+ * @param key - Parsed secret-key packet.
+ * @returns Secret scalar as a bigint.
+ * @throws If the packet uses unsupported encryption or fails checksum validation. {@link Error}
+ * @example
+ * Decrypt the secret scalar stored inside an armored private key packet.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { decodeSecretKey, getKeys, privArmor } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * const [packet] = privArmor.decode(getKeys(seed, 'alice@example.com', 'password').privateKey);
+ * decodeSecretKey('password', packet.data);
+ * ```
+ */
 export function decodeSecretKey(password: string, key: SecretKeyType): bigint {
   if (key.type.TAG === 'plain') return secretChecksumCoder.decode(key.type.data.secret);
   const keyData = key.type.data;
@@ -658,19 +768,57 @@ function createPrivKey(
   return { pub, type: { TAG: 'encrypted', data: { enc, S2K, iv, secret } } };
 }
 
-export const pubArmor: P.Coder<any[], string> = base64armor(
+/**
+ * ASCII armor for PGP public key blocks.
+ * @example
+ * Decode the armored public block that `getKeys()` produces.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeys, pubArmor } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * pubArmor.decode(getKeys(seed, 'alice@example.com').publicKey);
+ * ```
+ */
+export const pubArmor: P.Coder<any[], string> = /* @__PURE__ */ base64armor(
   'PGP PUBLIC KEY BLOCK',
   64,
   Stream,
   crc24
 );
-export const privArmor: P.Coder<any[], string> = base64armor(
+/**
+ * ASCII armor for PGP private key blocks.
+ * @example
+ * Decode the armored private block back into OpenPGP packets.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeys, privArmor } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * privArmor.decode(getKeys(seed, 'alice@example.com').privateKey);
+ * ```
+ */
+export const privArmor: P.Coder<any[], string> = /* @__PURE__ */ base64armor(
   'PGP PRIVATE KEY BLOCK',
   64,
   Stream,
   crc24
 );
-export const sigArmor: P.Coder<any[], string> = base64armor('PGP SIGNATURE', 64, Stream, crc24);
+/**
+ * ASCII armor for detached PGP signatures.
+ * @example
+ * Decode an armored detached signature back into its packet list.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeyId, sigArmor, signDetached } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * sigArmor.decode(signDetached(seed, 'hello', getKeyId(seed).fingerprint));
+ * ```
+ */
+export const sigArmor: P.Coder<any[], string> = /* @__PURE__ */ base64armor(
+  'PGP SIGNATURE',
+  64,
+  Stream,
+  crc24
+);
 
 function validateDate(timestamp: number) {
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 2 ** 46)
@@ -750,6 +898,25 @@ function getCerts(edPriv: Bytes, cvPriv: Bytes, user: string, createdAt: number)
   return { edPubPacket, fingerprint, keyId, cvPubPacket, cvCert, edCert };
 }
 
+/**
+ * Formats the armored public half of a deterministic OpenPGP keypair.
+ * @param edPriv - Ed25519 signing private key.
+ * @param cvPriv - Curve25519 encryption private key.
+ * @param user - OpenPGP user ID string.
+ * @param createdAt - Key creation time as UNIX timestamp in seconds.
+ * @returns ASCII-armored public key block.
+ * @throws If the supplied key material or timestamp cannot be encoded as OpenPGP packets. {@link Error}
+ * @example
+ * Build the public OpenPGP block from the signing key and its Curve25519 subkey.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { formatPublic } from 'micro-key-producer/pgp.js';
+ * import { ed25519 } from '@noble/curves/ed25519.js';
+ * const seed = randomBytes(32);
+ * const cvPriv = ed25519.utils.getExtendedPublicKey(seed).head;
+ * formatPublic(seed, cvPriv, 'alice@example.com', 0);
+ * ```
+ */
 export function formatPublic(
   edPriv: Bytes,
   cvPriv: Bytes,
@@ -766,6 +933,30 @@ export function formatPublic(
   ]);
 }
 
+/**
+ * Formats the armored private half of a deterministic OpenPGP keypair.
+ * @param edPriv - Ed25519 signing private key.
+ * @param cvPriv - Curve25519 encryption private key.
+ * @param user - OpenPGP user ID string.
+ * @param password - Optional secret-key passphrase.
+ * @param createdAt - Key creation time as UNIX timestamp in seconds.
+ * @param edSalt - Salt for the signing secret-key S2K envelope.
+ * @param edIV - IV for the signing secret-key S2K envelope.
+ * @param cvSalt - Salt for the encryption subkey S2K envelope.
+ * @param cvIV - IV for the encryption subkey S2K envelope.
+ * @returns ASCII-armored private key block.
+ * @throws If the supplied key material, timestamp, or secret-key envelope parameters are invalid. {@link Error}
+ * @example
+ * Build the password-protected private key block and matching encryption subkey.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { formatPrivate } from 'micro-key-producer/pgp.js';
+ * import { ed25519 } from '@noble/curves/ed25519.js';
+ * const seed = randomBytes(32);
+ * const cvPriv = ed25519.utils.getExtendedPublicKey(seed).head;
+ * formatPrivate(seed, cvPriv, 'alice@example.com', 'password');
+ * ```
+ */
 export function formatPrivate(
   edPriv: Bytes,
   cvPriv: Bytes,
@@ -793,6 +984,17 @@ export function formatPrivate(
 /**
  * Derives PGP key ID from the private key.
  * PGP key depends on its date of creation.
+ * @param edPrivKey - Ed25519 signing private key.
+ * @param createdAt - Key creation time as UNIX timestamp in seconds.
+ * @returns Public packets plus fingerprint and key ID.
+ * @throws If the key material or creation time cannot be encoded as OpenPGP packets. {@link Error}
+ * @example
+ * Recompute the OpenPGP fingerprint and key ID for an existing signing key.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeyId } from 'micro-key-producer/pgp.js';
+ * getKeyId(randomBytes(32)).keyId;
+ * ```
  */
 export function getKeyId(
   edPrivKey: Bytes,
@@ -834,8 +1036,21 @@ export function getKeyId(
  * Uses S2K KDF, which means it's slow. Use `getKeyId` if you want to get key id in a fast way.
  * PGP key depends on its date of creation.
  * NOTE: gpg: warning: lower 3 bits of the secret key are not cleared
- * happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI:
- * https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0
+ * happens even for keys generated with GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI. See {@link https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0 | the GnuPG bugtracker note}.
+ * @param privKey - Ed25519 signing private key.
+ * @param user - OpenPGP user ID string.
+ * @param password - Optional secret-key passphrase.
+ * @param createdAt - Key creation time as UNIX timestamp in seconds.
+ * @returns Armored keypair plus fingerprint data.
+ * @throws If the key material or creation time cannot be encoded as OpenPGP packets. {@link Error}
+ * @example
+ * Derive the armored OpenPGP keypair from one Ed25519 private key.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeys } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * getKeys(seed, 'alice@example.com').publicKey;
+ * ```
  */
 export function getKeys(
   privKey: Bytes,
@@ -856,6 +1071,23 @@ export function getKeys(
   return { keyId, fingerprint, privateKey, publicKey };
 }
 
+/**
+ * Default export for deterministic OpenPGP key derivation.
+ * @param privKey - Ed25519 signing private key.
+ * @param user - OpenPGP user ID string.
+ * @param password - Optional secret-key passphrase.
+ * @param createdAt - Key creation time as UNIX timestamp in seconds.
+ * @returns Armored keypair plus fingerprint data.
+ * @throws If the key material or creation time cannot be encoded as OpenPGP packets. {@link Error}
+ * @example
+ * Use the default export when you want the full armored OpenPGP bundle in one call.
+ * ```ts
+ * import getKeys from 'micro-key-producer/pgp.js';
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * const seed = randomBytes(32);
+ * getKeys(seed, 'alice@example.com').publicKey;
+ * ```
+ */
 export default getKeys;
 
 // TODO: there should be two versions of this, one throws on duplication, one doesn't. Then we can apply this to all coders
@@ -895,6 +1127,24 @@ function detachedType(data: Bytes | string) {
   return typeof data === 'string' ? 'text' : 'binary';
 }
 
+/**
+ * Creates an armored detached OpenPGP signature.
+ * @param privateKey - Ed25519 signing private key.
+ * @param data - Binary or text payload to sign.
+ * @param fingerprint - Full OpenPGP fingerprint of the signing key.
+ * @param signedAt - Signature creation time as UNIX timestamp in seconds.
+ * @returns ASCII-armored detached signature.
+ * @throws If the detached payload cannot be encoded or signed as OpenPGP data. {@link Error}
+ * @example
+ * Create a detached signature you can send alongside the original text payload.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeyId, signDetached } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * const { fingerprint } = getKeyId(seed);
+ * signDetached(seed, 'hello', fingerprint);
+ * ```
+ */
 export function signDetached(
   privateKey: Bytes,
   data: Bytes | string,
@@ -919,8 +1169,24 @@ export function signDetached(
 }
 
 /**
- * TODO: verification for pgp probably should have different API, since there
- * can be multiple "trusted" public keys for which we verifying signature.
+ * Verifies an armored detached OpenPGP signature with an Ed25519 public key.
+ * @param publicKey - Ed25519 public key bytes.
+ * @param signature - ASCII-armored detached signature.
+ * @param data - Original binary or text payload.
+ * @param fingerprint - Optional expected signer fingerprint.
+ * @returns Whether the detached signature verifies.
+ * @throws If the signature packet, payload type, or signer fingerprint is invalid. {@link Error}
+ * @example
+ * Verify the detached signature with the signer's Ed25519 public key and fingerprint.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeyId, signDetached, verifyDetached } from 'micro-key-producer/pgp.js';
+ * import { ed25519 } from '@noble/curves/ed25519.js';
+ * const privateKey = randomBytes(32);
+ * const { fingerprint } = getKeyId(privateKey);
+ * const signature = signDetached(privateKey, 'hello', fingerprint);
+ * verifyDetached(ed25519.getPublicKey(privateKey), signature, 'hello', fingerprint);
+ * ```
  */
 export function verifyDetached(
   publicKey: Bytes,
@@ -952,6 +1218,19 @@ export function verifyDetached(
 /**
  * This is a basic parsing to extract enough information to signDetached signatures.
  * Supports keys generated by us or PGP (ed25519 only + default opts), doesn't extract ECDH (x25519) keys.
+ * @param privateKey - ASCII-armored private key block.
+ * @param getPassword - Optional callback used to fetch the secret-key passphrase.
+ * @returns Parsed secret key bytes and identifying metadata.
+ * @throws If the armored packet layout, password callback, or decoded key material is invalid. {@link Error}
+ * @example
+ * Parse an armored secret key back into raw key bytes and OpenPGP metadata.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { getKeys, parsePrivateKey } from 'micro-key-producer/pgp.js';
+ * const seed = randomBytes(32);
+ * const { privateKey } = getKeys(seed, 'alice@example.com');
+ * parsePrivateKey(privateKey).then(({ keyId }) => keyId);
+ * ```
  */
 export async function parsePrivateKey(
   privateKey: string,

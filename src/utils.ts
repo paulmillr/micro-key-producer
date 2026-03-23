@@ -3,10 +3,19 @@
  * Utilities.
  * @module
  */
-import { randomBytes } from '@noble/hashes/utils.js';
+import { randomBytes as nobleRandomBytes } from '@noble/hashes/utils.js';
 import { base64 } from '@scure/base';
 import { type Coder, type CoderType, utils as packedUtils } from 'micro-packed';
-export { randomBytes };
+/**
+ * Secure random byte generator re-exported from `@noble/hashes/utils`.
+ * @example
+ * Generate fresh entropy before deriving one of the deterministic key formats.
+ * ```ts
+ * import { randomBytes } from 'micro-key-producer/utils.js';
+ * randomBytes(32);
+ * ```
+ */
+export const randomBytes: typeof nobleRandomBytes = nobleRandomBytes;
 
 /**
  * Base64-armored values are commonly used in cryptographic applications, such as PGP and SSH.
@@ -15,9 +24,15 @@ export { randomBytes };
  * @param inner - Inner CoderType for the value.
  * @param checksum - Optional checksum function.
  * @returns Coder representing the base64-armored value.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On invalid armor names or line lengths. {@link RangeError}
  * @example
- * // Base64-armored value without checksum
- * const armoredValue = P.base64armor('EXAMPLE', 64, P.bytes(null));
+ * Wrap a packed coder in an ASCII armor envelope.
+ * ```ts
+ * import * as P from 'micro-packed';
+ * import { base64armor } from 'micro-key-producer/utils.js';
+ * base64armor('MESSAGE', 64, P.string(null)).encode('hello');
+ * ```
  */
 export function base64armor<T>(
   name: string,
@@ -25,13 +40,14 @@ export function base64armor<T>(
   inner: CoderType<T>,
   checksum?: (data: Uint8Array) => Uint8Array
 ): Coder<T, string> {
-  if (typeof name !== 'string' || name.length === 0)
-    throw new Error('name must be a non-empty string');
+  if (typeof name !== 'string') throw new TypeError('name must be a string');
+  if (name.length === 0) throw new RangeError('name must be a non-empty string');
+  if (typeof lineLen !== 'number') throw new TypeError('lineLen must be a number');
   if (!Number.isSafeInteger(lineLen) || lineLen <= 0)
-    throw new Error('lineLen must be a positive integer');
-  if (!packedUtils.isCoder(inner)) throw new Error('inner must be a valid base coder');
+    throw new RangeError('lineLen must be a positive integer');
+  if (!packedUtils.isCoder(inner)) throw new TypeError('inner must be a valid base coder');
   if (checksum !== undefined && typeof checksum !== 'function')
-    throw new Error('checksum must be a function or undefined');
+    throw new TypeError('checksum must be a function or undefined');
   const codes = { caretReset: 13, newline: 10 };
   const nl = String.fromCharCode(codes.newline);
   const r = String.fromCharCode(codes.caretReset);

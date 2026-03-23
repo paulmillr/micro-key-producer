@@ -53,6 +53,7 @@ function formatDuration(dur: number): string {
   return parts.length > 0 ? parts.join(' ') : '0 sec';
 }
 
+/** Character classes used by password masks. */
 // NOTE: all items inside alphabet size should have same size
 export const alphabet: Record<string, Set<string>> = {};
 // Digits
@@ -89,6 +90,7 @@ function idx<T>(arr: Array<T> | Set<T>, i: number): T {
   return arr[i];
 }
 
+/** Low-level password mask helpers. */
 export const utils = {
   zip: zip as typeof zip,
   or: or as typeof or,
@@ -101,6 +103,14 @@ export const utils = {
 
 /**
  * Check if password is correct for rules in design rationale.
+ * @param pwd - Candidate password string.
+ * @returns Whether the password satisfies the built-in strength rules.
+ * @example
+ * Validate that a candidate password covers the required character classes.
+ * ```ts
+ * import { checkPassword } from 'micro-key-producer/password.js';
+ * checkPassword('Aa1!aaaa');
+ * ```
  */
 export function checkPassword(pwd: string): boolean {
   if (pwd.length < 8) return false;
@@ -151,23 +161,35 @@ function passwordScore(cardinality: bigint) {
   return res;
 }
 
+/** Estimated password guessing effort. */
 export type PassEstimate = {
+  /** Human-readable strength label derived from the estimated search space. */
   // Score/guesses based on zxcvbn, it is pretty bad model, but will be ok for now
   score: string;
+  /** Time-to-guess estimates for a few attacker models. */
   guesses: {
+    /** Online attack with strict throttling such as account lockouts. */
     online_throttling: string;
+    /** Online attack without meaningful throttling. */
     online: string;
+    /** Slow offline attack. */
     slow: string;
+    /** Fast offline attack. */
     fast: string;
   };
+  /** Approximate hardware cost of exhaustive attacks against several KDF targets. */
   // Password is assumed salted.
   // Non-salted passwords allow multi-target attacks which significantly reduces costs.
   // Values taken from hashcat 6.1.1 on RTX 3080
   // https://gist.github.com/Chick3nman/bb22b28ec4ddec0cb5f59df97c994db4
   costs: {
+    /** Estimated attack cost against LUKS-style targets. */
     luks: number;
+    /** Estimated attack cost against FileVault 2. */
     filevault2: number;
+    /** Estimated attack cost against macOS PBKDF2-SHA512. */
     macos: number;
+    /** Estimated attack cost against PBKDF2-HMAC-SHA256. */
     pbkdf2: number;
   };
 };
@@ -268,6 +290,17 @@ class Mask {
   }
 }
 
+/**
+ * Compiles a password mask into an object that can apply or invert entropy.
+ * @param mask - Password mask expression.
+ * @returns Compiled password mask.
+ * @example
+ * Compile a password mask into an object that can apply or invert entropy.
+ * ```ts
+ * import { mask } from 'micro-key-producer/password.js';
+ * mask('cv1').apply(new Uint8Array(8)).password;
+ * ```
+ */
 export const mask = (mask: string): Mask => new Mask(mask);
 
 /*
@@ -299,19 +332,21 @@ for (let upper = 0; upper < 17; upper++) {
   }
 }
 
+/** Public shape of a compiled password mask. */
 export type MaskType = { [K in keyof Mask]: Mask[K] };
 
 /**
  * Secure password mask, iOS keychain format.
  * @example
-```js
-import { mask, secureMask } from 'micro-key-producer/password.js';
-import { randomBytes } from '@noble/hashes/utils.js';
-const seed = randomBytes(32);
-const pass = secureMask.apply(seed).password;
-```
+ * Generate an iOS-style password from random bytes.
+ * ```ts
+ * import { secureMask } from 'micro-key-producer/password.js';
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * const seed = randomBytes(32);
+ * const pass = secureMask.apply(seed).password;
+ * ```
  */
-export const secureMask: MaskType = (() => {
+export const secureMask: MaskType = /* @__PURE__ */ (() => {
   const size = BigInt(secureMasks.length);
   const cardinality = mask(secureMasks[0]).cardinality * size;
   return {

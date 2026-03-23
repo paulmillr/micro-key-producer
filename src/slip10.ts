@@ -9,9 +9,12 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';
 import { abytes, bytesToHex, concatBytes, createView, utf8ToBytes } from '@noble/hashes/utils.js';
 
-export const MASTER_SECRET: Uint8Array = utf8ToBytes('ed25519 seed');
+// treeshake: standalone constants should not keep the derivation helpers in tiny entry bundles.
+/** SLIP-0010 master secret label for ed25519 keys. */
+export const MASTER_SECRET: Uint8Array = /* @__PURE__ */ (() => utf8ToBytes('ed25519 seed'))();
+/** Hardened child index offset. */
 export const HARDENED_OFFSET: number = 0x80000000;
-const ZERO = Uint8Array.of(0);
+const ZERO = /* @__PURE__ */ (() => Uint8Array.of(0))();
 
 const hash160 = (data: Uint8Array) => ripemd160(sha256(data));
 const fromU32 = (data: Uint8Array) => createView(data).getUint32(0, false);
@@ -32,7 +35,18 @@ interface HDKeyOpt {
   privateKey: Uint8Array;
 }
 
-/** HD key for ed25519, SLIP10 format */
+/**
+ * HD key for ed25519, SLIP-0010 format.
+ * @param opt - Internal constructor options for derived keys: depth, child index, parent fingerprint, chain code, and private key.
+ * @example
+ * Start from a master seed, then derive the hardened child path you need.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { HDKey } from 'micro-key-producer/slip10.js';
+ * const seed = randomBytes(32);
+ * HDKey.fromMasterSeed(seed).derive("m/0'").fingerprintHex;
+ * ```
+ */
 export class HDKey {
   get publicKeyRaw(): Uint8Array {
     return ed25519.getPublicKey(this.privateKey);

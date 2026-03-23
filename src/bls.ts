@@ -23,8 +23,9 @@ import {
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
 
-const { getPublicKey } = bls12_381.longSignatures;
-const { Fr } = bls12_381.fields;
+// treeshake: single helpers should not keep the full longSignatures/fields objects live.
+const getPublicKey = /* @__PURE__ */ (() => bls12_381.longSignatures.getPublicKey)();
+const Fr = /* @__PURE__ */ (() => bls12_381.fields.Fr)();
 
 // Octet Stream to Integer
 function os2ip(bytes: Uint8Array): bigint {
@@ -40,7 +41,7 @@ function os2ip(bytes: Uint8Array): bigint {
 // Integer to Octet Stream
 function i2osp(value: number, length: number): Uint8Array {
   if (value < 0 || value >= 1n << BigInt(8 * length)) {
-    throw new Error(`bad I2OSP call: value=${value} length=${length}`);
+    throw new RangeError(`bad I2OSP call: value=${value} length=${length}`);
   }
   const res = Array.from({ length }).fill(0) as number[];
   for (let i = length - 1; i >= 0; i--) {
@@ -56,9 +57,9 @@ function ikmToLamportSK(ikm: Uint8Array, salt: Uint8Array) {
 }
 
 function assertUint32(index: number) {
-  if (!Number.isSafeInteger(index) || index < 0 || index > 2 ** 32 - 1) {
-    throw new TypeError('Expected valid uint32 number');
-  }
+  if (typeof index !== 'number') throw new TypeError('Expected uint32 number');
+  if (!Number.isSafeInteger(index) || index < 0 || index > 2 ** 32 - 1)
+    throw new RangeError('Expected valid uint32 number');
 }
 
 function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
@@ -75,9 +76,17 @@ function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
 
 /**
  * Low-level primitive from EIP2333, generates key from bytes.
- * KeyGen from https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-05.html#name-keygen
+ * KeyGen from {@link https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-05.html#name-keygen | the CFRG BLS signature draft}.
  * @param ikm - secret octet string
  * @param keyInfo - additional key information
+ * @returns Derived BLS secret key bytes.
+ * @example
+ * Feed raw input keying material into the EIP-2333 keygen primitive.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { hkdfModR } from 'micro-key-producer/bls.js';
+ * hkdfModR(randomBytes(32));
+ * ```
  */
 export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = Uint8Array.of()): Uint8Array {
   ikm = abytes(ikm, undefined, 'ikm');
@@ -94,26 +103,90 @@ export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = Uint8Array.of())
   return numberToBytesBE(SK, 32);
 }
 
+/**
+ * Derives the EIP-2333 master secret key from a seed.
+ * @param seed - Seed bytes.
+ * @returns Master secret key bytes.
+ * @example
+ * Start from fresh entropy and derive the BLS root secret defined by EIP-2333.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { deriveMaster } from 'micro-key-producer/bls.js';
+ * const seed = randomBytes(32);
+ * deriveMaster(seed);
+ * ```
+ */
 export function deriveMaster(seed: Uint8Array): Uint8Array {
   return hkdfModR(seed);
 }
 
+/**
+ * Derives a hardened child secret key from a parent secret key.
+ * @param parentKey - Parent secret key bytes.
+ * @param index - Child index.
+ * @returns Child secret key bytes.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong parent-key length or child-index range. {@link RangeError}
+ * @example
+ * First derive the master key, then walk one hardened child step.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { deriveChild, deriveMaster } from 'micro-key-producer/bls.js';
+ * const seed = randomBytes(32);
+ * deriveChild(deriveMaster(seed), 0);
+ * ```
+ */
 export function deriveChild(parentKey: Uint8Array, index: number): Uint8Array {
   return hkdfModR(parentSKToLamportPK(parentKey, index));
 }
 
+/**
+ * Derives a key by walking an EIP-2334 path from a seed.
+ * @param seed - Root seed bytes.
+ * @param path - Derivation path starting with `m`.
+ * @returns Derived secret key bytes.
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On malformed derivation paths or child-index ranges. {@link RangeError}
+ * @example
+ * Follow a full validator derivation path directly from the seed bytes.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { deriveSeedTree } from 'micro-key-producer/bls.js';
+ * const seed = randomBytes(32);
+ * deriveSeedTree(seed, 'm/12381/3600/0/0');
+ * ```
+ */
 export function deriveSeedTree(seed: Uint8Array, path: string): Uint8Array {
-  if (typeof path !== 'string') throw new Error('Derivation path must be string');
+  if (typeof path !== 'string') throw new TypeError('Derivation path must be string');
   const indices = path.split('/');
-  if (indices.shift() !== 'm') throw new Error('First character of path must be "m"');
+  if (indices.shift() !== 'm') throw new RangeError('First character of path must be "m"');
   let sk = deriveMaster(seed);
   const nodes = indices.map((i) => Number.parseInt(i));
   for (const node of nodes) sk = deriveChild(sk, node);
   return sk;
 }
 
+/** Supported EIP-2334 key usages. */
 export const EIP2334_KEY_TYPES = ['withdrawal', 'signing'] as const;
+/** Allowed EIP-2334 key usage names. */
 export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
+/**
+ * Derives an EIP-2334 withdrawal or signing key.
+ * @param seed - Seed bytes.
+ * @param type - Requested key usage.
+ * @param index - Validator account index.
+ * @returns Derived private key bytes and its derivation path.
+ * @throws On wrong seed, key-type, or index argument types. {@link TypeError}
+ * @throws On unsupported key types or validator-index ranges. {@link RangeError}
+ * @example
+ * Ask for either the withdrawal or signing branch and keep the returned path string.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { deriveEIP2334Key } from 'micro-key-producer/bls.js';
+ * const seed = randomBytes(32);
+ * deriveEIP2334Key(seed, 'signing', 0).path;
+ * ```
+ */
 export function deriveEIP2334Key(
   seed: Uint8Array,
   type: EIP2334KeyType,
@@ -122,8 +195,10 @@ export function deriveEIP2334Key(
   key: Uint8Array;
   path: string;
 } {
-  if (!isBytes(seed)) throw new Error('Valid seed expected');
-  if (!EIP2334_KEY_TYPES.includes(type)) throw new Error('Valid keystore type expected');
+  if (!isBytes(seed)) throw new TypeError('Valid seed expected');
+  if (typeof type !== 'string') throw new TypeError('Valid keystore type expected');
+  if (!EIP2334_KEY_TYPES.includes(type as EIP2334KeyType))
+    throw new RangeError('Valid keystore type expected');
   assertUint32(index);
   // m / purpose / coin_type /  account / use
   // - purpose: always 12381
@@ -138,12 +213,21 @@ export function deriveEIP2334Key(
 /**
  * Derives signing key from withdrawal key without access to seed
  * @param withdrawalKey - result of deriveEIP2334Key(seed, 'withdrawal', index)
+ * @param index - Child signing index below the withdrawal key.
  * @returns same as deriveEIP2334Key(seed, 'signing', index), but without access to seed
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong withdrawal-key length or child-index range. {@link RangeError}
  * @example
- * const signing = bls.deriveEIP2334Key(seed, 'signing', 0);
- * const withdrawal = bls.deriveEIP2334Key(seed, 'withdrawal', 0);
- * const derivedSigning = bls.deriveEIP2334SigningKey(withdrawal.key);
- * deepStrictEqual(derivedSigning, signing.key);
+ * Show that the signing branch can be reconstructed later from the withdrawal branch.
+ * ```ts
+ * import { deepStrictEqual } from 'node:assert';
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { deriveEIP2334Key, deriveEIP2334SigningKey } from 'micro-key-producer/bls.js';
+ * const seed = randomBytes(64);
+ * const signing = deriveEIP2334Key(seed, 'signing', 0);
+ * const withdrawal = deriveEIP2334Key(seed, 'withdrawal', 0);
+ * deepStrictEqual(deriveEIP2334SigningKey(withdrawal.key), signing.key);
+ * ```
  */
 export function deriveEIP2334SigningKey(withdrawalKey: Uint8Array, index = 0): Uint8Array {
   withdrawalKey = abytes(withdrawalKey, 32, 'withdrawal key');
@@ -191,15 +275,25 @@ const KDFS = {
 type KDFParams<T extends KDFType> = (typeof KDFS)[T];
 type KDFType = keyof typeof KDFS;
 
+/** EIP-2335 keystore JSON object. */
 export type Keystore<T extends KDFType> = {
-  version: number; // Always 4 for BLS keys
+  /** Schema version. Always `4` for BLS keystores. */
+  version: number;
+  /** Optional human-readable description of the protected secret. */
   description?: string;
-  pubkey?: string; // Pubkey is optional
-  path: string; // Optional, but always exists (empty string if not present)
+  /** Optional hex-encoded public key for validating the decrypted secret. */
+  pubkey?: string;
+  /** EIP-2334 derivation path or an empty string for non-derived secrets. */
+  path: string;
+  /** RFC 4122 v4 UUID for the keystore object. */
   uuid: string;
+  /** Cipher, checksum, and KDF configuration with their serialized payloads. */
   crypto: {
+    /** Key-derivation function and its serialized parameters. */
     kdf: { function: T; params: KDFParams<T> & { salt: string }; message: '' };
+    /** Checksum algorithm and checksum payload used to verify decryption. */
     checksum: { function: 'sha256'; params: {}; message: string };
+    /** Cipher algorithm, IV, and encrypted secret payload. */
     cipher: { function: 'aes-128-ctr'; params: { iv: string }; message: string };
   };
 };
@@ -270,9 +364,19 @@ function deriveEIP2335Key(password: string, salt: Uint8Array, kdf: KDFType): Uin
  * Decrypts EIP2335 Keystore
  * NOTE: it validates publicKey if present (which mean you can use it from store if decryption is success)
  * @param store - js object
- * @param password - password
+ * @param password - Password used by the keystore KDF.
  * @returns decrypted secret and optionally path
- * @example decryptEIP2335Keystore(JSON.parse(keystoreString), 'my_password');
+ * @throws If the keystore uses an unsupported KDF or fails checksum/public-key validation. {@link Error}
+ * @example
+ * Decrypt the keystore back into the original secret bytes.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { EIP2335Keystore, decryptEIP2335Keystore } from 'micro-key-producer/bls.js';
+ * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
+ * const store = ctx.create(randomBytes(32));
+ * decryptEIP2335Keystore(store, 'password');
+ * ctx.clean();
+ * ```
  */
 export function decryptEIP2335Keystore<T extends KDFType>(
   store: Keystore<T>,
@@ -305,17 +409,27 @@ export function decryptEIP2335Keystore<T extends KDFType>(
 }
 
 /**
- * Secure PRNG function like 'randomBytes' from '@noble/hashes/utils.js'
+ * Secure random-byte generator.
+ * @param bytes - Number of random bytes to produce.
+ * @returns Cryptographically secure random bytes.
  */
 export type RandFn = (bytes: number) => Uint8Array;
 
 /**
  * Class for generation multiple keystores with same password
+ * @param password - Password used by the keystore KDF.
+ * @param kdf - Key-derivation function name.
+ * @param _random - Optional secure random-byte generator.
  * @example
- * const ctx = new EIP2335Keystore(password, 'scrypt');
- * const res = [0, 1, 2, 3].map((i) => ctx.createDerivedEIP2334(seed, keyType, i));
+ * Reuse one keystore context when exporting multiple derived validators with the same password.
+ * ```ts
+ * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { EIP2335Keystore } from 'micro-key-producer/bls.js';
+ * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
+ * const seed = randomBytes(32);
+ * const stores = [0, 1].map((i) => ctx.createDerivedEIP2334(seed, 'signing', i));
  * ctx.clean();
- * console.log(res); // res is array of encrypted keystores with same password
+ * ```
  */
 export class EIP2335Keystore<T extends KDFType> {
   private destroyed = false;
@@ -327,7 +441,7 @@ export class EIP2335Keystore<T extends KDFType> {
    * Creates context for EIP2335 Keystore generation
    * @param password - password
    * @param kdf - scrypt | pbkdf2
-   * @param _random - (optional) secure PRNG function like 'randomBytes' from '@noble/hashes/utils.js'
+   * @param _random - Optional secure random-byte generator.
    */
   constructor(password: string, kdf: T, _random: RandFn = randomBytes) {
     this.kdf = kdf;
@@ -410,8 +524,17 @@ export class EIP2335Keystore<T extends KDFType> {
  * @param seed - result of mnemonicToSeed()
  * @param keyType - signing | withdrawal
  * @param indexes - array of account indeces
+ * @returns Derived keystore list for the requested indexes.
+ * @throws If any requested key index is outside the supported range. {@link Error}
  * @example
- * createDerivedEIP2334Keystores('my_password', 'scrypt', await mnemonicToSeed(mnemonic, ''), 'signing', [0, 1, 2, 3])
+ * Export several validator keystores from one mnemonic-derived seed.
+ * ```ts
+ * import { mnemonicToSeedSync } from '@scure/bip39';
+ * import { createDerivedEIP2334Keystores } from 'micro-key-producer/bls.js';
+ * const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
+ * const seed = mnemonicToSeedSync(mnemonic, '');
+ * createDerivedEIP2334Keystores('password', 'pbkdf2', seed, 'signing', [0, 1, 2, 3]);
+ * ```
  */
 export function createDerivedEIP2334Keystores<T extends KDFType>(
   password: string,
