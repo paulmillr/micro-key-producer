@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CMS } from '../src/x509.ts';
+import { CMS, __TEST } from '../src/x509.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +28,16 @@ const tmp = <T>(fn: (dir: string) => T): T => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 };
+const explicitPkcs8 = (keyPem: string): string =>
+  tmp((dir) => {
+    const src = path.join(dir, 'named-key.pem');
+    const sec1 = path.join(dir, 'explicit-sec1.pem');
+    const out = path.join(dir, 'explicit-key.pem');
+    fs.writeFileSync(src, keyPem);
+    openssl(['ec', '-in', src, '-param_enc', 'explicit', '-out', sec1]);
+    openssl(['pkcs8', '-topk8', '-nocrypt', '-in', sec1, '-out', out]);
+    return fs.readFileSync(out, 'utf8');
+  });
 const parseSigningTime = (attr: Uint8Array): number => {
   if (attr.length < 2) throw new Error('signingTime attr too short');
   let t = attr[0];
@@ -475,7 +485,7 @@ describe('x509 openssl', () => {
         CMS.signed(openssl).signerInfos[0].signature
       );
       deepStrictEqual(cmsOpenSSL({ mode: 'verify', cmsDer: local, caPem: c.chain }), content);
-      CMS.verify(local, { checkSignatures: true, time: 1773000000000, chain: [c.chain] });
+      CMS.verify(local, { checkSignatures: true, time: createdTs, chain: [c.chain] });
     }
   });
   should(
@@ -508,7 +518,7 @@ describe('x509 openssl', () => {
           CMS.signed(openssl).signerInfos[0].signature
         );
         deepStrictEqual(cmsOpenSSL({ mode: 'verify', cmsDer: local, caPem: c.chain }), content);
-        CMS.verify(local, { checkSignatures: true, time: 1773000000000, chain: [c.chain] });
+        CMS.verify(local, { checkSignatures: true, time: createdTs, chain: [c.chain] });
       }
     }
   );
@@ -540,11 +550,14 @@ describe('x509 openssl', () => {
       cmsOpenSSL({ mode: 'verify', cmsDer: opensslDetached, content, caPem: root }),
       content
     );
-    CMS.verify(localAttached, { checkSignatures: true, time: 1773000000000, chain: [root] });
-    CMS.verify(opensslAttached, { checkSignatures: true, time: 1773000000000, chain: [root] });
+    const now = Date.now();
+    // These certs are generated during the test, so validating them at the current time avoids
+    // the stale fixed timestamp used by older vector-based assertions in this file.
+    CMS.verify(localAttached, { checkSignatures: true, time: now, chain: [root] });
+    CMS.verify(opensslAttached, { checkSignatures: true, time: now, chain: [root] });
     CMS.verifyDetached(opensslDetached, content, {
       checkSignatures: true,
-      time: 1773000000000,
+      time: now,
       chain: [root],
     });
   });
@@ -619,6 +632,107 @@ describe('x509 openssl', () => {
       CMS.verify(der, { checkSignatures: false, time: 1773000000000 });
     }
   );
+});
+
+describe('x509 openssl explicit params', () => {
+  should('runtime-generated supported keys interop when EC keys use explicit params', () => {
+    const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
+    const cases = [
+      {
+        curve: 'P-256',
+        cert: fixtures.p256.cert,
+        keyPem: explicitPkcs8(fixtures.p256.key),
+        chain: fixtures.root,
+        md: 'sha256',
+        deterministic: true,
+      },
+      {
+        curve: 'P-384',
+        cert: fixtures.p384.cert,
+        keyPem: explicitPkcs8(fixtures.p384.key),
+        chain: fixtures.root,
+        md: 'sha384',
+        deterministic: true,
+      },
+      {
+        curve: 'P-521',
+        cert: fixtures.p521.cert,
+        keyPem: explicitPkcs8(fixtures.p521.key),
+        chain: fixtures.root,
+        md: 'sha512',
+        deterministic: true,
+      },
+      {
+        curve: 'brainpoolP256r1',
+        cert: fixtures.bp256.cert,
+        keyPem: explicitPkcs8(fixtures.bp256.key),
+        chain: fixtures.root,
+        md: 'sha256',
+        deterministic: true,
+      },
+      {
+        curve: 'brainpoolP384r1',
+        cert: fixtures.bp384.cert,
+        keyPem: explicitPkcs8(fixtures.bp384.key),
+        chain: fixtures.root,
+        md: 'sha384',
+        deterministic: true,
+      },
+      {
+        curve: 'brainpoolP512r1',
+        cert: fixtures.bp512.cert,
+        keyPem: explicitPkcs8(fixtures.bp512.key),
+        chain: fixtures.root,
+        md: 'sha512',
+        deterministic: true,
+      },
+      {
+        curve: 'Ed25519',
+        cert: fixtures.ed25519.cert,
+        keyPem: fixtures.ed25519.key,
+        chain: fixtures.edRoot,
+        md: 'sha512',
+        deterministic: false,
+      },
+      {
+        curve: 'Ed448',
+        cert: fixtures.ed448.cert,
+        keyPem: fixtures.ed448.key,
+        chain: fixtures.ed448Root,
+        md: 'sha512',
+        deterministic: false,
+      },
+    ] as const;
+    for (const c of cases) {
+      deepStrictEqual(__TEST.keyCurve(c.keyPem), c.curve);
+      const openssl = cmsOpenSSL({
+        mode: 'sign',
+        content,
+        certPem: c.cert,
+        keyPem: c.keyPem,
+        chainPem: c.chain,
+        detached: false,
+        deterministic: c.deterministic,
+        md: c.md,
+      });
+      const parsed = CMS.signed(openssl);
+      const signingTimeAttr = (parsed.signerInfos[0].signedAttrs || []).find(
+        (a) => a.oid === '1.2.840.113549.1.9.5'
+      );
+      if (!signingTimeAttr) throw new Error('openssl signedAttrs missing signingTime');
+      const createdTs = parseSigningTime(signingTimeAttr.values[0]);
+      const local = CMS.sign(content, c.cert, c.keyPem, c.chain, {
+        createdTs,
+        extraEntropy: false,
+      });
+      deepStrictEqual(
+        CMS.signed(local).signerInfos[0].signature,
+        CMS.signed(openssl).signerInfos[0].signature
+      );
+      deepStrictEqual(cmsOpenSSL({ mode: 'verify', cmsDer: local, caPem: c.chain }), content);
+      CMS.verify(local, { checkSignatures: true, time: createdTs, chain: [c.chain] });
+    }
+  });
 });
 
 should.runWhen(import.meta.url);

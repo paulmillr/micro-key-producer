@@ -338,10 +338,58 @@ const onePem = (text: string, tag?: string) => {
   return hit;
 };
 
+const bytesNum = (bytes: Uint8Array): bigint => BigInt(`0x${bytesToHex(bytes) || '0'}`);
+const explicitCurve = (
+  data: unknown
+):
+  | {
+      fieldId: { info: { TAG: 'primeField'; data: bigint } };
+      curve: { a: Uint8Array; b: Uint8Array };
+      base: Uint8Array;
+      order: bigint;
+      cofactor?: bigint;
+    }
+  | undefined => {
+  if (!data || typeof data !== 'object') return;
+  const d = data as Record<string, unknown>;
+  const fieldId = d.fieldId as Record<string, unknown> | undefined;
+  const info = fieldId?.info as Record<string, unknown> | undefined;
+  const curve = d.curve as Record<string, unknown> | undefined;
+  if (info?.TAG !== 'primeField' || typeof info.data !== 'bigint') return;
+  if (!(curve?.a instanceof Uint8Array) || !(curve?.b instanceof Uint8Array)) return;
+  if (!(d.base instanceof Uint8Array) || typeof d.order !== 'bigint') return;
+  if (d.cofactor !== undefined && typeof d.cofactor !== 'bigint') return;
+  return {
+    fieldId: { info: { TAG: 'primeField', data: info.data } },
+    curve: { a: curve.a, b: curve.b },
+    base: d.base,
+    order: d.order,
+    cofactor: d.cofactor as bigint | undefined,
+  };
+};
+const explicitCurveName = (data: unknown): Curve | undefined => {
+  const d = explicitCurve(data);
+  if (!d) return;
+  // OpenSSL can serialize a standard EC key with explicit domain parameters while the
+  // matching cert/SPKI keeps the named-curve OID, so normalize equivalent parameters here.
+  for (const curve in CurveOID) {
+    const name = curve as Curve;
+    const known = CMS_ALG[name].ec.Point.CURVE();
+    if (d.fieldId.info.data !== known.p) continue;
+    if (bytesNum(d.curve.a) !== known.a || bytesNum(d.curve.b) !== known.b) continue;
+    if (d.order !== known.n) continue;
+    if (d.cofactor !== undefined && d.cofactor !== known.h) continue;
+    const base = CMS_ALG[name].ec.Point.BASE;
+    if (!equalBytes(d.base, base.toBytes(false)) && !equalBytes(d.base, base.toBytes(true)))
+      continue;
+    return name;
+  }
+  return;
+};
 const ecParamCurve = (d: DERECParams): CertCurve => {
   if (d.TAG === 'namedCurve') return curveOID(d.data) as CertCurve;
   if (d.TAG === 'implicitCurve') return 'OID:implicitCurve';
-  return 'OID:specifiedCurve';
+  return explicitCurveName(d.data) || 'OID:specifiedCurve';
 };
 const spkiCurve = (k: DERSPKIKey): CertCurve => {
   if (k.algorithm.info.TAG !== 'EC')
@@ -366,6 +414,10 @@ type EcAlg = {
     verify: (sig: Uint8Array, m: Uint8Array, pk: Uint8Array, o?: any) => boolean;
     getPublicKey: (sk: Uint8Array, compressed?: boolean) => Uint8Array;
     lengths: { signature?: number };
+    Point: {
+      CURVE: () => { p: bigint; n: bigint; h: bigint; a: bigint; b: bigint };
+      BASE: { toBytes: (compressed?: boolean) => Uint8Array };
+    };
   };
   sigOid: string;
   hash: HashAlg;
@@ -2909,6 +2961,7 @@ export const __TEST: {
   CMSRevocationInfoChoice: typeof CMSRevocationInfoChoice;
   CMSSignedData: typeof CMSSignedData;
   SMIME_CAPS: typeof SMIME_CAPS;
+  keyCurve: (privateKeyPem: string) => CertCurve | EdKind;
 } = /* @__PURE__ */ (() => ({
   IPv4: IPv4,
   IPv6: IPv6,
@@ -2920,4 +2973,9 @@ export const __TEST: {
   CMSRevocationInfoChoice: CMSRevocationInfoChoice,
   CMSSignedData: CMSSignedData,
   SMIME_CAPS: SMIME_CAPS,
+  keyCurve: (privateKeyPem: string) => {
+    const block = onePem(privateKeyPem, 'PRIVATE KEY');
+    const parsed = pkcs8SignKey(pkcs8FromPem(privateKeyPem, block.der).key);
+    return parsed.kind === 'EC' ? parsed.curve : parsed.kind;
+  },
 }))();
