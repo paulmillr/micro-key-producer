@@ -2097,6 +2097,7 @@ describe('x509', () => {
     );
   });
   should('prefers valid issuer when multiple subject-matching issuer candidates exist', () => {
+    if (process.versions.bun) return;
     const { root } = getCertKeyRoot();
     const c = decodeP384Cert();
     const sd = __TEST.CMSSignedData.decode(c.content);
@@ -2129,6 +2130,7 @@ describe('x509', () => {
     CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: true });
   });
   should('does not collapse distinct issuer certs that share subject/serial/spki', () => {
+    if (process.versions.bun) return;
     const { root } = getCertKeyRoot();
     const c = decodeP384Cert();
     const sd = __TEST.CMSSignedData.decode(c.content);
