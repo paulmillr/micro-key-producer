@@ -118,7 +118,7 @@ oJkWBoE32DnPf8SBpESSME1+9mrBF77+g6jQjxVfK1L59hjdRHApBI4P
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       privateKey: {
@@ -152,7 +152,7 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHKz/tV8vLO/YnYnrN0smgRUkUoAt
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       publicKey: new Uint8Array([
@@ -163,7 +163,9 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHKz/tV8vLO/YnYnrN0smgRUkUoAt
       ]),
     },
   },
-  // We don't support rsa, but it is nice to test that we don't accidentally decode it into EC key
+  // RFC 5208 §6 / RFC 5958 §2 make PKCS#8 privateKey algorithm-defined;
+  // RFC 8017 Appendix A.1.2 represents RSA as RSAPrivateKey. DERUtils keeps
+  // that PKCS#1 payload raw; high-level RSA math is out of scope.
   {
     name: 'rsa2048-priv',
     type: 'pkcs8',
@@ -195,7 +197,6 @@ DF+Kmhrggn6e0GsVPYO2ghk1tLNqgr6dVseRtYwnJxpXk9U6HWV8CJl5YLFDPlFx
 mH9FLxRKfHIwbWPh0//Atxt1qwjy5FpILpiEUcvkeOEusijQdFbJJLZvbO0EjYU/
 Uz4xpoYU8cPObY7JmDznKvc=
 -----END PRIVATE KEY-----`,
-    notImplemented: true,
   },
   {
     name: 'rsa2048-pub',
@@ -273,7 +274,7 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHKz/tV8vLO/YnYnrN0smgRUkUoAt
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       publicKey: new Uint8Array([
@@ -771,7 +772,7 @@ fJDiFqz3
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       privateKey: {
@@ -782,7 +783,7 @@ fJDiFqz3
             98, 42, 211, 101, 44, 126, 228, 239, 24, 234, 217, 70, 114, 70, 186, 91, 166, 237, 38,
             42, 28, 118, 183, 104, 149, 247, 46, 145, 42, 19, 18, 79,
           ]),
-          parameters: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          parameters: { TAG: 'namedCurve', data: 'P-256' },
           publicKey: new Uint8Array([
             4, 36, 188, 243, 110, 236, 246, 181, 25, 203, 22, 83, 139, 251, 166, 211, 95, 168, 34,
             85, 171, 192, 177, 206, 141, 12, 81, 83, 208, 131, 2, 119, 104, 155, 77, 51, 84, 12, 57,
@@ -810,7 +811,7 @@ Fqz3
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       privateKey: {
@@ -821,7 +822,7 @@ Fqz3
             98, 42, 211, 101, 44, 126, 228, 239, 24, 234, 217, 70, 114, 70, 186, 91, 166, 237, 38,
             42, 28, 118, 183, 104, 149, 247, 46, 145, 42, 19, 18, 79,
           ]),
-          parameters: { TAG: 'namedCurve', data: '1.3.132.0.34' },
+          parameters: { TAG: 'namedCurve', data: 'P-384' },
           publicKey: new Uint8Array([
             4, 36, 188, 243, 110, 236, 246, 181, 25, 203, 22, 83, 139, 251, 166, 211, 95, 168, 34,
             85, 171, 192, 177, 206, 141, 12, 81, 83, 208, 131, 2, 119, 104, 155, 77, 51, 84, 12, 57,
@@ -847,7 +848,7 @@ Fqz3
     decoded: {
       version: 0n,
       algorithm: {
-        info: { TAG: 'EC', data: { TAG: 'namedCurve', data: '1.3.132.0.34' } },
+        info: { TAG: 'EC', data: { TAG: 'namedCurve', data: 'P-384' } },
       },
       privateKey: {
         TAG: 'struct',
@@ -857,7 +858,7 @@ Fqz3
             98, 42, 211, 101, 44, 126, 228, 239, 24, 234, 217, 70, 114, 70, 186, 91, 166, 237, 38,
             42, 28, 118, 183, 104, 149, 247, 46, 145, 42, 19, 18, 79,
           ]),
-          parameters: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          parameters: { TAG: 'namedCurve', data: 'P-256' },
           publicKey: new Uint8Array([
             4, 36, 188, 243, 110, 236, 246, 181, 25, 203, 22, 83, 139, 251, 166, 211, 95, 168, 34,
             85, 171, 192, 177, 206, 141, 12, 81, 83, 208, 131, 2, 119, 104, 155, 77, 51, 84, 12, 57,
@@ -885,7 +886,7 @@ MIGUAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHoweAIBAQRz////////////////
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       privateKey: {
@@ -913,6 +914,7 @@ MIGUAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHoweAIBAQRz////////////////
   {
     name: 'ec-invalid-version.pem',
     type: 'pkcs8',
+    shouldFail: true,
     pem: `-----BEGIN PRIVATE KEY-----
 MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBEQQgYirTZSx+5O8Y6tlG
 cka6W6btJiocdrdolfcukSoTEk+gCgYIKoZIzj0DAQehRANCAAQkvPNu7Pa1GcsW
@@ -924,7 +926,7 @@ fJDiFqz3
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       privateKey: {
@@ -935,7 +937,7 @@ fJDiFqz3
             98, 42, 211, 101, 44, 126, 228, 239, 24, 234, 217, 70, 114, 70, 186, 91, 166, 237, 38,
             42, 28, 118, 183, 104, 149, 247, 46, 145, 42, 19, 18, 79,
           ]),
-          parameters: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          parameters: { TAG: 'namedCurve', data: 'P-256' },
           publicKey: new Uint8Array([
             4, 36, 188, 243, 110, 236, 246, 181, 25, 203, 22, 83, 139, 251, 166, 211, 95, 168, 34,
             85, 171, 192, 177, 206, 141, 12, 81, 83, 208, 131, 2, 119, 104, 155, 77, 51, 84, 12, 57,
@@ -1025,7 +1027,7 @@ zo0MUVPQgwJ3aJtNM1QMOQUayCrRwfklg+D/rFSUwEUqtZh7fJDiFqz3
 -----END PRIVATE KEY-----`,
     decoded: {
       version: 0n,
-      algorithm: { info: { TAG: 'EC', data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' } } },
+      algorithm: { info: { TAG: 'EC', data: { TAG: 'namedCurve', data: 'P-256' } } },
       privateKey: {
         TAG: 'struct',
         data: {
@@ -1072,7 +1074,7 @@ jqUVeAbI24rCMk3+mUTTFwwQn0p9nTdf56a1VNl4P9XUM5cbJnqwh5Yl
       algorithm: {
         info: {
           TAG: 'EC',
-          data: { TAG: 'namedCurve', data: '1.2.840.10045.3.1.7' },
+          data: { TAG: 'namedCurve', data: 'P-256' },
         },
       },
       privateKey: {
@@ -2252,7 +2254,6 @@ OYvP4o6l2k9FHlNCZsQwSymOwWkXKYyK5g+CaKFBs7ZwmXWpJxjk6QJBAInqbm1w
 3yVfGD9I2mMQi/6oDJQP3pdWU4mU4h4sdDyRgTQLpkD4yypgjOACt4mTzxifSVT9
 fT+a79SkT8FFmZE=
 -----END PRIVATE KEY-----`,
-    notImplemented: true,
   },
 
   {

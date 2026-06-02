@@ -5,9 +5,22 @@
  * Optional zxcvbn score for password bruteforce estimation.
  * @module
  */
-import { bytesToNumberBE, numberToVarBytesBE } from '@noble/curves/utils.js';
+import {
+  abytes,
+  bytesToNumberBE,
+  numberToBytesBE,
+  numberToVarBytesBE,
+} from '@noble/curves/utils.js';
+import { type TArg, type TRet } from '@scure/base';
+import { deepFreeze } from './utils.ts';
+
+const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+const _2n = /* @__PURE__ */ BigInt(2);
 
 function zip<A, B>(a: A[], b: B[]): [A, B][] {
+  // Zip to the longer input so callers preserve missing positions as
+  // `undefined` instead of silently truncating uneven mask/value pairs.
   let res: [A, B][] = [];
   for (let i = 0; i < Math.max(a.length, b.length); i++) res.push([a[i], b[i]]);
   return res;
@@ -15,14 +28,20 @@ function zip<A, B>(a: A[], b: B[]): [A, B][] {
 
 // set utils
 function or<T>(...sets: Set<T>[]): Set<T> {
+  // Build unions without mutating the source sets so the base alphabet classes
+  // can be safely reused in larger composites.
   return sets.reduce((acc, i) => new Set([...acc, ...i]), new Set());
 }
 
 function and<T>(...sets: Set<T>[]): Set<T> {
+  // Single-input intersections intentionally alias that input Set to avoid
+  // allocation; callers that need an isolated result must copy first.
   return sets.reduce((acc, i) => new Set(Array.from(acc).filter((j) => i.has(j))));
 }
 
 function product(...sets: Set<string>[]): Set<string> {
+  // Without an explicit seed, a single-input product returns that original Set
+  // instance; callers that need an isolated result must copy first.
   return sets.reduce(
     (acc, i) =>
       new Set(
@@ -34,16 +53,20 @@ function product(...sets: Set<string>[]): Set<string> {
 }
 
 const DATE: Record<string, number> = { sec: 1000 };
+// Duration formatting and attack estimates assume these helpers compose
+// hierarchically from milliseconds up to about a 365-day year.
 DATE.min = 60 * DATE.sec;
 DATE.h = 60 * DATE.min;
 DATE.d = 24 * DATE.h;
 DATE.mo = 30 * DATE.d;
-DATE.y = 365 * DATE.mo;
+DATE.y = 365 * DATE.d;
 
 function formatDuration(dur: number): string {
   if (Number.isNaN(dur)) return 'never';
   if (dur > DATE.y * 100) return 'centuries';
   let parts = [];
+  // DATE is populated from the smallest unit upward above; reversing that
+  // insertion order keeps rendered durations in largest-to-smallest chunks.
   for (let [name, period] of Object.entries(DATE).reverse()) {
     if (dur < period) continue;
     let value = Math.floor(dur / period);
@@ -55,6 +78,8 @@ function formatDuration(dur: number): string {
 
 /** Character classes used by password masks. */
 // NOTE: all items inside alphabet size should have same size
+// Alphabet entries are shared live Sets: keeping them stable matters because Mask
+// caches lengths/cardinality separately from later set iteration order.
 export const alphabet: Record<string, Set<string>> = {};
 // Digits
 alphabet['1'] = new Set('0123456789');
@@ -75,8 +100,11 @@ alphabet['l'] = or(alphabet['a'], alphabet['A']);
 alphabet['n'] = or(alphabet['l'], alphabet['1']);
 // uppercase+lowercase+digits+symbols
 alphabet['*'] = or(alphabet['n'], alphabet['@']);
+deepFreeze(alphabet);
 
 const TEMPLATES: Record<string, string> = {
+  // Expand these shorthands once during mask compilation so the later mask logic
+  // only sees concrete alphabet symbols.
   // Syllable (Consonant+vowel)
   s: 'cv',
   // uppercase consonant + vowel
@@ -85,12 +113,16 @@ const TEMPLATES: Record<string, string> = {
 
 // Mask utils
 function idx<T>(arr: Array<T> | Set<T>, i: number): T {
+  // Set inputs are copied to an array first so selection follows insertion
+  // order without mutating the source collection.
   if (!Array.isArray(arr)) arr = Array.from(arr);
   if (i < 0 || i >= arr.length) throw new Error('Out of bounds index access');
   return arr[i];
 }
 
 /** Low-level password mask helpers. */
+// Export the same live helpers used internally so callers and tests exercise
+// the exact mask behavior, including the shared DATE table.
 export const utils = {
   zip: zip as typeof zip,
   or: or as typeof or,
@@ -100,6 +132,7 @@ export const utils = {
   formatDuration: formatDuration as typeof formatDuration,
   DATE: DATE as typeof DATE,
 };
+deepFreeze(utils);
 
 /**
  * Check if password is correct for rules in design rationale.
@@ -113,38 +146,31 @@ export const utils = {
  * ```
  */
 export function checkPassword(pwd: string): boolean {
-  if (pwd.length < 8) return false;
+  // The README minimum is 8 password characters; string iteration counts code
+  // points instead of UTF-16 surrogate halves.
+  if (Array.from(pwd).length < 8) return false;
   const s = new Set(pwd);
   for (const c of 'aA1@') if (!and(s, alphabet[c]).size) return false;
   return true;
 }
 
-/**
- * Like base convertInt, but with variable size alphabet.
- */
-function splitEntropy(lengths: number[], entropy: Uint8Array) {
-  let entropyLeft = bytesToNumberBE(entropy);
-  let values = [];
-  for (const c of lengths) {
-    const sz = BigInt(c);
-    values.push(Number(entropyLeft % sz));
-    entropyLeft /= sz;
-  }
-  return { values, entropyLeft };
-}
-
 function cardinalityBits(cardinality: bigint): number {
+  // Only positive search-space sizes have a meaningful highest-used-bit width here.
+  if (cardinality <= _0n) throw new RangeError(`expected positive cardinality, got ${cardinality}`);
   let i = 0;
-  for (let c = cardinality; c; i++, c >>= 1n);
+  for (let c = cardinality; c; i++, c >>= _1n);
   return i - 1;
 }
 
 // Estimates
 function guessTime(cardinality: bigint, perSec: number): string {
+  // Human-readable time buckets are approximate; very large bigint cardinalities
+  // eventually saturate to `centuries`.
   return formatDuration((Number(cardinality) / perSec) * 1000);
 }
 
 function passwordScore(cardinality: bigint) {
+  // This is a small local guess-count bucket table, not a full zxcvbn scoring port.
   const scores: [number, string][] = [
     [1e3 + 5, 'too guessable'],
     [1e6 + 5, 'very guessable'],
@@ -218,12 +244,14 @@ function estimateAttack(cardinality: bigint) {
   const KWH_PRICE = 0.12;
   // +33% for cooling needs (AC)
   const KWH_COOLING = KWH_PRICE + KWH_PRICE * 0.33;
-  // Price of kw per hour -> price of watt per sec
-  const WS = KWH_COOLING / 60 / 1000;
+  // Convert price per kWh to price per watt-second: 1 kWh = 1000 W * 3600 s.
+  const WS = KWH_COOLING / 3600 / 1000;
   const ENERGY_COST = GPU_POWER_RIG * WS;
   const TOTAL_GPU_COST = ENERGY_COST + GPU_COST;
-  const calcCost = (hashes: number) => Number(cardinality / BigInt(hashes)) * TOTAL_GPU_COST;
-  return {
+  // Exhaustive cost should stay positive for any non-empty search space; rounding
+  // away sub-second work loses that.
+  const calcCost = (hashes: number) => (Number(cardinality) / hashes) * TOTAL_GPU_COST;
+  return deepFreeze({
     // Score/guesses based on zxcvbn, it is pretty bad model, but will be ok for now
     score: passwordScore(cardinality),
     guesses: {
@@ -242,7 +270,7 @@ function estimateAttack(cardinality: bigint) {
       macos: calcCost(1019200), // macOS v10.8+ (PBKDF2-SHA512), password?
       pbkdf2: calcCost(3029200), // PBKDF2-HMAC-SHA256
     },
-  };
+  });
 }
 
 type ApplyResult = { password: string; entropyLeft: bigint };
@@ -259,19 +287,33 @@ class Mask {
       .split('')
       .map((i) => TEMPLATES[i] || i)
       .join('');
+    // No local RFC/EIP defines password masks; the local policy is that a mask
+    // must select at least one password character instead of treating all input
+    // entropy as leftover.
+    if (!mask.length) throw new Error('expected non-empty mask');
     this.chars = mask.split('');
     this.length = this.chars.length;
-    this.sets = this.chars.map((i) => alphabet[i] || new Set([i]));
+    // No local RFC/EIP defines password masks; the local API invariant is that
+    // compiled masks snapshot alphabets because lengths/cardinality are cached here.
+    this.sets = this.chars.map((i) => new Set(alphabet[i] || [i]));
     this.lengths = this.sets.map((i) => i.size);
-    this.cardinality = this.sets.reduce((acc, i) => acc * BigInt(i.size), 1n);
+    this.cardinality = this.sets.reduce((acc, i) => acc * BigInt(i.size), _1n);
     this.entropy = cardinalityBits(this.cardinality);
   }
-  apply(entropy: Uint8Array): ApplyResult {
+  apply(entropy: TArg<Uint8Array>): ApplyResult {
     // There should be at least x2 more bits in entropy than required for mask to avoid modulo bias, since
     // it basically (% this.cardinality)
-    if (this.cardinality >= 2n ** BigInt((8 * entropy.length) / 2))
+    if (this.cardinality >= _2n ** BigInt((8 * entropy.length) / 2))
       throw new Error('Not enough entropy');
-    const { entropyLeft, values } = splitEntropy(this.lengths, entropy);
+    // Generic masks treat entropy as a canonical big-endian integer; leading zero
+    // bytes are not part of that value.
+    let entropyLeft = bytesToNumberBE(entropy);
+    const values: number[] = [];
+    for (const c of this.lengths) {
+      const sz = BigInt(c);
+      values.push(Number(entropyLeft % sz));
+      entropyLeft /= sz;
+    }
     const password = zip(this.sets, values)
       .map(([s, v]) => idx(s, v))
       .join('');
@@ -281,8 +323,10 @@ class Mask {
     const values = zip(this.sets, password.split('')).map(([s, c]) => Array.from(s).indexOf(c));
     const num = zip(this.sets, values).reduceRight(
       (acc, [s, v]) => acc * BigInt(s.size) + BigInt(v),
-      0n
+      _0n
     );
+    // Return the minimal big-endian encoding for the reconstructed entropy
+    // integer, not the caller's original byte width.
     return numberToVarBytesBE(entropyLeft * this.cardinality + num);
   }
   estimate(): PassEstimate {
@@ -301,7 +345,7 @@ class Mask {
  * mask('cv1').apply(new Uint8Array(8)).password;
  * ```
  */
-export const mask = (mask: string): Mask => new Mask(mask);
+export const mask = (mask: string): TRet<Mask> => new Mask(mask) as unknown as TRet<Mask>;
 
 /*
 'Safari Keychain Secure Password'-like password:
@@ -313,6 +357,8 @@ export const mask = (mask: string): Mask => new Mask(mask);
 - hard to verify entropy in tests :(
 */
 const secureMasks: string[] = [];
+// One digit replaces one of the original 18 syllable characters, so only 17 c/v
+// slots remain for uppercase placement.
 for (let upper = 0; upper < 17; upper++) {
   for (let digitPos = 0; digitPos < 3; digitPos++) {
     for (let digitLeft = 0; digitLeft < 2; digitLeft++) {
@@ -346,18 +392,24 @@ export type MaskType = { [K in keyof Mask]: Mask[K] };
  * const pass = secureMask.apply(seed).password;
  * ```
  */
-export const secureMask: MaskType = /* @__PURE__ */ (() => {
+export const secureMask: TRet<MaskType> = /* @__PURE__ */ (() => {
   const size = BigInt(secureMasks.length);
   const cardinality = mask(secureMasks[0]).cardinality * size;
-  return {
+  const seedLen = 32;
+  return deepFreeze({
     length: 20,
     cardinality,
     entropy: cardinalityBits(cardinality),
     estimate: () => estimateAttack(cardinality),
-    apply: (entropy: Uint8Array): ApplyResult => {
+    apply: (entropy: TArg<Uint8Array>): ApplyResult => {
+      // No local RFC/EIP defines secureMask; the README API uses a fixed
+      // randomBytes(32) seed, so preserve that width instead of dropping leading zero bytes.
+      entropy = abytes(entropy, seedLen, 'entropy');
       let entropyLeft = bytesToNumberBE(entropy);
+      // Split the entropy integer into {variant index mod 102, quotient} so every
+      // concrete secure mask keeps the same inner cardinality.
       const idx = Number(entropyLeft % size);
-      return mask(secureMasks[idx]).apply(numberToVarBytesBE(entropyLeft / size));
+      return mask(secureMasks[idx]).apply(numberToBytesBE(entropyLeft / size, seedLen));
     },
     inverse(res: ApplyResult) {
       const chars = res.password.split('');
@@ -376,7 +428,7 @@ export const secureMask: MaskType = /* @__PURE__ */ (() => {
       if (idx < 0) throw new Error('Unknown mask');
       const entropy = mask(secureMasks[idx]).inverse(res);
       const entropyNum = bytesToNumberBE(entropy);
-      return numberToVarBytesBE(entropyNum * size + BigInt(idx));
+      return numberToBytesBE(entropyNum * size + BigInt(idx), seedLen);
     },
-  };
+  }) as unknown as TRet<MaskType>;
 })();

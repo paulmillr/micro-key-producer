@@ -5,9 +5,11 @@
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha3_256 } from '@noble/hashes/sha3.js';
-import { concatBytes } from '@noble/hashes/utils.js';
+import { abytes, concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { base32, base64, utf8 } from '@scure/base';
 
+// Tor v3 onion addresses append the fixed version byte `0x03` after the public
+// key and checksum when forming the base32 payload.
 const ADDRESS_VERSION = Uint8Array.of(0x03);
 
 /**
@@ -23,7 +25,10 @@ const ADDRESS_VERSION = Uint8Array.of(0x03);
  * formatPublicKey(getKeys(seed).publicKeyBytes);
  * ```
  */
-export function formatPublicKey(pubBytes: Uint8Array): string {
+export function formatPublicKey(pubBytes: TArg<Uint8Array>): string {
+  // BIP-0155 Appendix B / ZIP-0155 "Tor v3 address encoding" fix PUBKEY at 32
+  // bytes and encode `PUBKEY || CHECKSUM || VERSION`.
+  pubBytes = abytes(pubBytes, 32, 'public key');
   // checksum = H(".onion checksum" || pubkey || version)
   const checksum = sha3_256(concatBytes(utf8.decode('.onion checksum'), pubBytes, ADDRESS_VERSION));
   // onion_address = base32(pubkey || checksum || version);
@@ -45,9 +50,12 @@ export function formatPublicKey(pubBytes: Uint8Array): string {
  * parseAddress(getKeys(seed).publicKey);
  * ```
  */
-export function parseAddress(address: string): Uint8Array {
+export function parseAddress(address: string): TRet<Uint8Array> {
   if (!address.endsWith('.onion')) throw new Error('Address must end with .onion');
   const addr = base32.decode(address.replace(/\.onion$/, '').toUpperCase());
+  // BIP-0155 Appendix B / ZIP-0155 "Tor v3 address encoding" make the payload
+  // exactly `32-byte key || 2-byte checksum || 0x03`; `formatPublicKey(skip)`
+  // enforces the key width while recomputing the checksum.
   // skip last 3 bytes
   const skip = addr.slice(0, addr.length - 3);
   const key = formatPublicKey(skip);
@@ -68,11 +76,14 @@ export function parseAddress(address: string): Uint8Array {
  * getKeys(seed).publicKey;
  * ```
  */
-export function getKeys(seed: Uint8Array): {
+export function getKeys(seed: TArg<Uint8Array>): TRet<{
   publicKeyBytes: Uint8Array;
   publicKey: string;
   privateKey: string;
-} {
+}> {
+  // The Tor bundle is one extended Ed25519 derivation: `pointBytes` become the
+  // onion public key, while `head || prefix` becomes the exported
+  // `ED25519-V3:` private-key payload.
   const { head, prefix, pointBytes } = ed25519.utils.getExtendedPublicKey(seed);
   const added = concatBytes(head, prefix);
   return {

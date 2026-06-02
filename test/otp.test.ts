@@ -12,6 +12,7 @@ describe('otp', () => {
       'otpauth://derp?secret=foo',
       'otpauth://totp?foo=secret',
       'otpauth://totp?digits=-1',
+      'otpauth://totp/?secret=GEZDGNBV&digits=6x',
       'otpauth://totp/SomeIssuer:?issuer=AnotherIssuer',
       'otpauth://totp?algorithm=aes',
       'otpauth://totp?secret=Ab$:1',
@@ -35,6 +36,12 @@ describe('otp', () => {
         secret: hexToBytes('3dc6caa4824a6d288767b2331e20b43166cb85d9'),
       }
     );
+    eql(otp.parse('otpauth://totp/?secret=GEZDGNBV&period=60'), {
+      algorithm: 'sha1',
+      digits: 6,
+      interval: 60,
+      secret: hexToBytes('3132333435'),
+    });
     eql(
       otp.buildURL(otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS')),
       'otpauth://totp/?secret=ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS&interval=30&digits=6&algorithm=SHA1'
@@ -47,6 +54,13 @@ describe('otp', () => {
       ),
       'otpauth://totp/?secret=HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ&interval=30&digits=6&algorithm=SHA1'
     );
+    const intervalOpts = {
+      secret: Uint8Array.from([1, 2, 3, 4]),
+      algorithm: 'sha1',
+      digits: 6,
+      interval: 60,
+    };
+    eql(otp.parse(otp.buildURL(intervalOpts)), intervalOpts);
   });
   should('OTP', () => {
     const opts1 = otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
@@ -55,6 +69,9 @@ describe('otp', () => {
     eql(otp.hotp(opts2, 0n), '009551');
     eql(otp.hotp(opts1, 42n), '626854');
     eql(otp.hotp(opts2, 42n), '093610');
+    eql(otp.hotp(opts1, 42), otp.hotp(opts1, 42n));
+    throws(() => otp.hotp({ ...opts1, digits: 5 }, 0n));
+    throws(() => otp.hotp(opts1, Number.MAX_SAFE_INTEGER + 1));
     const opts3 = otp.parse('GEZDGNBV');
     eql(otp.hotp(opts3, 0), '734055');
     eql(otp.hotp(opts3, 1), '662488');

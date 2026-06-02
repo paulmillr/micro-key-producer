@@ -4,9 +4,11 @@
  * @module
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { concatBytes } from '@noble/hashes/utils.js';
+import { concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { base32, hex, utils } from '@scure/base';
 
+// Keep raw lowercase base36 digits without a multibase prefix; IPNS callers add
+// and remove the canonical leading `k` themselves.
 const base36 = utils.chain(
   utils.radix(36),
   utils.alphabet('0123456789abcdefghijklmnopqrstuvwxyz'),
@@ -27,7 +29,9 @@ const base36 = utils.chain(
  * formatPublicKey(parseAddress(getKeys(seed).base36));
  * ```
  */
-export function formatPublicKey(pubBytes: Uint8Array): string {
+export function formatPublicKey(pubBytes: TArg<Uint8Array>): string {
+  // Re-encode already-validated libp2p-key bytes into canonical `ipns://k...`;
+  // malformed byte strings still stringify here and are later rejected by `parseAddress()`.
   return `ipns://k${base36.encode(pubBytes)}`;
 }
 
@@ -47,7 +51,7 @@ export function formatPublicKey(pubBytes: Uint8Array): string {
  * parseAddress(getKeys(seed).base36);
  * ```
  */
-export function parseAddress(address: string): Uint8Array {
+export function parseAddress(address: string): TRet<Uint8Array> {
   address = address.toLowerCase();
   if (address.startsWith('ipns://')) address = address.slice(7);
   let hexKey;
@@ -63,7 +67,12 @@ export function parseAddress(address: string): Uint8Array {
 
   // Check if hexKey has expected prefix '0172002408011220' and length of 80
   if (hexKey.startsWith('0172002408011220') && hexKey.length === 80) {
-    return hex.decode(hexKey);
+    const key = hex.decode(hexKey);
+    // RFC 8032 §5.1.5 step 4 defines the Ed25519 public key as an encoded
+    // curve point, and §5.1.7 step 1 treats public-key point decode failure
+    // as invalid; reject malformed libp2p-key payloads before returning them.
+    ed25519.Point.fromHex(hexKey.slice(16));
+    return key as TRet<Uint8Array>;
   }
   // Throw error if IPNS key prefix is invalid
   throw new Error('Invalid IPNS Key Prefix: ' + hexKey);
@@ -98,9 +107,12 @@ export type IpnsKeys = {
  * getKeys(seed).contenthash;
  * ```
  */
-export function getKeys(seed: Uint8Array): IpnsKeys {
+export function getKeys(seed: TArg<Uint8Array>): IpnsKeys {
   //? privKey "seed" should be checked for <ed25519.curve.n?
   if (seed.length !== 32) throw new TypeError('Seed must be 32 bytes in length');
+  // RFC 8032 derives the Ed25519 public key from the 32-byte private-key
+  // string; reuse the wrapped public bytes across the IPNS address forms and
+  // ENS contenthash.
   // Generate ed25519 public key from seed
   const pubKey = ed25519.getPublicKey(seed);
   // Create public key bytes by concatenating prefix bytes and pubKey

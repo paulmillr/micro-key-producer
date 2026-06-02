@@ -20,27 +20,35 @@ import {
   hexToBytes,
   isBytes,
   randomBytes,
+  type TArg,
+  type TRet,
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
+import { deepFreeze } from './utils.ts';
 
 // treeshake: single helpers should not keep the full longSignatures/fields objects live.
 const getPublicKey = /* @__PURE__ */ (() => bls12_381.longSignatures.getPublicKey)();
 const Fr = /* @__PURE__ */ (() => bls12_381.fields.Fr)();
+const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+const _8n = /* @__PURE__ */ BigInt(8);
 
 // Octet Stream to Integer
-function os2ip(bytes: Uint8Array): bigint {
-  let result = 0n;
+function os2ip(bytes: TArg<Uint8Array>): bigint {
+  let result = _0n;
   for (let i = 0; i < bytes.length; i++) {
     const byte = bytes[i]!;
-    result <<= 8n;
+    result <<= _8n;
     result += BigInt(byte);
   }
   return result;
 }
 
 // Integer to Octet Stream
-function i2osp(value: number, length: number): Uint8Array {
-  if (value < 0 || value >= 1n << BigInt(8 * length)) {
+// Narrow RFC 8017 helper: current callers only serialize uint32-scale values,
+// so the JS-number + >>> loop is intentionally not a general bigint I2OSP.
+function i2osp(value: number, length: number): TRet<Uint8Array> {
+  if (value < 0 || value >= _1n << BigInt(8 * length)) {
     throw new RangeError(`bad I2OSP call: value=${value} length=${length}`);
   }
   const res = Array.from({ length }).fill(0) as number[];
@@ -51,7 +59,9 @@ function i2osp(value: number, length: number): Uint8Array {
   return new Uint8Array(res);
 }
 
-function ikmToLamportSK(ikm: Uint8Array, salt: Uint8Array) {
+function ikmToLamportSK(ikm: TArg<Uint8Array>, salt: TArg<Uint8Array>) {
+  // ERC-2333 IKM_to_lamport_SK: HKDF-Expand uses info="" and L=32*255,
+  // so split the OKM into 255 SHA-256-sized Lamport chunks.
   const okm = hkdf(sha256, ikm, salt, undefined, 32 * 255);
   return Array.from({ length: 255 }, (_, i) => okm.slice(i * 32, (i + 1) * 32));
 }
@@ -62,8 +72,10 @@ function assertUint32(index: number) {
     throw new RangeError('Expected valid uint32 number');
 }
 
-function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
-  parentSK = abytes(parentSK, undefined, 'parentSK');
+function parentSKToLamportPK(parentSK: TArg<Uint8Array>, index: number): TRet<Uint8Array> {
+  // ERC-2333 parent_SK_to_lamport_PK step 1 is IKM = I2OSP(parent_SK, 32),
+  // so only the canonical 32-byte parent secret encoding is accepted.
+  parentSK = abytes(parentSK, 32, 'parentSK');
   assertUint32(index);
   const salt = i2osp(index, 4);
   const ikm = parentSK;
@@ -80,6 +92,9 @@ function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
  * @param ikm - secret octet string
  * @param keyInfo - additional key information
  * @returns Derived BLS secret key bytes.
+ * @throws On input keying material shorter than 32 bytes. {@link RangeError}
+ * ERC-2333 / draft-04 KeyGen require `ikm` to be at least 32 bytes;
+ * shorter inputs are outside the specified domain.
  * @example
  * Feed raw input keying material into the EIP-2333 keygen primitive.
  * ```ts
@@ -88,14 +103,19 @@ function parentSKToLamportPK(parentSK: Uint8Array, index: number) {
  * hkdfModR(randomBytes(32));
  * ```
  */
-export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = Uint8Array.of()): Uint8Array {
+export function hkdfModR(
+  ikm: TArg<Uint8Array>,
+  keyInfo: TArg<Uint8Array> = Uint8Array.of()
+): TRet<Uint8Array> {
   ikm = abytes(ikm, undefined, 'ikm');
+  // ERC-2333 hkdf_mod_r input requires IKM to be a secret octet string >= 256 bits.
+  if (ikm.length < 32) throw new RangeError('Expected ikm to be at least 32 bytes');
   keyInfo = abytes(keyInfo, undefined, 'key information');
   let salt = utf8ToBytes('BLS-SIG-KEYGEN-SALT-');
-  let SK = 0n;
+  let SK = _0n;
   const input = concatBytes(ikm, Uint8Array.from([0x00]));
   const label = concatBytes(keyInfo, Uint8Array.from([0x00, 0x30]));
-  while (SK === 0n) {
+  while (SK === _0n) {
     salt = sha256(salt);
     const okm = hkdf(sha256, input, salt, label, 48);
     SK = Fr.create(os2ip(okm));
@@ -107,6 +127,8 @@ export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = Uint8Array.of())
  * Derives the EIP-2333 master secret key from a seed.
  * @param seed - Seed bytes.
  * @returns Master secret key bytes.
+ * @throws On seed values shorter than 32 bytes. {@link RangeError}
+ * ERC-2333 requires `seed` to contain at least 32 bytes of source entropy.
  * @example
  * Start from fresh entropy and derive the BLS root secret defined by EIP-2333.
  * ```ts
@@ -116,7 +138,10 @@ export function hkdfModR(ikm: Uint8Array, keyInfo: Uint8Array = Uint8Array.of())
  * deriveMaster(seed);
  * ```
  */
-export function deriveMaster(seed: Uint8Array): Uint8Array {
+export function deriveMaster(seed: TArg<Uint8Array>): TRet<Uint8Array> {
+  seed = abytes(seed, undefined, 'seed');
+  // ERC-2333 derive_master_SK input requires seed source entropy >= 256 bits.
+  if (seed.length < 32) throw new RangeError('Expected seed to be at least 32 bytes');
   return hkdfModR(seed);
 }
 
@@ -136,7 +161,7 @@ export function deriveMaster(seed: Uint8Array): Uint8Array {
  * deriveChild(deriveMaster(seed), 0);
  * ```
  */
-export function deriveChild(parentKey: Uint8Array, index: number): Uint8Array {
+export function deriveChild(parentKey: TArg<Uint8Array>, index: number): TRet<Uint8Array> {
   return hkdfModR(parentSKToLamportPK(parentKey, index));
 }
 
@@ -145,6 +170,7 @@ export function deriveChild(parentKey: Uint8Array, index: number): Uint8Array {
  * @param seed - Root seed bytes.
  * @param path - Derivation path starting with `m`.
  * @returns Derived secret key bytes.
+ * ERC-2334 paths use whole-integer segments after `m` and must include at least four levels.
  * @throws On wrong argument types. {@link TypeError}
  * @throws On malformed derivation paths or child-index ranges. {@link RangeError}
  * @example
@@ -156,18 +182,29 @@ export function deriveChild(parentKey: Uint8Array, index: number): Uint8Array {
  * deriveSeedTree(seed, 'm/12381/3600/0/0');
  * ```
  */
-export function deriveSeedTree(seed: Uint8Array, path: string): Uint8Array {
+export function deriveSeedTree(seed: TArg<Uint8Array>, path: string): TRet<Uint8Array> {
   if (typeof path !== 'string') throw new TypeError('Derivation path must be string');
   const indices = path.split('/');
   if (indices.shift() !== 'm') throw new RangeError('First character of path must be "m"');
+  // ERC-2334 Path has four levels plus the master node and says at least four
+  // child levels MUST be used.
+  if (indices.length < 4) throw new RangeError('Derivation path must have at least four levels');
   let sk = deriveMaster(seed);
-  const nodes = indices.map((i) => Number.parseInt(i));
+  const nodes = indices.map((i) => {
+    // ERC-2334 Path defines tree steps as integers separated by '/', so
+    // parseInt-style junk suffixes are not valid segments.
+    if (!/^\d+$/.test(i)) throw new RangeError('Derivation path segment must be an integer');
+    return Number(i);
+  });
   for (const node of nodes) sk = deriveChild(sk, node);
   return sk;
 }
 
 /** Supported EIP-2334 key usages. */
-export const EIP2334_KEY_TYPES = ['withdrawal', 'signing'] as const;
+export const EIP2334_KEY_TYPES: readonly ['withdrawal', 'signing'] = /* @__PURE__ */ deepFreeze([
+  'withdrawal',
+  'signing',
+] as const);
 /** Allowed EIP-2334 key usage names. */
 export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
 /**
@@ -176,6 +213,7 @@ export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
  * @param type - Requested key usage.
  * @param index - Validator account index.
  * @returns Derived private key bytes and its derivation path.
+ * ERC-2333 / ERC-2334 derivation expects `seed` to contain at least 32 bytes of source entropy.
  * @throws On wrong seed, key-type, or index argument types. {@link TypeError}
  * @throws On unsupported key types or validator-index ranges. {@link RangeError}
  * @example
@@ -188,14 +226,17 @@ export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
  * ```
  */
 export function deriveEIP2334Key(
-  seed: Uint8Array,
+  seed: TArg<Uint8Array>,
   type: EIP2334KeyType,
   index: number
-): {
+): TRet<{
   key: Uint8Array;
   path: string;
-} {
+}> {
   if (!isBytes(seed)) throw new TypeError('Valid seed expected');
+  // ERC-2334 validator paths are derived by ERC-2333, whose derive_master_SK
+  // input requires seed source entropy >= 256 bits.
+  if (seed.length < 32) throw new RangeError('Expected seed to be at least 32 bytes');
   if (typeof type !== 'string') throw new TypeError('Valid keystore type expected');
   if (!EIP2334_KEY_TYPES.includes(type as EIP2334KeyType))
     throw new RangeError('Valid keystore type expected');
@@ -214,28 +255,33 @@ export function deriveEIP2334Key(
  * Derives signing key from withdrawal key without access to seed
  * @param withdrawalKey - result of deriveEIP2334Key(seed, 'withdrawal', index)
  * @param index - Child signing index below the withdrawal key.
- * @returns same as deriveEIP2334Key(seed, 'signing', index), but without access to seed
+ * @returns For `index = 0`, the same key as deriveEIP2334Key(seed, 'signing',
+ * validatorIndex); nonzero indices derive extra local children below the withdrawal key.
  * @throws On wrong argument types. {@link TypeError}
  * @throws On wrong withdrawal-key length or child-index range. {@link RangeError}
  * @example
  * Show that the signing branch can be reconstructed later from the withdrawal branch.
  * ```ts
- * import { deepStrictEqual } from 'node:assert';
- * import { randomBytes } from '@noble/hashes/utils.js';
+ * import { bytesToHex, randomBytes } from '@noble/hashes/utils.js';
  * import { deriveEIP2334Key, deriveEIP2334SigningKey } from 'micro-key-producer/bls.js';
  * const seed = randomBytes(64);
  * const signing = deriveEIP2334Key(seed, 'signing', 0);
  * const withdrawal = deriveEIP2334Key(seed, 'withdrawal', 0);
- * deepStrictEqual(deriveEIP2334SigningKey(withdrawal.key), signing.key);
+ * bytesToHex(deriveEIP2334SigningKey(withdrawal.key)) === bytesToHex(signing.key);
  * ```
  */
-export function deriveEIP2334SigningKey(withdrawalKey: Uint8Array, index = 0): Uint8Array {
+export function deriveEIP2334SigningKey(
+  withdrawalKey: TArg<Uint8Array>,
+  index = 0
+): TRet<Uint8Array> {
   withdrawalKey = abytes(withdrawalKey, 32, 'withdrawal key');
   assertUint32(index);
   return deriveChild(withdrawalKey, index);
 }
 
 function normalizePassword(s: string): string {
+  // EIP-2335 applies UTF-8 encoding after this step; this helper only performs
+  // the NFKD + control-code stripping phase.
   let out = '';
   for (const chr of s.normalize('NFKD')) {
     const code = chr.charCodeAt(0);
@@ -250,7 +296,9 @@ function normalizePassword(s: string): string {
   return out;
 }
 
-function UUIDv4(buf: Uint8Array): string {
+function UUIDv4(buf: TArg<Uint8Array>): string {
+  // Clone before setting version/variant bits so callers keep the original 16
+  // random bytes unchanged.
   buf = Uint8Array.from(buf);
   // UUID version
   buf[6] = (buf[6] & 0x0f) | 0x40;
@@ -267,6 +315,8 @@ function UUIDv4(buf: Uint8Array): string {
 }
 
 // Note: dklen, not dkLen, because lowercase is used inside of serialized json keystores
+// EIP-2335 uses key[0..15] for AES-128-CTR and key[16..31] for checksum
+// verification, so both default KDF outputs stay at 32 bytes.
 const KDFS = {
   scrypt: { dklen: 32, n: 262144, r: 8, p: 1 },
   pbkdf2: { dklen: 32, c: 262144, prf: 'hmac-sha256' },
@@ -298,14 +348,20 @@ export type Keystore<T extends KDFType> = {
   };
 };
 
-// Non-strict version just validates same way as json schema from spec
+// Base validation follows the EIP-2335 object shape; strict mode additionally
+// narrows accepted algorithms to the local version-4 profile.
 // Maybe worth exporting?
 function validateKeystore<T extends KDFType>(store: Keystore<T>, strict = true) {
   if (typeof store !== 'object' || store === null) throw new Error('keystore should be object');
   if (store.version !== 4)
     throw new Error('keystore: wrong version, only version=4 is supported for BLS keys for now');
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(store.uuid))
+  // RFC 4122 emits UUID hex lowercase, but says hex letters are case-insensitive on input.
+  const uuid = typeof store.uuid === 'string' ? store.uuid.toLowerCase() : store.uuid;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid))
     throw new Error('keystore: wrong uuid');
+  // ERC-2335 Path is a required string field; use "" when no key-tree path is known or relevant.
+  if (typeof store.path !== 'string')
+    throw new Error('keystore: wrong path type, should be string');
   if (store.pubkey !== undefined && typeof store.pubkey !== 'string')
     throw new Error('keystore: wrong pubkey type, should be string');
   if (store.description !== undefined && typeof store.description !== 'string')
@@ -348,13 +404,25 @@ function validateKeystore<T extends KDFType>(store: Keystore<T>, strict = true) 
   }
 }
 
-function deriveEIP2335Key(password: string, salt: Uint8Array, kdf: KDFType): Uint8Array {
+// EIP-2335 "Modules" / "Decryption key" make the KDF params part of the
+// keystore file, so imports must derive from stored params.
+function deriveEIP2335Key(
+  password: string,
+  salt: TArg<Uint8Array>,
+  kdf: KDFType,
+  params: KDFParams<KDFType> = KDFS[kdf]
+): TRet<Uint8Array> {
   const pass = utf8ToBytes(normalizePassword(password));
+  // EIP-2335 password verification reads decryption_key[16:32] and AES-128-CTR
+  // uses [0:16], so require at least 32 bytes.
+  if (!Number.isSafeInteger(params.dklen) || params.dklen < 32)
+    throw new RangeError('Expected KDF dklen to be at least 32 bytes');
   if (kdf === 'scrypt') {
-    const { n: N, r, p, dklen: dkLen } = KDFS[kdf];
+    const { n: N, r, p, dklen: dkLen } = params as KDFParams<'scrypt'>;
     return scrypt(pass, salt, { N, r, p, dkLen });
   } else if (kdf === 'pbkdf2') {
-    const { c, dklen: dkLen } = KDFS[kdf];
+    const { c, dklen: dkLen, prf } = params as KDFParams<'pbkdf2'>;
+    if (prf !== 'hmac-sha256') throw new Error('Unsupported PBKDF2 PRF');
     return pbkdf2(sha256, pass, salt, { c, dkLen });
   } else {
     throw new Error(`Unsupported KDF: ${kdf}`);
@@ -365,8 +433,9 @@ function deriveEIP2335Key(password: string, salt: Uint8Array, kdf: KDFType): Uin
  * NOTE: it validates publicKey if present (which mean you can use it from store if decryption is success)
  * @param store - js object
  * @param password - Password used by the keystore KDF.
- * @returns decrypted secret and optionally path
+ * @returns decrypted secret bytes
  * @throws If the keystore uses an unsupported KDF or fails checksum/public-key validation. {@link Error}
+ * @throws On wrong KDF output length. {@link RangeError}
  * @example
  * Decrypt the keystore back into the original secret bytes.
  * ```ts
@@ -381,14 +450,14 @@ function deriveEIP2335Key(password: string, salt: Uint8Array, kdf: KDFType): Uin
 export function decryptEIP2335Keystore<T extends KDFType>(
   store: Keystore<T>,
   password: string
-): Uint8Array {
+): TRet<Uint8Array> {
   validateKeystore(store);
   const c = store.crypto;
   const checksumProvided = c.checksum.message;
   const ciphertext = hexToBytes(c.cipher.message);
   const salt = hexToBytes(c.kdf.params.salt);
   const iv = hexToBytes(c.cipher.params.iv);
-  const key = deriveEIP2335Key(password, salt, c.kdf.function);
+  const key = deriveEIP2335Key(password, salt, c.kdf.function, c.kdf.params);
   // verify checksum
   const checksum = bytesToHex(sha256(concatBytes(key.subarray(16, 32), ciphertext)));
   if (checksum !== checksumProvided)
@@ -436,6 +505,8 @@ export class EIP2335Keystore<T extends KDFType> {
   private readonly kdf: T;
   private readonly randomBytes: RandFn;
   private readonly key: Uint8Array;
+  // One random salt and its derived encryption key are reused for every keystore
+  // produced by this context; each output still gets a fresh IV and UUID.
   private readonly salt: Uint8Array;
   /**
    * Creates context for EIP2335 Keystore generation
@@ -453,7 +524,7 @@ export class EIP2335Keystore<T extends KDFType> {
   /**
    * Creates keystore in EIP2335 format.
    * @param secret - some secret value to encrypt (usually private keys)
-   * @param path - optional derivation path if secret
+   * @param path - EIP-2334 path string, or `""` when the secret is not derived.
    * @param description - optional description of secret
    * @param pubkey - optional public key. Required if secret is private key.
    */
@@ -467,6 +538,9 @@ export class EIP2335Keystore<T extends KDFType> {
     const iv = this.randomBytes(16);
     const uuid = this.randomBytes(16);
     // seed, keyType, index checked inside deriveEIP2334Key;
+    // ERC-2335 Path says `path` is a string defined by ERC-2334, and the
+    // keystore JSON schema also types it as string.
+    if (typeof path !== 'string') throw new TypeError('path should be string');
     if (typeof description !== 'string') throw new Error('description should be string');
     const { key, kdf, salt } = this;
     const ciphertext = ctr(key.subarray(0, 16), iv).encrypt(secret);
@@ -491,7 +565,7 @@ export class EIP2335Keystore<T extends KDFType> {
   }
   /**
    * Creates keystore for derived private key (based on EIP2334 seed and index)
-   * @param seed - EIP2334 seed to derive from
+   * @param seed - EIP2334 seed to derive from; ERC-2333 requires at least 32 bytes.
    * @param keyType - EIP2334 key type (withdrawal/signing)
    * @param index - account index
    * @param description - optional keystore description
@@ -508,7 +582,7 @@ export class EIP2335Keystore<T extends KDFType> {
   }
 
   /**
-   * Clean internal key material
+   * Clean cached key material and permanently disable this context.
    */
   clean(): void {
     this.destroyed = true;
@@ -539,13 +613,14 @@ export class EIP2335Keystore<T extends KDFType> {
 export function createDerivedEIP2334Keystores<T extends KDFType>(
   password: string,
   kdf: T,
-  seed: Uint8Array,
+  seed: TArg<Uint8Array>,
   keyType: EIP2334KeyType,
   indexes: number[]
 ): Keystore<T>[] {
   // NOTE: we can probably also cache key derivation for EIP2334 (since it is hierarchical and seed is same)
   for (const i of indexes) {
-    // Assert 1M max keys and 32M stake
+    // Local sanity guard for roughly 1M validator indexes / 32M ETH stake;
+    // ERC-2333/2334 only require uint32 child indexes.
     if (!Number.isSafeInteger(i) || i < 0 || i > 2 ** 20 - 1) throw new Error('Invalid key index');
   }
   const ctx = new EIP2335Keystore(password, kdf);
@@ -558,4 +633,4 @@ export function createDerivedEIP2334Keystores<T extends KDFType>(
 export const _TEST: {
   normalizePassword: typeof normalizePassword;
   deriveEIP2335Key: typeof deriveEIP2335Key;
-} = /* @__PURE__ */ { normalizePassword, deriveEIP2335Key };
+} = /* @__PURE__ */ deepFreeze({ normalizePassword, deriveEIP2335Key });

@@ -5,7 +5,7 @@ Produces secure passwords & keys for WebCrypto, SSH, PGP, SLIP10, OTP and many o
 - 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🎲 Create deterministic (known) or random keys
-- 🔑 SSH, PGP, TOR, IPNS, SLIP10, BLS12-381 ETH keys
+- 🔑 SSH (RFC 4251, RFC 8709), PGP (RFC 9580), TOR, IPNS, SLIP10 keys
 - X509 certificates
 - 💾 WebCrypto-compatible JWK, DER, PKCS#8, SPKI converter
 - 🔗 gpgkp(1): Sign git commits without gnupg
@@ -42,7 +42,6 @@ import { randomBytes } from 'micro-key-producer/utils.js';
   - [convert: key converter for JWK, DER, PKCS, SPKI](#convert-key-converter-for-jwk-der-pkcs-spki)
   - [tor: keys and addresses](#tor-keys-and-addresses)
   - [ipns: addresses](#ipns-addresses)
-  - [bls: keys for ETH validators](#bls-keys-for-eth-validators)
   - [password: secure passwords with masks](#password-secure-passwords-with-masks)
   - [otp: 2FA HOTP and TOTP codes](#otp-2fa-hotp-and-totp-codes)
 - [Internals](#internals)

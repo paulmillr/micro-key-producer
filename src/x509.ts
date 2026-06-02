@@ -1,27 +1,51 @@
 /*! micro-key-producer - MIT License (c) 2024 Paul Miller (paulmillr.com) */
 /**
- * x509 certificates. Conforms to parts of RFC 3820, RFC 5280, RFC 5652, RFC 5754, RFC 5912, RFC 7633.
+ * x509 certificates. Conforms to parts of RFC 3820, RFC 5280, RFC 5652,
+ * RFC 5754, RFC 5912, RFC 7633.
  * @module
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { ed448 } from '@noble/curves/ed448.js';
 import { brainpoolP256r1, brainpoolP384r1, brainpoolP512r1 } from '@noble/curves/misc.js';
 import { p256, p384, p521 } from '@noble/curves/nist.js';
-import { asciiToBytes, equalBytes } from '@noble/curves/utils.js';
+import { equalBytes } from '@noble/curves/utils.js';
 import { sha224, sha256, sha384, sha512 } from '@noble/hashes/sha2.js';
-import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
+import { shake256 } from '@noble/hashes/sha3.js';
+import { bytesToHex, concatBytes, hexToBytes, isBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
-import type {
-  ECParams as DERECParams,
-  PKCS8Key as DERPKCS8Key,
-  SPKIKey as DERSPKIKey,
+import {
+  DERUtils,
+  type ASN1StringOrRaw,
+  type ECParams as DERECParams,
+  type PKCS8Key as DERPKCS8Key,
+  type SPKIKey as DERSPKIKey,
+  type TLVNode,
 } from './convert.ts';
-import { CurveOID, DERUtils, curveOID } from './convert.ts';
+import { oidName } from './pgp.ts';
+import { deepFreeze } from './utils.ts';
 
-type KnownCurve = keyof typeof CurveOID;
+const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+const _2n = /* @__PURE__ */ BigInt(2);
+const _3n = /* @__PURE__ */ BigInt(3);
+const _4n = /* @__PURE__ */ BigInt(4);
+const _5n = /* @__PURE__ */ BigInt(5);
+const SHAKE256_512_BITS = /* @__PURE__ */ BigInt(512);
+const U16_MAX = /* @__PURE__ */ BigInt(65535);
+const ASN1_NULL = /* @__PURE__ */ Uint8Array.from([0x05, 0x00]);
+const ASN1_NULL_TLV = /* @__PURE__ */ DERUtils.ASN1.TLVNode.decode(ASN1_NULL);
+
+/** Supported certificate/key curves. */
+export type Curve =
+  | 'P-256'
+  | 'P-384'
+  | 'P-521'
+  | 'brainpoolP256r1'
+  | 'brainpoolP384r1'
+  | 'brainpoolP512r1';
 /** Supported signing or key-agreement curve name. */
-export type CertCurve = KnownCurve | `OID:${string}`;
+export type CertCurve = Curve | string;
 /** Parsed PEM block with decoded DER bytes. */
 export type PemBlock = {
   /** PEM block tag between `BEGIN` and `END`. */
@@ -39,6 +63,7 @@ export type Pkcs8Attr = {
   values: Uint8Array[];
 };
 type RSAPrivateKey = P.UnwrapCoder<typeof DERUtils.RSAPrivateKey>;
+type StrictBytes = P.UnwrapCoder<typeof DERUtils.ASN1.any>;
 /** Decoded X.509 certificate. */
 export type Cert = P.UnwrapCoder<typeof CERTUtils.Certificate>;
 type KeyBase = {
@@ -100,8 +125,9 @@ export type CmsSignOpts = BEROpts & {
   createdTs?: number;
   extraEntropy?: boolean | Uint8Array;
   // Optional signedAttrs S/MIME Capabilities values (attribute OID 1.2.840.113549.1.9.15).
-  // Default behavior omits this attribute (OpenSSL `-nosmimecap` style); pass values here to include it.
-  // Values can be capability names from SMIME_CAPS or raw capability OIDs.
+  // Default behavior omits this attribute (OpenSSL `-nosmimecap` style);
+  // pass values here to include it.
+  // Values can be known capability names or raw capability OIDs.
   smimeCapabilities?: string[];
   // Optional override for signedAttrs messageDigest value (attribute OID 1.2.840.113549.1.9.4).
   messageDigest?: Uint8Array;
@@ -172,9 +198,7 @@ export type CertExt = {
     excluded?: { list: CertGeneralSubtree[] };
   };
   /** Subject Directory Attributes extension. */
-  subjectDirectoryAttributes?: {
-    list: { type: string; typeName?: string; values: CertAny[] }[];
-  };
+  subjectDirectoryAttributes?: { list: { type: string; values: CertAny[] }[] };
   /** Private Key Usage Period extension. */
   privateKeyUsagePeriod?: { notBefore?: string; notAfter?: string };
   /** Issuer Alternative Name extension. */
@@ -205,9 +229,7 @@ export type CertExt = {
   /** Inhibit Any Policy extension. */
   inhibitAnyPolicy?: bigint;
   /** QC Statements extension. */
-  qcStatements?: {
-    list: { statementId: string; statementName?: string; statementInfo?: CertAny }[];
-  };
+  qcStatements?: { list: { statementId: string; statementInfo: CertAny | undefined }[] };
   /** Subject Information Access extension. */
   subjectInfoAccess?: { list: { method: string; location: CertGeneralName }[] };
   /** Microsoft certificate type extension. */
@@ -215,7 +237,7 @@ export type CertExt = {
 };
 /** Parsed GeneralName value. */
 export type CertGeneralName =
-  | { TAG: 'otherName'; data: { type: string; value: TLVNode } }
+  | { TAG: 'otherName'; data: { type: string; value: Uint8Array } }
   | { TAG: 'rfc822Name'; data: string }
   | { TAG: 'dNSName'; data: string }
   | { TAG: 'x400Address'; data: Uint8Array }
@@ -227,7 +249,7 @@ export type CertGeneralName =
 /** Parsed CRL distribution-point name. */
 export type CertDistributionPointName =
   | { TAG: 'fullName'; data: { list: CertGeneralName[] } }
-  | { TAG: 'nameRelativeToCRLIssuer'; data: Array<{ oid: string; value: NameValue }> };
+  | { TAG: 'nameRelativeToCRLIssuer'; data: Array<{ oid: string; value: ASN1StringOrRaw }> };
 /** Parsed reason flags from CRL-related extensions. */
 export type CertReasonFlags = {
   /** End-entity private key was compromised. */
@@ -262,20 +284,11 @@ export type CertPolicyQualifier =
   | {
       TAG: 'userNotice';
       data: {
-        noticeRef?: { organization: CertText; numbers: number[] };
+        noticeRef?: { organization: CertText; numbers: (number | bigint)[] };
         explicitText?: CertText;
       };
     }
   | { TAG: 'unknown'; data: { oid: string; value: TLVNode } };
-/** Generic ASN.1 tree node used for unsupported extension payloads. */
-export type TLVNode = {
-  /** Raw ASN.1 tag number. */
-  tag: number;
-  /** Nested child nodes for constructed values. */
-  children?: TLVNode[];
-  /** Hex-encoded payload for primitive values. */
-  valueHex?: string;
-};
 /** Decoded text value from certificate fields. */
 export type CertText = {
   /** Underlying ASN.1 string tag used by the source field. */
@@ -284,26 +297,20 @@ export type CertText = {
   text: string;
 };
 /** Best-effort decoded arbitrary ASN.1 value. */
-export type CertAny =
-  | { TAG: 'text'; data: NameValue }
-  | { TAG: 'oid'; data: { oid: string; name?: string } }
-  | { TAG: 'int'; data: bigint }
-  | { TAG: 'bool'; data: boolean }
-  | { TAG: 'time'; data: { TAG: 'utc' | 'generalized'; data: string } }
-  | { TAG: 'octet'; data: Uint8Array }
-  | { TAG: 'raw'; data: TLVNode };
-const pemRE = /-----BEGIN ([^-]+)-----([\s\S]*?)-----END \1-----/g;
-const hashOid = (h: { oid?: Uint8Array }) => {
+// RFC 5280 section 4.1.2.4 AttributeValue is ANY; non-string TLVs use the
+// raw arm from the shared ASN.1 ANY codec instead of flowing through the
+// DirectoryString text codec.
+export type CertAny = P.UnwrapCoder<typeof DERUtils.ASN1.AnyValue>;
+// RFC 7468 section 2 and section 3 ABNF allow single `-`/SP separators
+// inside labels but not at either end; the END label must match like OpenSSL.
+const pemRE =
+  /-----BEGIN ([\x21-\x2c\x2e-\x7e](?:[- ]?[\x21-\x2c\x2e-\x7e])*)-----([\s\S]*?)-----END \1-----/g;
+// The X.509 hash tables below are derived from hash-function metadata, so
+// hashes without a DER OID are rejected here instead of producing incomplete
+// OID maps.
+const hashOid = (h: TArg<{ oid?: Uint8Array }>) => {
   if (!h.oid) throw new Error('hash.oid is missing');
   return DERUtils.ASN1.OID.decode(h.oid);
-};
-const OID_NAME_RE = /^[0-9]+(?:\.[0-9]+)+$/;
-const oidName = (m: Record<string, string>, oid: string): string => m[oid] || `OID:${oid}`;
-const oidValue = (m: Record<string, string>, v: string, what: string): string => {
-  if (m[v]) return m[v];
-  if (v.startsWith('OID:')) return v.slice(4);
-  if (OID_NAME_RE.test(v)) return v;
-  throw new Error(`unknown ${what} ${v}`);
 };
 /**
  * Extracts all PEM blocks from a text blob.
@@ -318,100 +325,107 @@ const oidValue = (m: Record<string, string>, v: string, what: string): string =>
  * -----END DATA-----`);
  * ```
  */
-export const pemBlocks = (text: string): PemBlock[] => {
+export const pemBlocks = (text: string): TRet<PemBlock[]> => {
   const out: PemBlock[] = [];
+  // PEM files may contain multiple textual encoding instances; this helper
+  // preserves source order and only normalizes whitespace inside each base64
+  // body before strict decode.
   for (const m of text.matchAll(pemRE)) {
     const tag = m[1].trim();
     const b64 = m[2].trim();
     if (!tag || !b64) continue;
     out.push({ tag, b64, der: base64.decode(b64.replace(/\s+/g, '')) });
   }
-  return out;
+  return out as TRet<PemBlock[]>;
 };
 
 const onePem = (text: string, tag?: string) => {
   const all = pemBlocks(text);
   if (!all.length) throw new Error('no PEM blocks found');
+  // This helper is intentionally a selector: it returns the first PEM block, or
+  // the first block with a matching tag, and leaves duplicate/ambiguity handling
+  // to callers that need full bundle awareness.
   if (!tag) return all[0];
   const hit = all.find((i) => i.tag === tag);
   if (!hit) throw new Error(`no PEM block with tag=${tag}`);
   return hit;
 };
 
-const bytesNum = (bytes: Uint8Array): bigint => BigInt(`0x${bytesToHex(bytes) || '0'}`);
-const explicitCurve = (
-  data: unknown
-):
-  | {
-      fieldId: { info: { TAG: 'primeField'; data: bigint } };
-      curve: { a: Uint8Array; b: Uint8Array };
-      base: Uint8Array;
-      order: bigint;
-      cofactor?: bigint;
-    }
-  | undefined => {
-  if (!data || typeof data !== 'object') return;
-  const d = data as Record<string, unknown>;
-  const fieldId = d.fieldId as Record<string, unknown> | undefined;
+const ecParamCurve = (d: DERECParams): CertCurve => {
+  // PKIX EC parameters are namedCurve-only, but private keys from OpenSSL may
+  // carry explicit parameters equivalent to a supported named curve.
+  if (d.TAG === 'namedCurve') {
+    const name = d.data;
+    return name && name in CMS_ALG && 'ec' in CMS_ALG[name as AlgKey] ? name : d.data;
+  }
+  if (d.TAG === 'implicitCurve') return 'implicitCurve';
+  const data = d.data;
+  if (!data || typeof data !== 'object') return 'specifiedCurve';
+  const raw = data as Record<string, unknown>;
+  const fieldId = raw.fieldId as Record<string, unknown> | undefined;
   const info = fieldId?.info as Record<string, unknown> | undefined;
-  const curve = d.curve as Record<string, unknown> | undefined;
-  if (info?.TAG !== 'primeField' || typeof info.data !== 'bigint') return;
-  if (!(curve?.a instanceof Uint8Array) || !(curve?.b instanceof Uint8Array)) return;
-  if (!(d.base instanceof Uint8Array) || typeof d.order !== 'bigint') return;
-  if (d.cofactor !== undefined && typeof d.cofactor !== 'bigint') return;
-  return {
-    fieldId: { info: { TAG: 'primeField', data: info.data } },
-    curve: { a: curve.a, b: curve.b },
-    base: d.base,
-    order: d.order,
-    cofactor: d.cofactor as bigint | undefined,
-  };
-};
-const explicitCurveName = (data: unknown): Curve | undefined => {
-  const d = explicitCurve(data);
-  if (!d) return;
+  const curve = raw.curve as Record<string, unknown> | undefined;
+  if (info?.TAG !== 'primeField' || typeof info.data !== 'bigint') return 'specifiedCurve';
+  if (!isBytes(curve?.a) || !isBytes(curve?.b))
+    return 'specifiedCurve';
+  if (!isBytes(raw.base) || typeof raw.order !== 'bigint') return 'specifiedCurve';
+  if (raw.cofactor !== undefined && typeof raw.cofactor !== 'bigint') return 'specifiedCurve';
   // OpenSSL can serialize a standard EC key with explicit domain parameters while the
   // matching cert/SPKI keeps the named-curve OID, so normalize equivalent parameters here.
-  for (const curve in CurveOID) {
-    const name = curve as Curve;
-    const known = CMS_ALG[name].ec.Point.CURVE();
-    if (d.fieldId.info.data !== known.p) continue;
-    if (bytesNum(d.curve.a) !== known.a || bytesNum(d.curve.b) !== known.b) continue;
-    if (d.order !== known.n) continue;
-    if (d.cofactor !== undefined && d.cofactor !== known.h) continue;
-    const base = CMS_ALG[name].ec.Point.BASE;
-    if (!equalBytes(d.base, base.toBytes(false)) && !equalBytes(d.base, base.toBytes(true)))
+  for (const name in CMS_ALG) {
+    const alg = CMS_ALG[name as AlgKey];
+    if (!('ec' in alg)) continue;
+    const curveName = name as Curve;
+    const known = alg.ec.Point.CURVE();
+    if (info.data !== known.p) continue;
+    if (
+      BigInt(`0x${bytesToHex(curve.a) || '0'}`) !== known.a ||
+      BigInt(`0x${bytesToHex(curve.b) || '0'}`) !== known.b
+    )
       continue;
-    return name;
+    if (raw.order !== known.n) continue;
+    if (raw.cofactor !== undefined && raw.cofactor !== known.h) continue;
+    const base = alg.ec.Point.BASE;
+    if (!equalBytes(raw.base, base.toBytes(false)) && !equalBytes(raw.base, base.toBytes(true)))
+      continue;
+    return curveName;
   }
-  return;
+  return 'specifiedCurve';
 };
-const ecParamCurve = (d: DERECParams): CertCurve => {
-  if (d.TAG === 'namedCurve') return curveOID(d.data) as CertCurve;
-  if (d.TAG === 'implicitCurve') return 'OID:implicitCurve';
-  return explicitCurveName(d.data) || 'OID:specifiedCurve';
-};
-const spkiCurve = (k: DERSPKIKey): CertCurve => {
+const spkiCurve = (k: TArg<DERSPKIKey>): CertCurve => {
+  // SubjectPublicKeyInfo callers use this as the EC-only unwrap layer; non-EC
+  // SPKI algorithms fail here, while forbidden EC parameter variants still
+  // propagate as sentinel strings from `ecParamCurve()`.
   if (k.algorithm.info.TAG !== 'EC')
     throw new Error(`expected EC SPKI key, got ${k.algorithm.info.TAG}`);
   return ecParamCurve(k.algorithm.info.data);
 };
-// treeshake: these shared X.509 helpers survive through property reads unless the declaration itself is pure.
-const SpkiKey = /* @__PURE__ */ (() => DERUtils.SPKI as P.CoderType<DERSPKIKey>)();
-/** Supported certificate/key curves. */
-export type Curve =
-  | 'P-256'
-  | 'P-384'
-  | 'P-521'
-  | 'brainpoolP256r1'
-  | 'brainpoolP384r1'
-  | 'brainpoolP512r1';
 type EdKind = 'Ed25519' | 'Ed448';
-type HashAlg = ((m: Uint8Array) => Uint8Array) & { oid?: Uint8Array };
+type HashAlg = ((m: TArg<Uint8Array>) => TRet<Uint8Array>) & { oid?: Uint8Array };
+type EcSignOpts = {
+  prehash?: boolean;
+  format?: 'der';
+  lowS?: boolean;
+  extraEntropy?: boolean | Uint8Array;
+};
+type EcVerifyOpts = { prehash?: boolean; format?: 'der'; lowS?: boolean };
+// RFC 8419 section 3.1: CMS Ed448 with signedAttrs uses SHAKE256 with
+// a 512-bit output, identified by id-shake256-len with INTEGER 512 params.
+// OpenSSL 3.5.4 only emits id-shake256 when forced with `-md shake256` and
+// cannot verify id-shake256-len, but this compact path follows RFC 8419 section 3.1.
+const shake256_512: HashAlg = /* @__PURE__ */ (() =>
+  // Keep the Ed448 CMS hash object lazy so pemBlocks/X509-only treeshake
+  // bundles do not retain the id-shake256-len OID encoder call.
+  Object.assign(
+    (m: TArg<Uint8Array>): TRet<Uint8Array> => shake256(m, { dkLen: 64 }) as TRet<Uint8Array>,
+    {
+      oid: DERUtils.ASN1.OID.encode('shake256_512'),
+    }
+  ))();
 type EcAlg = {
   ec: {
-    sign: (m: Uint8Array, sk: Uint8Array, o?: any) => Uint8Array;
-    verify: (sig: Uint8Array, m: Uint8Array, pk: Uint8Array, o?: any) => boolean;
+    sign: (m: Uint8Array, sk: Uint8Array, o?: EcSignOpts) => Uint8Array;
+    verify: (sig: Uint8Array, m: Uint8Array, pk: Uint8Array, o?: EcVerifyOpts) => boolean;
     getPublicKey: (sk: Uint8Array, compressed?: boolean) => Uint8Array;
     lengths: { signature?: number };
     Point: {
@@ -421,6 +435,7 @@ type EcAlg = {
   };
   sigOid: string;
   hash: HashAlg;
+  digestParams?: () => TLVNode;
 };
 type EdAlg = {
   ed: {
@@ -430,103 +445,140 @@ type EdAlg = {
   };
   sigOid: string;
   hash: HashAlg;
+  digestParams?: () => TLVNode;
 };
 type CmsAlg = EcAlg | EdAlg;
+const ED448_DIGEST_PARAMS = /* @__PURE__ */ (() =>
+  DERUtils.ASN1.TLVNode.decode(DERUtils.ASN1.Integer.encode(SHAKE256_512_BITS)))();
+// These rows drive both the signatureAlgorithm OID and the default CMS
+// digestAlgorithm/messageDigest conventions during compact signing, so
+// Ed25519 and Ed448 must follow RFC 8419's per-curve digest rules.
 const CMS_ALG = {
-  'P-256': { ec: p256, sigOid: '1.2.840.10045.4.3.2', hash: sha256 },
-  'P-384': { ec: p384, sigOid: '1.2.840.10045.4.3.3', hash: sha384 },
-  'P-521': { ec: p521, sigOid: '1.2.840.10045.4.3.4', hash: sha512 },
+  'P-256': { ec: p256, sigOid: 'ecdsa-with-SHA256', hash: sha256 },
+  'P-384': { ec: p384, sigOid: 'ecdsa-with-SHA384', hash: sha384 },
+  'P-521': { ec: p521, sigOid: 'ecdsa-with-SHA512', hash: sha512 },
   brainpoolP256r1: {
     ec: brainpoolP256r1,
-    sigOid: '1.2.840.10045.4.3.2',
+    sigOid: 'ecdsa-with-SHA256',
     hash: sha256,
   },
   brainpoolP384r1: {
     ec: brainpoolP384r1,
-    sigOid: '1.2.840.10045.4.3.3',
+    sigOid: 'ecdsa-with-SHA384',
     hash: sha384,
   },
   brainpoolP512r1: {
     ec: brainpoolP512r1,
-    sigOid: '1.2.840.10045.4.3.4',
+    sigOid: 'ecdsa-with-SHA512',
     hash: sha512,
   },
   Ed25519: {
     ed: ed25519,
-    sigOid: '1.3.101.112',
+    sigOid: 'Ed25519',
     hash: sha512,
   },
   Ed448: {
     ed: ed448,
-    sigOid: '1.3.101.113',
-    hash: sha512,
+    sigOid: 'Ed448',
+    hash: shake256_512,
+    digestParams: () => ED448_DIGEST_PARAMS,
   },
 } as const satisfies Record<Curve, EcAlg> & Record<EdKind, EdAlg>;
 type AlgKey = Curve | EdKind;
 // RFC 5754 section 2: this absent-or-NULL parameters rule applies to SHA-2
 // AlgorithmIdentifiers specifically, so this set is intentionally SHA2-only
 // (not a generic all-hashes OID table).
-const SHA2_OID = {
-  '2.16.840.1.101.3.4.2.4': true,
-  '2.16.840.1.101.3.4.2.1': true,
-  '2.16.840.1.101.3.4.2.2': true,
-  '2.16.840.1.101.3.4.2.3': true,
-} as const;
-const ASN1_NULL = /* @__PURE__ */ Uint8Array.from([0x05, 0x00]);
+const SHA2_DIGESTS = /* @__PURE__ */ new Set(['sha224', 'sha256', 'sha384', 'sha512']);
+const digestParamsEqual = (
+  a: AlgorithmIdentifierCodec['params'],
+  b: AlgorithmIdentifierCodec['params']
+): boolean => {
+  if (!a || !b) return !a && !b;
+  return equalBytes(DERUtils.ASN1.TLVNode.encode(a), DERUtils.ASN1.TLVNode.encode(b));
+};
+// This only models RFC 5754's SHA-2 absent-vs-NULL compatibility rule;
+// stricter digestAlgorithm parameter requirements still need caller checks.
 const digestAlgParamsOk = (a: AlgorithmIdentifierCodec): boolean => {
-  const oid = algOID(a.algorithm);
-  if (!(oid in SHA2_OID)) return true;
-  const p = a.params ? TLVNodeCodec.encode(a.params) : undefined;
+  const id = oidName.decode(oidName.encode(a.algorithm));
+  if (!SHA2_DIGESTS.has(id)) return true;
+  const p = a.params ? DERUtils.ASN1.TLVNode.encode(a.params) : undefined;
   return !p || equalBytes(p, ASN1_NULL);
 };
 const digestAlgEqual = (a: AlgorithmIdentifierCodec, b: AlgorithmIdentifierCodec): boolean => {
-  const aOid = algOID(a.algorithm);
-  const bOid = algOID(b.algorithm);
+  const aOid = oidName.decode(oidName.encode(a.algorithm));
+  const bOid = oidName.decode(oidName.encode(b.algorithm));
   if (aOid !== bOid) return false;
+  // RFC 5754 SHA-2 absent-vs-NULL equivalence is only a matching rule;
+  // profile-specific digestAlgorithms validation still needs caller checks.
   if (!digestAlgParamsOk(a) || !digestAlgParamsOk(b)) return false;
-  const aParams = a.params ? TLVNodeCodec.encode(a.params) : undefined;
-  const bParams = b.params ? TLVNodeCodec.encode(b.params) : undefined;
-  if (aOid in SHA2_OID) return true;
+  const aParams = a.params ? DERUtils.ASN1.TLVNode.encode(a.params) : undefined;
+  const bParams = b.params ? DERUtils.ASN1.TLVNode.encode(b.params) : undefined;
+  if (SHA2_DIGESTS.has(aOid)) return true;
   if (!aParams || !bParams) return !aParams && !bParams;
   return equalBytes(aParams, bParams);
 };
+const checkEdDigestParams = (
+  kind: EdKind | undefined,
+  a: AlgorithmIdentifierCodec,
+  label: string,
+  signedAttrs = true
+): void => {
+  if (!kind) return;
+  // RFC 8419 sections 3.1 and 3.2 deliberately use different Ed448
+  // digestAlgorithm identifiers depending on whether signedAttrs are present.
+  const section = signedAttrs ? '3.1' : '3.2';
+  const expected = kind === 'Ed448' && !signedAttrs ? 'shake256' : hashOid(CMS_ALG[kind].hash);
+  const got = oidName.decode(oidName.encode(a.algorithm));
+  if (got !== expected)
+    throw new Error(
+      `${kind} ${label} digestAlgorithm must be ${expected} by RFC 8419 section ${section}, got ${got}`
+    );
+  // RFC 8419 sections 3.1/3.2 fix EdDSA CMS digestAlgorithm parameters.
+  // OpenSSL 3.5.4 forced Ed25519 CMS generation with `-md sha512` emits absent params too.
+  if (kind === 'Ed25519' && a.params)
+    throw new Error(
+      `${kind} ${label} digestAlgorithm params must be absent by RFC 8419 section ${section}`
+    );
+  if (kind === 'Ed448' && !signedAttrs && a.params)
+    throw new Error(
+      `${kind} ${label} digestAlgorithm params must be absent by RFC 8419 section 3.2`
+    );
+  if (kind === 'Ed448' && !signedAttrs) return;
+  if (kind === 'Ed448' && !digestParamsEqual(a.params, CMS_ALG.Ed448.digestParams()))
+    throw new Error(
+      `${kind} ${label} digestAlgorithm params must be INTEGER 512 by RFC 8419 section 3.1`
+    );
+};
+// EC-only projection helper over CMS_ALG after callers narrow away EdDSA rows.
 const ecCurve = (curve: Curve) => CMS_ALG[curve].ec;
+// Narrow decoded certificate curve labels down to CMS_ALG's EC rows;
+// unknown OID sentinels stay false until a concrete implementation exists.
 const isSignCurve = (curve: CertCurve): curve is Curve =>
   curve in CMS_ALG && 'ec' in CMS_ALG[curve as AlgKey];
+// Reverse lookup by signature OID only recovers hash/family metadata;
+// EC curve selection still comes from SPKI because ECDSA OIDs are shared.
 const CMS_ALG_BY_SIG_OID = /* @__PURE__ */ (() =>
-  Object.fromEntries(Object.values(CMS_ALG).map((v) => [v.sigOid, v])) as Record<
-    CmsAlg['sigOid'],
-    CmsAlg
-  >)();
-const CMS_HASH_BY_OID = /* @__PURE__ */ (() =>
-  Object.fromEntries([sha256, sha384, sha512].map((h) => [hashOid(h), h])) as Record<
-    string,
-    typeof sha256
-  >)();
-const HASH_NAME_TO_OID = /* @__PURE__ */ Object.fromEntries(
-  /* @__PURE__ */ Object.entries({ sha224, sha256, sha384, sha512 }).map(([name, h]) => [
-    name,
-    hashOid(h),
-  ])
-) as Record<string, string>;
-const ALG_NAME_TO_OID = /* @__PURE__ */ (() =>
   ({
-    ecPublicKey: '1.2.840.10045.2.1',
-    'ecdsa-with-SHA256': CMS_ALG['P-256'].sigOid,
-    'ecdsa-with-SHA384': CMS_ALG['P-384'].sigOid,
-    'ecdsa-with-SHA512': CMS_ALG['P-521'].sigOid,
-    Ed25519: CMS_ALG.Ed25519.sigOid,
-    Ed448: CMS_ALG.Ed448.sigOid,
-    ...HASH_NAME_TO_OID,
-  }) as const)();
-const ALG_OID_TO_NAME = /* @__PURE__ */ Object.fromEntries(
-  /* @__PURE__ */ Object.entries(ALG_NAME_TO_OID).map(([k, v]) => [v, k])
-) as Record<string, string>;
-const algOID = (v: string): string =>
-  oidValue(ALG_NAME_TO_OID as Record<string, string>, v, 'algorithm');
-const pkcs8Attrs = (k: DERPKCS8Key): Pkcs8Attr[] | undefined =>
-  k.attributes?.map((raw) => PKCS8Attr.decode(raw));
-const pkcs8FromPem = (pem: string, der: Uint8Array): PrivateKey => {
+    ...Object.fromEntries(Object.values(CMS_ALG).map((v) => [v.sigOid, v])),
+    // RFC 5754 section 3.3 defines ECDSA-with-SHA224; the EC curve still comes from SPKI.
+    'ecdsa-with-SHA224': { ec: p256, sigOid: 'ecdsa-with-SHA224', hash: sha224 },
+  }) as Record<CmsAlg['sigOid'], CmsAlg>)();
+// Keep the executable digest map in sync with public digestAlgorithm override
+// names in `oidName`; missing rows turn accepted names into runtime
+// "unsupported digestAlgorithm" failures in cmsSignCtx().
+const CMS_HASH_BY_OID = /* @__PURE__ */ (() =>
+  Object.fromEntries(
+    [sha224, sha256, sha384, sha512, shake256_512].map((h) => [hashOid(h), h])
+  ) as Record<string, HashAlg>)();
+// Decode optional PKCS#8 attributes as raw Attribute OID + SET OF value TLVs;
+// interpretation of individual attribute semantics stays above this helper.
+const pkcs8Attrs = (k: TArg<DERPKCS8Key>): TRet<Pkcs8Attr[] | undefined> =>
+  k.attributes?.map((raw) =>
+    (DERUtils.ASN1.Attribute as P.CoderType<Pkcs8Attr>).decode(raw)
+  ) as TRet<Pkcs8Attr[] | undefined>;
+// Keep the original PEM/DER bundle alongside the decoded PKCS#8, and
+// eagerly decode the inner RSAPrivateKey only for the RSA branch.
+const pkcs8FromPem = (pem: string, der: TArg<Uint8Array>): TRet<PrivateKey> => {
   const key = DERUtils.PKCS8.decode(der);
   const t = key.algorithm.info.TAG;
   if (t === 'rsaEncryption') {
@@ -538,58 +590,80 @@ const pkcs8FromPem = (pem: string, der: Uint8Array): PrivateKey => {
       attributes: pkcs8Attrs(key),
       key,
       rsa: DERUtils.RSAPrivateKey.decode(key.privateKey.data),
-    };
+    } as TRet<PrivateKey>;
   }
-  return { pem, der, attributes: pkcs8Attrs(key), key };
+  return { pem, der, attributes: pkcs8Attrs(key), key } as TRet<PrivateKey>;
 };
+// Extract EC/Ed signing material from already-decoded PKCS#8; optional public
+// keys are convenience data here, and later caller paths still verify or
+// recompute key/certificate consistency separately.
 const pkcs8SignKey = (
-  k: DERPKCS8Key
-):
+  k: TArg<DERPKCS8Key>
+): TRet<
   | { kind: 'EC'; curve: CertCurve; secretKey: Uint8Array; publicKey?: Uint8Array }
-  | { kind: EdKind; secretKey: Uint8Array; publicKey: Uint8Array } => {
-  const tag = k.algorithm.info.TAG;
+  | { kind: EdKind; secretKey: Uint8Array; publicKey: Uint8Array }
+> => {
+  const key = k as DERPKCS8Key;
+  const tag = key.algorithm.info.TAG;
   if (tag === 'EC') {
-    const curve = ecParamCurve(k.algorithm.info.data);
-    if (k.privateKey.TAG !== 'struct')
+    const curve = ecParamCurve(key.algorithm.info.data);
+    if (key.privateKey.TAG !== 'struct')
       throw new Error('EC PKCS#8: expected structured ECPrivateKey payload');
-    const s = k.privateKey.data;
+    const s = key.privateKey.data;
     if (s.parameters && ecParamCurve(s.parameters) !== curve)
       throw new Error('EC PKCS#8: algorithm and key parameters mismatch');
-    return { kind: 'EC', curve, secretKey: s.privateKey, publicKey: k.publicKey || s.publicKey };
+    return {
+      kind: 'EC',
+      curve,
+      secretKey: s.privateKey,
+      publicKey: key.publicKey || s.publicKey,
+    } as TRet<{ kind: 'EC'; curve: CertCurve; secretKey: Uint8Array; publicKey?: Uint8Array }>;
   }
   if (tag === 'Ed25519' || tag === 'Ed448') {
-    if (k.privateKey.TAG !== 'raw')
+    if (key.privateKey.TAG !== 'raw')
       throw new Error(`${tag} PKCS#8: expected raw private key payload`);
+    // RFC 8032 sections 5.1.5/5.2.5 derive Ed public keys from the private
+    // seed, and RFC 8410 Appendix A calls provided-public-key disagreement a
+    // key mismatch error. Match OpenSSL by ignoring the optional PKCS#8 copy
+    // here; CMS signing below uses the seed, so certificate matching must too.
     return {
       kind: tag,
-      secretKey: k.privateKey.data,
-      publicKey: k.publicKey || CMS_ALG[tag].ed.getPublicKey(k.privateKey.data),
-    };
+      secretKey: key.privateKey.data,
+      publicKey: CMS_ALG[tag].ed.getPublicKey(key.privateKey.data),
+    } as TRet<{ kind: EdKind; secretKey: Uint8Array; publicKey: Uint8Array }>;
   }
   throw new Error(`expected EC/Ed PKCS#8 key, got ${tag}`);
 };
 
-const certItem = (der: Uint8Array, opts: BEROpts = {}): Cert =>
+// Internal bare-certificate decode path: normalize optional BER once, then
+// feed the canonical DER bytes into the X.509 Certificate coder.
+const certItem = (der: TArg<Uint8Array>, opts: BEROpts = {}): Cert =>
   X509C.Certificate.decode(berView(der, opts).der);
-const certSpkiKey = (spki: TBSCertificateCodec['spki']): DERSPKIKey =>
-  SpkiKey.decode(X509SPKI.encode(spki));
+// Re-encode certificate SubjectPublicKeyInfo through the shared DER SPKI coder
+// so certificate-key handling stays aligned with convert.ts.
+const certSpkiKey = (spki: TArg<TBSCertificateCodec['spki']>): TRet<DERSPKIKey> =>
+  DERUtils.SPKI.decode(X509SPKI.encode(spki as TBSCertificateCodec['spki'])) as TRet<DERSPKIKey>;
 
-const matchCertKey = (cert: Cert, key: PrivateKey): boolean => {
+// Certificate/private-key matching is limited to the EC/Ed paths this module
+// can actually sign with; PKCS#8 embedded public keys are only convenience
+// copies, while later signing still uses the secretKey bytes.
+const matchCertKey = (cert: Cert, key: TArg<PrivateKey>): boolean => {
+  const priv = key as PrivateKey;
   const k = certSpkiKey(cert.tbs.spki);
   const tag = k.algorithm.info.TAG;
   if (tag === 'EC') {
-    if (key.key.algorithm.info.TAG !== 'EC') return false;
+    if (priv.key.algorithm.info.TAG !== 'EC') return false;
     const curve = spkiCurve(k);
     if (!isSignCurve(curve)) return false;
-    const kk = pkcs8SignKey(key.key);
+    const kk = pkcs8SignKey(priv.key);
     if (kk.kind !== 'EC' || curve !== kk.curve) return false;
     const cmp = ecCurve(curve).getPublicKey(kk.secretKey, false);
     const cmpC = ecCurve(curve).getPublicKey(kk.secretKey, true);
     return equalBytes(k.publicKey, cmp) || equalBytes(k.publicKey, cmpC);
   }
   if (tag === 'Ed25519' || tag === 'Ed448') {
-    if (key.key.algorithm.info.TAG !== tag) return false;
-    const kk = pkcs8SignKey(key.key);
+    if (priv.key.algorithm.info.TAG !== tag) return false;
+    const kk = pkcs8SignKey(priv.key);
     if (kk.kind !== tag) return false;
     return (
       equalBytes(k.publicKey, kk.publicKey) ||
@@ -601,124 +675,22 @@ const matchCertKey = (cert: Cert, key: PrivateKey): boolean => {
 
 type BERDoc = ReturnType<typeof DERUtils.BER.decode>;
 type BEROpts = { allowBER?: boolean };
-const berView = (src: Uint8Array, opts: BEROpts = {}): BERDoc =>
-  DERUtils.BER.decode(src, { allowBER: !!opts.allowBER });
-const ASN1 = /* @__PURE__ */ (() => DERUtils.ASN1)();
-const DERLen = P.wrap({
-  encodeStream(w, len: number) {
-    if (!Number.isSafeInteger(len) || len < 0)
-      throw new Error(`expected non-negative length, got ${len}`);
-    if (len < 0x80) return w.byte(len);
-    const a: number[] = [];
-    for (let n = len; n > 0; n >>= 8) a.unshift(n & 0xff);
-    w.byte(0x80 | a.length);
-    w.bytes(Uint8Array.from(a));
-  },
-  decodeStream(r): number {
-    const a = r.byte();
-    if (a < 0x80) return a;
-    const n = a & 0x7f;
-    if (!n) throw new Error('DER indefinite length is not supported');
-    const lb = r.bytes(n);
-    let len = 0;
-    for (const b of lb) len = (len << 8) | b;
-    if (len < 0x80) throw new Error('DER non-minimal length encoding');
-    return len;
-  },
-}) satisfies P.CoderType<number>;
-const TLV = P.struct({ tag: P.U8, value: P.bytes(DERLen) });
-const TLVNodeCodec = P.wrap({
-  encodeStream(w, n: TLVNode) {
-    const value = n.children
-      ? concatBytes(...n.children.map((i) => TLVNodeCodec.encode(i)))
-      : hexToBytes(n.valueHex || '');
-    w.bytes(TLV.encode({ tag: n.tag, value }));
-  },
-  decodeStream(r): TLVNode {
-    const t = TLV.decodeStream(r);
-    if (t.tag & 0x20) {
-      const items: TLVNode[] = [];
-      let at = 0;
-      while (at < t.value.length) {
-        const src = t.value.slice(at);
-        if (src.length < 2) throw new Error('constructed TLV child truncated');
-        const lb = src[1];
-        if (lb < 0x80) {
-          const total = 2 + lb;
-          items.push(TLVNodeCodec.decode(src.slice(0, total)));
-          at += total;
-          continue;
-        }
-        const n = lb & 0x7f;
-        if (!n) throw new Error('DER indefinite length is not supported');
-        if (src.length < 2 + n) throw new Error('constructed TLV child length truncated');
-        let len = 0;
-        for (let i = 0; i < n; i++) len = (len << 8) | src[2 + i];
-        if (len < 0x80) throw new Error('DER non-minimal length encoding');
-        const total = 2 + n + len;
-        items.push(TLVNodeCodec.decode(src.slice(0, total)));
-        at += total;
-      }
-      if (at !== t.value.length) throw new Error('constructed TLV child decode mismatch');
-      return { tag: t.tag, children: items };
-    }
-    return { tag: t.tag, valueHex: bytesToHex(t.value) };
-  },
-});
-// Encoded ASN.1 ANY passthrough: consume exactly one TLV from stream and keep its canonical bytes.
-// This cannot be `P.bytes(null)` (greedy, would eat the rest of parent structure) and cannot be
-// plain schema decode because many ANY values stay unresolved until OID-specific dispatch later.
-const RawTLV = /* @__PURE__ */ P.wrap({
-  encodeStream(w, v: Uint8Array) {
-    const t = TLV.decode(v);
-    w.bytes(TLV.encode(t));
-  },
-  decodeStream(r): Uint8Array {
-    return TLV.encode(TLV.decodeStream(r));
-  },
-});
-const ASCII = /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
-  encode: (bytes: Uint8Array): string => {
-    let out = '';
-    for (let i = 0; i < bytes.length; i++) {
-      const c = bytes[i];
-      if (c > 0x7f)
-        throw new Error(`bytes contain non-ASCII value 0x${c.toString(16)} at position ${i}`);
-      out += String.fromCharCode(c);
-    }
-    return out;
-  },
-  decode: asciiToBytes,
-}) satisfies P.CoderType<string>;
-type ASN1Tagged<T> = P.CoderType<T> & {
-  tagByte: number;
-  tagBytes: number[];
-  constructed: number;
-  inner: P.CoderType<T>;
-};
-const tagged = <T>(tag: number, inner: P.CoderType<T>): ASN1Tagged<T> => {
-  const coder = P.wrap({
-    encodeStream(w, v: T) {
-      w.bytes(TLV.encode({ tag, value: inner.encode(v) }));
-    },
-    decodeStream(r): T {
-      const t = TLV.decodeStream(r);
-      if (t.tag !== tag)
-        throw new Error(`expected tag 0x${tag.toString(16)}, got 0x${t.tag.toString(16)}`);
-      return inner.decode(t.value);
-    },
-  });
-  return { tagByte: tag, tagBytes: [tag], constructed: 0, inner, ...coder };
-};
-const UTCTime: ASN1Tagged<string> = /* @__PURE__ */ tagged(0x17, ASCII);
-const GeneralizedTime: ASN1Tagged<string> = /* @__PURE__ */ tagged(0x18, ASCII);
-const Time: P.CoderType<{ TAG: 'utc'; data: string } | { TAG: 'generalized'; data: string }> =
-  /* @__PURE__ */ ASN1.choice({ utc: UTCTime, generalized: GeneralizedTime });
+// Shared BER normalization entry point for X.509/CMS decode surfaces: callers
+// must opt in to BER here, and downstream schema coders consume canonical DER.
+const berView = (src: TArg<Uint8Array>, opts: BEROpts = {}): TRet<BERDoc> =>
+  DERUtils.BER.decode(src, { allowBER: !!opts.allowBER }) as TRet<BERDoc>;
 // RFC 5280 section 4.1.2.5.1 and 4.1.2.5.2: cert validity uses Zulu time and fixed second precision.
+// This regex only enforces the shared UTC second-precision text shape;
+// numeric field ranges and calendar rollover checks happen in `X509Time.decode`.
 const TimeRE = /^(\d{2}|\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/;
-const X509Time: { decode: (der: Uint8Array) => number; encode: (ts: number) => Uint8Array } = {
-  decode: (der: Uint8Array): number => {
-    const t = Time.decode(der);
+const X509Time: {
+  decode: (der: TArg<Uint8Array>) => number;
+  encode: (ts: number) => TRet<Uint8Array>;
+} = {
+  decode: (der: TArg<Uint8Array>): number => {
+    // Raw ASN.1 CHOICE only: decoders must accept either arm, while canonical
+    // year-range selection and RFC 5280 time-profile checks happen here.
+    const t = DERUtils.ASN1.Time.decode(der);
     const m = TimeRE.exec(t.data);
     if (!m) throw new Error(`expected X509 time YY|YYYYMMDDHHMMSSZ, got ${t.data}`);
     const yRaw = m[1];
@@ -738,7 +710,12 @@ const X509Time: { decode: (der: Uint8Array) => number; encode: (ts: number) => U
     if (h > 23) throw new Error(`expected hour 00..23, got ${m[4]}`);
     if (mi > 59) throw new Error(`expected minute 00..59, got ${m[5]}`);
     if (s > 59) throw new Error(`expected second 00..59, got ${m[6]}`);
-    const ms = Date.UTC(y, mo - 1, d, h, mi, s);
+    const rawDate = new Date(0);
+    // Date.UTC treats years 0..99 as 1900..1999; RFC 5280 GeneralizedTime
+    // uses literal four-digit years, and OpenSSL accepts 0000..0099.
+    rawDate.setUTCFullYear(y, mo - 1, d);
+    rawDate.setUTCHours(h, mi, s, 0);
+    const ms = rawDate.getTime();
     const dt = new Date(ms);
     // RFC 5280 section 4.1.2.5: certificate time fields are exact UTC calendar components and must not roll over.
     if (
@@ -752,37 +729,43 @@ const X509Time: { decode: (der: Uint8Array) => number; encode: (ts: number) => U
       throw new Error(`invalid calendar date in X509 time: ${t.data}`);
     return Math.floor(ms / 1000);
   },
-  encode: (ts: number): Uint8Array => {
+  encode: (ts: number): TRet<Uint8Array> => {
     if (!Number.isFinite(ts)) throw new Error(`expected finite timestamp, got ${ts}`);
     const d = new Date(Math.floor(ts) * 1000);
     const pad2 = (n: number): string => `${n}`.padStart(2, '0');
     const pad4 = (n: number): string => `${n}`.padStart(4, '0');
     const y = d.getUTCFullYear();
+    // RFC 5280 / RFC 5652 GeneralizedTime uses the fixed `YYYY...` profile,
+    // so years outside 0000..9999 must be rejected before formatting.
+    if (!Number.isInteger(y) || y < 0 || y > 9999)
+      throw new Error(`expected X509 GeneralizedTime year 0000..9999, got ${y}`);
     const text =
       y >= 1950 && y <= 2049
         ? `${pad2(y % 100)}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`
         : `${pad4(y)}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`;
-    return (y >= 1950 && y <= 2049 ? UTCTime : GeneralizedTime).encode(text);
+    return (y >= 1950 && y <= 2049 ? DERUtils.ASN1.UTCTime : DERUtils.ASN1.GeneralizedTime).encode(
+      text
+    ) as TRet<Uint8Array>;
   },
 } as const;
-const timeEpoch = (time: P.UnwrapCoder<typeof Time>): number => X509Time.decode(Time.encode(time));
-const PKCS8Attr = /* @__PURE__ */ (() =>
-  ASN1.sequence({ oid: ASN1.OID, values: ASN1.set(RawTLV) }))();
-type NameValue =
-  | { TAG: 'utf8'; data: string }
-  | { TAG: 'printable'; data: string }
-  | { TAG: 'teletex'; data: string }
-  | { TAG: 'ia5'; data: string }
-  | { TAG: 'bmp'; data: string }
-  | { TAG: 'visible'; data: string }
-  | { TAG: 'numeric'; data: string };
-type NameCodec = { rdns: Array<Array<{ oid: string; value: NameValue }>> };
+// Canonicalize a decoded `Time` choice through the strict profile parser
+// before comparing certificate validity instants.
+const timeEpoch = (time: P.UnwrapCoder<typeof DERUtils.ASN1.Time>): number =>
+  X509Time.decode(DERUtils.ASN1.Time.encode(time));
+// Low-level PKCS#8 Attribute wrapper only: keep the OID plus raw SET OF
+// value TLVs here, and leave OID-specific attribute semantics to callers.
+type NameCodec = { rdns: Array<Array<{ oid: string; value: ASN1StringOrRaw }>> };
 type ValidityCodec = {
-  notBefore: P.UnwrapCoder<typeof Time>;
-  notAfter: P.UnwrapCoder<typeof Time>;
+  notBefore: P.UnwrapCoder<typeof DERUtils.ASN1.Time>;
+  notAfter: P.UnwrapCoder<typeof DERUtils.ASN1.Time>;
 };
-type ExtCodec = { oid: string; rest: Uint8Array };
-type AlgorithmIdentifierCodec = { algorithm: string; params: TLVNode | undefined };
+type ExtCodec = { oid: string; rest: StrictBytes };
+// RFC 5280 section 4.1.1.2 and RFC 5652 sections 10.1.1/10.1.2:
+// AlgorithmIdentifier parameters are OPTIONAL.
+// `params` keeps parsed ASN.1 ANY TLV when present; `undefined` means absent.
+// Keep known AlgorithmIdentifier OIDs user-friendly on the public surface,
+// but preserve unknown OIDs and raw params losslessly as raw dotted strings + TLVNode.
+type AlgorithmIdentifierCodec = P.UnwrapCoder<typeof DERUtils.ASN1.AlgorithmIdentifier>;
 type TBSCertificateCodec = {
   version: bigint | undefined;
   serial: bigint;
@@ -790,293 +773,176 @@ type TBSCertificateCodec = {
   issuer: NameCodec;
   validity: ValidityCodec;
   subject: NameCodec;
-  spki: { algorithm: AlgorithmIdentifierCodec; publicKey: Uint8Array };
-  issuerUniqueID: Uint8Array | undefined;
-  subjectUniqueID: Uint8Array | undefined;
+  spki: { algorithm: AlgorithmIdentifierCodec; publicKey: StrictBytes };
+  issuerUniqueID: P.UnwrapCoder<typeof DERUtils.ASN1.BitStringRaw> | undefined;
+  subjectUniqueID: P.UnwrapCoder<typeof DERUtils.ASN1.BitStringRaw> | undefined;
   extensions: { list: ExtCodec[] } | undefined;
 };
 type CertificateCodec = {
   tbs: TBSCertificateCodec;
   sigAlg: AlgorithmIdentifierCodec;
-  sig: Uint8Array;
+  sig: StrictBytes;
 };
-// RFC 5280 section 4.1.1.2 and RFC 5652 sections 10.1.1/10.1.2: AlgorithmIdentifier parameters are OPTIONAL.
-// `params` keeps parsed ASN.1 ANY TLV when present; `undefined` means absent.
-const HasTail = /* @__PURE__ */ P.wrap({
-  encodeStream() {},
-  decodeStream(r): boolean {
-    return !!r.leftBytes;
-  },
-}) satisfies P.CoderType<boolean>;
-const AlgorithmIdentifier = /* @__PURE__ */ (() =>
-  P.apply(
-    /* @__PURE__ */ ASN1.sequence({
-      algorithm: ASN1.OID,
-      params: /* @__PURE__ */ P.optional(HasTail, TLVNodeCodec),
-    }),
-    {
-      encode: (x: {
-        algorithm: string;
-        params: TLVNode | undefined;
-      }): AlgorithmIdentifierCodec => ({
-        algorithm: oidName(ALG_OID_TO_NAME, x.algorithm),
-        params: x.params,
-      }),
-      decode: (
-        x: AlgorithmIdentifierCodec
-      ): { algorithm: string; params: TLVNode | undefined } => ({
-        algorithm: algOID(x.algorithm),
-        params: x.params,
-      }),
-    }
-  ))() satisfies P.CoderType<AlgorithmIdentifierCodec>;
-const IA5 = /* @__PURE__ */ tagged(0x16, ASCII);
-const UTF8_DECODER = /* @__PURE__ */ new TextDecoder('utf-8', { fatal: true });
-const UTF8_ENCODER = /* @__PURE__ */ new TextEncoder();
-const UTF8String = /* @__PURE__ */ tagged(
-  0x0c,
-  /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
-    // X.509 UTF8String must be valid UTF-8; reject malformed byte sequences.
-    encode: (b: Uint8Array): string => UTF8_DECODER.decode(b),
-    decode: (s: string): Uint8Array => UTF8_ENCODER.encode(s),
-  }) satisfies P.CoderType<string>
-);
-const PrintableString: ASN1Tagged<string> = /* @__PURE__ */ tagged(
-  0x13,
-  /* @__PURE__ */ P.validate(ASCII, (s: string) => {
-    if (!/^[A-Za-z0-9 '()+,./:=?-]*$/.test(s))
-      throw new Error(`invalid PrintableString: ${JSON.stringify(s)}`);
-    return s;
-  })
-);
-// TeletexString (T61String) is treated as a byte-preserving 0x00..0xff mapping for interoperability.
-// Strict T.61 character-set semantics are intentionally not enforced here.
-const TeletexString: ASN1Tagged<string> = /* @__PURE__ */ tagged(
-  0x14,
-  /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
-    encode: (b: Uint8Array): string => {
-      let out = '';
-      for (let i = 0; i < b.length; i++) out += String.fromCharCode(b[i]);
-      return out;
-    },
-    decode: (s: string): Uint8Array => {
-      const out = new Uint8Array(s.length);
-      for (let i = 0; i < s.length; i++) {
-        const c = s.charCodeAt(i);
-        if (c > 0xff)
-          throw new Error(`expected latin1 character, got U+${c.toString(16).toUpperCase()}`);
-        out[i] = c;
-      }
-      return out;
-    },
-  }) satisfies P.CoderType<string>
-);
-const VisibleString = /* @__PURE__ */ tagged(0x1a, ASCII);
-const NumericString: ASN1Tagged<string> = /* @__PURE__ */ tagged(
-  0x12,
-  /* @__PURE__ */ P.validate(ASCII, (s: string) => {
-    if (!/^[0-9 ]*$/.test(s)) throw new Error(`invalid NumericString: ${JSON.stringify(s)}`);
-    return s;
-  })
-);
-const BMPString = /* @__PURE__ */ tagged(
-  0x1e,
-  /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
-    encode: (b: Uint8Array): string => {
-      if (b.length % 2) throw new Error('BMPString length must be even');
-      let out = '';
-      for (let i = 0; i < b.length; i += 2) out += String.fromCharCode((b[i] << 8) | b[i + 1]);
-      return out;
-    },
-    decode: (s: string): Uint8Array => {
-      const out = new Uint8Array(s.length * 2);
-      for (let i = 0; i < s.length; i++) {
-        const c = s.charCodeAt(i);
-        out[i * 2] = c >>> 8;
-        out[i * 2 + 1] = c & 0xff;
-      }
-      return out;
-    },
-  }) satisfies P.CoderType<string>
-);
-const NameString = /* @__PURE__ */ ASN1.choice({
-  utf8: UTF8String,
-  printable: PrintableString,
-  teletex: TeletexString,
-  ia5: IA5,
-  bmp: BMPString,
-  visible: VisibleString,
-  numeric: NumericString,
+const strictBytes = /* @__PURE__ */ P.apply<P.Bytes, StrictBytes>(/* @__PURE__ */ P.bytes(null), {
+  encode: (b: P.Bytes): StrictBytes => b as StrictBytes,
+  decode: (b: StrictBytes): P.Bytes => b as P.Bytes,
 });
-const ATTR_NAME_OID: Record<string, string> = {
-  '2.5.4.3': 'commonName',
-  '2.5.4.7': 'localityName',
-  '2.5.4.32': 'owner',
-  '2.5.4.42': 'givenName',
-  '2.5.4.106': 'otherName',
-};
-const QC_STATEMENT_OID: Record<string, string> = {
-  '0.4.0.1862.1.1': 'etsiQcCompliance',
-};
-const CERT_ANY_TAG = {
-  bool: 0x01,
-  int: 0x02,
-  oid: 0x06,
-  octet: 0x04,
-  utc: 0x17,
-  generalized: 0x18,
-} as const;
-const CertAnyCodec = /* @__PURE__ */ P.apply(TLVNodeCodec, {
-  encode: (n: TLVNode): CertAny => {
-    const der = TLVNodeCodec.encode(n);
-    if (n.tag === CERT_ANY_TAG.bool) return { TAG: 'bool', data: ASN1Bool.decode(der) };
-    if (n.tag === CERT_ANY_TAG.int) return { TAG: 'int', data: ASN1.Integer.decode(der) };
-    if (n.tag === CERT_ANY_TAG.oid) {
-      const oid = ASN1.OID.decode(der);
-      return { TAG: 'oid', data: { oid, name: ATTR_NAME_OID[oid] } };
-    }
-    if (n.tag === CERT_ANY_TAG.octet) return { TAG: 'octet', data: ASN1.OctetString.decode(der) };
-    if (n.tag === CERT_ANY_TAG.utc || n.tag === CERT_ANY_TAG.generalized)
-      return { TAG: 'time', data: Time.decode(der) };
-    if (
-      n.tag === UTF8String.tagByte ||
-      n.tag === PrintableString.tagByte ||
-      n.tag === TeletexString.tagByte ||
-      n.tag === IA5.tagByte ||
-      n.tag === BMPString.tagByte ||
-      n.tag === VisibleString.tagByte ||
-      n.tag === NumericString.tagByte
-    )
-      return { TAG: 'text', data: NameString.decode(der) };
-    return { TAG: 'raw', data: n };
-  },
-  decode: (x: CertAny): TLVNode => {
-    if (x.TAG === 'raw') return x.data;
-    if (x.TAG === 'text') return TLVNodeCodec.decode(NameString.encode(x.data));
-    if (x.TAG === 'oid') return TLVNodeCodec.decode(ASN1.OID.encode(x.data.oid));
-    if (x.TAG === 'int') return TLVNodeCodec.decode(ASN1.Integer.encode(x.data));
-    if (x.TAG === 'bool') return TLVNodeCodec.decode(ASN1Bool.encode(x.data));
-    if (x.TAG === 'time') return TLVNodeCodec.decode(Time.encode(x.data));
-    return TLVNodeCodec.decode(ASN1.OctetString.encode(x.data));
-  },
-}) satisfies P.CoderType<CertAny>;
-const NameAttr = /* @__PURE__ */ (() => ASN1.sequence({ oid: ASN1.OID, value: NameString }))();
-const X509Name = /* @__PURE__ */ ASN1.sequence({
-  rdns: /* @__PURE__ */ P.array(null, /* @__PURE__ */ ASN1.set(NameAttr)),
+// X.520 defines id-at-objectIdentifier(106) under the RFC 5280 `id-at`
+// arc { joint-iso-ccitt(2) ds(5) 4 }; `otherName` is a GeneralName label.
+// AttributeTypeAndValue wrapper: keep the raw type OID and delegate the
+// attribute-value decoding boundary to the RFC 5280 ANY-preserving codec.
+// RFC 5280 section 4.1.2.4: AttributeValue is ANY DEFINED BY AttributeType.
+// The generic TLV-to-string/raw parsing lives in convert.ts; X.509 only keeps
+// the AttributeType-specific schema and matching rules around this boundary.
+const NameAttr = /* @__PURE__ */ (() =>
+  DERUtils.ASN1.sequence({ oid: DERUtils.ASN1.OID, value: DERUtils.ASN1.StringOrRaw }))();
+// PKIX `Name` currently has only the `rdnSequence` CHOICE arm, so model the
+// inner SEQUENCE directly and leave per-RDN member order to the DER SET bytes.
+const X509Name = /* @__PURE__ */ DERUtils.ASN1.sequence({
+  rdns: /* @__PURE__ */ P.array(null, /* @__PURE__ */ DERUtils.ASN1.set(NameAttr)),
 });
-const X509Validity = /* @__PURE__ */ ASN1.sequence({ notBefore: Time, notAfter: Time });
 // RFC 5912 (PKIX1Explicit-2009): Extension.
+// Raw Extension shell: keep `extnID` separate and leave the
+// `critical`/`extnValue` pair packed in `rest` for ExtBody.
 const X509Ext = /* @__PURE__ */ (() =>
-  ASN1.sequence({ oid: ASN1.OID, rest: /* @__PURE__ */ P.bytes(null) }))();
+  DERUtils.ASN1.sequence({ oid: DERUtils.ASN1.OID, rest: strictBytes }))();
 // RFC 5912 (PKIX1Explicit-2009): SubjectPublicKeyInfo.
+// Raw SubjectPublicKeyInfo shell: keep AlgorithmIdentifier and the
+// subjectPublicKey BIT STRING separate; key-shape checks live later.
 const X509SPKI = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    algorithm: AlgorithmIdentifier,
-    publicKey: ASN1.BitString,
+  DERUtils.ASN1.sequence({
+    algorithm: DERUtils.ASN1.AlgorithmIdentifier,
+    publicKey: DERUtils.ASN1.BitString,
   }))();
 // RFC 5912 (PKIX1Explicit-2009): TBSCertificate.
+// Raw TBSCertificate shell: preserve the tagged version/UID/extension fields
+// here and leave RFC 5280 version-coupling checks to later certificate validation.
 const X509TBSCertificate = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    version: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.explicit(0, ASN1.Integer)),
-    serial: ASN1.Integer,
-    signature: AlgorithmIdentifier,
+  DERUtils.ASN1.sequence({
+    version: /* @__PURE__ */ DERUtils.ASN1.optional(
+      /* @__PURE__ */ DERUtils.ASN1.explicit(0, DERUtils.ASN1.Integer)
+    ),
+    serial: DERUtils.ASN1.Integer,
+    signature: DERUtils.ASN1.AlgorithmIdentifier,
     issuer: X509Name,
-    validity: X509Validity,
+    // Raw Validity wrapper only: preserve the encoded Time fields here and leave
+    // ordering / current-time checks to higher-level certificate validation.
+    validity: /* @__PURE__ */ DERUtils.ASN1.sequence({
+      notBefore: DERUtils.ASN1.Time,
+      notAfter: DERUtils.ASN1.Time,
+    }),
     subject: X509Name,
     spki: X509SPKI,
-    issuerUniqueID: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(1, ASN1.BitString)),
-    subjectUniqueID: /* @__PURE__ */ ASN1.optional(
-      /* @__PURE__ */ ASN1.implicit(2, ASN1.BitString)
+    // RFC 5280 §4.1 defines UniqueIdentifier as plain BIT STRING; unlike
+    // SubjectPublicKeyInfo/signatureValue, PKITS vectors use non-byte-aligned
+    // IDs, so expose the raw BIT STRING shape and preserve the DER unused-bit count.
+    issuerUniqueID: /* @__PURE__ */ DERUtils.ASN1.optional(
+      /* @__PURE__ */ DERUtils.ASN1.implicit(1, DERUtils.ASN1.BitStringRaw)
     ),
-    extensions: /* @__PURE__ */ ASN1.optional(
-      /* @__PURE__ */ ASN1.explicit(
+    subjectUniqueID: /* @__PURE__ */ DERUtils.ASN1.optional(
+      /* @__PURE__ */ DERUtils.ASN1.implicit(2, DERUtils.ASN1.BitStringRaw)
+    ),
+    extensions: /* @__PURE__ */ DERUtils.ASN1.optional(
+      /* @__PURE__ */ DERUtils.ASN1.explicit(
         3,
-        /* @__PURE__ */ ASN1.sequence({ list: /* @__PURE__ */ P.array(null, X509Ext) })
+        /* @__PURE__ */ DERUtils.ASN1.sequence({ list: /* @__PURE__ */ P.array(null, X509Ext) })
       )
     ),
   }))();
 // RFC 5912 (PKIX1Explicit-2009): Certificate.
+// Raw Certificate shell: preserve the signed TBSCertificate, outer
+// signatureAlgorithm, and signatureValue fields; cross-field checks live later.
 const X509Certificate = /* @__PURE__ */ (() =>
-  ASN1.sequence({
+  DERUtils.ASN1.sequence({
     tbs: X509TBSCertificate,
-    sigAlg: AlgorithmIdentifier,
-    sig: ASN1.BitString,
+    sigAlg: DERUtils.ASN1.AlgorithmIdentifier,
+    sig: DERUtils.ASN1.BitString,
   }))();
 const X509C: {
   Name: P.CoderType<NameCodec>;
   TBSCertificate: P.CoderType<TBSCertificateCodec>;
   Certificate: P.CoderType<CertificateCodec>;
-} = /* @__PURE__ */ (() => ({
+} = {
   Name: X509Name,
   TBSCertificate: X509TBSCertificate,
   Certificate: X509Certificate,
-}))();
-type AttributeCodec = { oid: string; values: Uint8Array[] };
+};
+type AttributeCodec = { oid: string; values: StrictBytes[] };
 type SignerIdentifierCodec =
   | { TAG: 'issuerSerial'; data: { issuer: NameCodec; serial: bigint } }
-  | { TAG: 'subjectKeyIdentifier'; data: Uint8Array };
+  | { TAG: 'subjectKeyIdentifier'; data: StrictBytes };
 type SignerInfoCodec = {
   version: bigint;
   sid: SignerIdentifierCodec;
   digestAlg: AlgorithmIdentifierCodec;
   signedAttrs: AttributeCodec[] | undefined;
   signatureAlg: AlgorithmIdentifierCodec;
-  signature: Uint8Array;
+  signature: StrictBytes;
   unsignedAttrs: AttributeCodec[] | undefined;
 };
 type SignedDataCodec = {
   version: bigint;
   digestAlgorithms: AlgorithmIdentifierCodec[];
-  encapContentInfo: { eContentType: string; eContent: Uint8Array | undefined };
+  encapContentInfo: { eContentType: string; eContent: StrictBytes | undefined };
   certificates: CMSCertificateChoiceCodec[] | undefined;
   crls: CMSRevocationInfoChoiceCodec[] | undefined;
   signerInfos: SignerInfoCodec[];
 };
-type ContentInfoCodec = { contentType: string; content: Uint8Array };
+type ContentInfoCodec = { contentType: string; content: StrictBytes };
 type CMSCertificateChoiceCodec =
   | { TAG: 'certificate'; data: P.UnwrapCoder<typeof X509C.Certificate> }
-  | { TAG: 'extendedCertificate'; data: Uint8Array }
-  | { TAG: 'v1AttrCert'; data: Uint8Array }
-  | { TAG: 'v2AttrCert'; data: Uint8Array }
-  | { TAG: 'other'; data: Uint8Array };
+  | { TAG: 'extendedCertificate'; data: StrictBytes }
+  | { TAG: 'v1AttrCert'; data: StrictBytes }
+  | { TAG: 'v2AttrCert'; data: StrictBytes }
+  | { TAG: 'other'; data: StrictBytes };
 type CMSRevocationInfoChoiceCodec =
   | {
       TAG: 'crl';
       data: {
-        tbsCertList: Uint8Array;
+        tbsCertList: StrictBytes;
         signatureAlgorithm: AlgorithmIdentifierCodec;
-        signatureValue: Uint8Array;
+        signatureValue: StrictBytes;
       };
     }
-  | { TAG: 'other'; data: { format: string; info: Uint8Array } };
+  | { TAG: 'other'; data: { format: string; info: StrictBytes } };
 // RFC 5652 section 10.2.2: CertificateChoices.
 const CMSCertificateChoices: P.CoderType<CMSCertificateChoiceCodec> = /* @__PURE__ */ (() =>
-  ASN1.choice({
+  DERUtils.ASN1.choice({
     certificate: X509C.Certificate,
-    extendedCertificate: tagged(0xa0, P.bytes(null)),
+    // Legacy attribute-certificate and other-certificate branches stay opaque here;
+    // current signer-cert resolution only consumes the ordinary certificate arm.
+    extendedCertificate: DERUtils.ASN1.tagged(0xa0, strictBytes),
     // RFC 5652 section 12.2: ACv1 module; parsed as opaque branch and not consumed by signer-cert selection.
-    v1AttrCert: tagged(0xa1, P.bytes(null)),
-    v2AttrCert: tagged(0xa2, P.bytes(null)),
-    other: tagged(0xa3, P.bytes(null)),
+    v1AttrCert: DERUtils.ASN1.tagged(0xa1, strictBytes),
+    v2AttrCert: DERUtils.ASN1.tagged(0xa2, strictBytes),
+    other: DERUtils.ASN1.tagged(0xa3, strictBytes),
   }))();
 // RFC 5652 section 10.2.1: RevocationInfoChoice and OtherRevocationInfoFormat.
 const CMSCertificateList = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    tbsCertList: RawTLV,
-    signatureAlgorithm: AlgorithmIdentifier,
-    signatureValue: ASN1.BitString,
+  DERUtils.ASN1.sequence({
+    // Raw CertificateList shell: keep TBSCertList opaque here and leave CRL
+    // semantics plus outer/inner signature checks to later revocation handling.
+    tbsCertList: DERUtils.ASN1.any,
+    signatureAlgorithm: DERUtils.ASN1.AlgorithmIdentifier,
+    signatureValue: DERUtils.ASN1.BitString,
   }))();
+// Raw OtherRevocationInfoFormat shell: keep the identifying OID separate and
+// preserve one opaque ASN.1 payload for format-specific revocation info.
 const CMSOtherRevocationInfoFormat = /* @__PURE__ */ (() =>
-  ASN1.sequence({ format: ASN1.OID, info: RawTLV }))();
+  DERUtils.ASN1.sequence({ format: DERUtils.ASN1.OID, info: DERUtils.ASN1.any }))();
+// Raw RevocationInfoChoice wrapper: select between the X.509 CertificateList
+// shell and the opaque [1] other-format envelope without extra narrowing here.
 const CMSRevocationInfoChoice: P.CoderType<CMSRevocationInfoChoiceCodec> = /* @__PURE__ */ (() =>
-  ASN1.choice({
+  DERUtils.ASN1.choice({
     crl: CMSCertificateList,
-    other: ASN1.implicit(1, CMSOtherRevocationInfoFormat),
+    other: DERUtils.ASN1.implicit(1, CMSOtherRevocationInfoFormat),
   }))();
 // RFC 5652 sections 10.1.1 and 10.1.2: DigestAlgorithmIdentifier/SignatureAlgorithmIdentifier ::= AlgorithmIdentifier.
 // RFC 5652 section 5.3: Attribute ::= SEQUENCE { attrType OBJECT IDENTIFIER, attrValues SET OF AttributeValue }.
+// Raw CMS Attribute shell: keep attrType separate and preserve attrValues as
+// opaque TLVs here, while known single-valued signed attributes are enforced below.
 const CMSAttribute = /* @__PURE__ */ (() =>
-  P.validate(ASN1.sequence({ oid: ASN1.OID, values: ASN1.set(RawTLV) }), (a) => {
+  P.validate(DERUtils.ASN1.Attribute, (a) => {
     // RFC 5652 section 11.1: content-type attrValues is SET SIZE (1) OF AttributeValue.
     // RFC 5652 section 11.2: message-digest attrValues is SET SIZE (1) OF AttributeValue.
     // RFC 5652 section 11.3: signing-time attrValues is SET SIZE (1) OF AttributeValue.
@@ -1086,82 +952,83 @@ const CMSAttribute = /* @__PURE__ */ (() =>
     return a;
   }))() satisfies P.CoderType<AttributeCodec>;
 // RFC 5652 section 10.2.4 (used by section 5.3 SignerIdentifier): IssuerAndSerialNumber.
+// Raw IssuerAndSerialNumber shell: preserve issuer Name plus certificate
+// serial INTEGER here, and leave certificate-identity matching to later CMS logic.
 const CMSIssuerAndSerial = /* @__PURE__ */ (() =>
-  ASN1.sequence({
+  DERUtils.ASN1.sequence({
     issuer: X509C.Name,
-    serial: ASN1.Integer,
+    serial: DERUtils.ASN1.Integer,
   }))();
 // RFC 5652 section 5.3: SignerIdentifier (IssuerAndSerialNumber / SubjectKeyIdentifier).
+// Raw SignerIdentifier CHOICE: preserve both issuer/serial and implicit [0]
+// subjectKeyIdentifier forms here, and leave version/certificate matching to later CMS logic.
 const CMSSignerIdentifier = /* @__PURE__ */ (() =>
-  ASN1.choice({
+  DERUtils.ASN1.choice({
     issuerSerial: CMSIssuerAndSerial,
-    subjectKeyIdentifier: ASN1.implicit(0, ASN1.OctetString),
+    subjectKeyIdentifier: DERUtils.ASN1.implicit(0, DERUtils.ASN1.OctetString),
   }))();
 // RFC 5652 section 5.3: SignerInfo.
+// Raw SignerInfo shell: preserve the ASN.1 field layout here; higher-level
+// CMS helpers are responsible for RFC 5652 version/cardinality/profile checks.
 const CMSSignerInfo = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    version: ASN1.Integer,
+  DERUtils.ASN1.sequence({
+    version: DERUtils.ASN1.Integer,
     sid: CMSSignerIdentifier,
-    digestAlg: AlgorithmIdentifier,
-    signedAttrs: ASN1.optional(ASN1.implicit(0, ASN1.set(CMSAttribute))),
-    signatureAlg: AlgorithmIdentifier,
-    signature: ASN1.OctetString,
-    unsignedAttrs: ASN1.optional(ASN1.implicit(1, ASN1.set(CMSAttribute))),
+    digestAlg: DERUtils.ASN1.AlgorithmIdentifier,
+    // RFC 5652 section 5.3: SignedAttributes MUST be DER encoded even if the
+    // rest of the CMS object is BER, so keep SET OF order validation here.
+    signedAttrs: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(0, DERUtils.ASN1.set(CMSAttribute))),
+    signatureAlg: DERUtils.ASN1.AlgorithmIdentifier,
+    signature: DERUtils.ASN1.OctetString,
+    unsignedAttrs: DERUtils.ASN1.optional(
+      DERUtils.ASN1.implicit(1, DERUtils.ASN1.set(CMSAttribute, { ber: true }))
+    ),
   }))();
 // RFC 5652 section 5.2: EncapsulatedContentInfo.
+// Raw EncapsulatedContentInfo shell: preserve the contentType OID plus the
+// optional explicit [0] OCTET STRING, and leave detached/degenerate rules to later CMS logic.
 const CMSEncapContentInfo = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    eContentType: ASN1.OID,
-    eContent: ASN1.optional(ASN1.explicit(0, ASN1.OctetString)),
+  DERUtils.ASN1.sequence({
+    eContentType: DERUtils.ASN1.OID,
+    eContent: DERUtils.ASN1.optional(DERUtils.ASN1.explicit(0, DERUtils.ASN1.OctetString)),
   }))();
 // RFC 5652 section 5.1: SignedData.
+// Raw SignedData shell: preserve the ASN.1 field layout here; version,
+// digest-set, and signer/profile coupling checks live in later CMS helpers.
 const CMSSignedData: P.CoderType<SignedDataCodec> = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    version: ASN1.Integer,
-    digestAlgorithms: ASN1.set(AlgorithmIdentifier),
+  DERUtils.ASN1.sequence({
+    version: DERUtils.ASN1.Integer,
+    // RFC 5652 sections 1 and 1.1.1 make CMS BER-facing by default; signed
+    // attributes and authenticated attributes are the only CMS data types that
+    // require DER, so outer SignedData SET OF fields accept BER order on decode.
+    digestAlgorithms: DERUtils.ASN1.set(DERUtils.ASN1.AlgorithmIdentifier, { ber: true }),
     encapContentInfo: CMSEncapContentInfo,
     // RFC 5652 section 10.2.3: CertificateSet ::= SET OF CertificateChoices.
-    certificates: ASN1.optional(ASN1.implicit(0, ASN1.set(CMSCertificateChoices))),
-    crls: ASN1.optional(ASN1.implicit(1, ASN1.set(CMSRevocationInfoChoice))),
-    signerInfos: ASN1.set(CMSSignerInfo),
+    certificates: DERUtils.ASN1.optional(
+      DERUtils.ASN1.implicit(0, DERUtils.ASN1.set(CMSCertificateChoices, { ber: true }))
+    ),
+    crls: DERUtils.ASN1.optional(
+      DERUtils.ASN1.implicit(1, DERUtils.ASN1.set(CMSRevocationInfoChoice, { ber: true }))
+    ),
+    signerInfos: DERUtils.ASN1.set(CMSSignerInfo, { ber: true }),
   }))();
-const CMS_CONTENT_TYPE_NAME_TO_OID = {
-  data: '1.2.840.113549.1.7.1',
-  signedData: '1.2.840.113549.1.7.2',
-  envelopedData: '1.2.840.113549.1.7.3',
-} as const;
-const CMS_CONTENT_TYPE_OID_TO_NAME = /* @__PURE__ */ (() =>
-  Object.fromEntries(
-    Object.entries(CMS_CONTENT_TYPE_NAME_TO_OID).map(([k, v]) => [v, k])
-  ) as Record<string, string>)();
-const cmsContentTypeOID = (v: string): string =>
-  oidValue(CMS_CONTENT_TYPE_NAME_TO_OID as Record<string, string>, v, 'CMS contentType');
 // RFC 5652 section 3: ContentInfo.
+// Raw outer CMS wrapper: keep one explicit [0] TLV payload here and leave
+// contentType-specific inner decoding to later CMS helpers.
 const CMSContentInfo = /* @__PURE__ */ (() =>
-  P.apply(
-    ASN1.sequence({
-      contentType: ASN1.OID,
-      content: ASN1.explicit(0, RawTLV),
-    }),
-    {
-      encode: (x: { contentType: string; content: Uint8Array }): ContentInfoCodec => ({
-        contentType: oidName(CMS_CONTENT_TYPE_OID_TO_NAME, x.contentType),
-        content: x.content,
-      }),
-      decode: (x: ContentInfoCodec): { contentType: string; content: Uint8Array } => ({
-        contentType: cmsContentTypeOID(x.contentType),
-        content: x.content,
-      }),
-    }
-  ))();
+  DERUtils.ASN1.sequence({
+    contentType: DERUtils.ASN1.OIDMap,
+    content: DERUtils.ASN1.explicit(0, DERUtils.ASN1.any),
+  }))();
+// treeshake: direct object literal retains CMS schema refs in X509-only bundles.
 const CMSX: {
-  AlgorithmIdentifier: P.CoderType<AlgorithmIdentifierCodec>;
+  AlgorithmIdentifier: typeof DERUtils.ASN1.AlgorithmIdentifier;
   Attribute: P.CoderType<AttributeCodec>;
   SignerInfo: P.CoderType<SignerInfoCodec>;
   SignedData: P.CoderType<SignedDataCodec>;
   ContentInfo: P.CoderType<ContentInfoCodec>;
 } = /* @__PURE__ */ (() => ({
-  AlgorithmIdentifier: AlgorithmIdentifier,
+  AlgorithmIdentifier: DERUtils.ASN1.AlgorithmIdentifier,
   Attribute: CMSAttribute,
   SignerInfo: CMSSignerInfo,
   SignedData: CMSSignedData,
@@ -1175,7 +1042,7 @@ const CMSX: {
  * ```ts
  * import { CERTUtils } from 'micro-key-producer/x509.js';
  * CERTUtils.Name.encode({
- *   rdns: [[{ oid: '2.5.4.3', value: { TAG: 'utf8', data: 'example.com' } }]],
+ *   rdns: [[{ oid: 'commonName', value: { TAG: 'utf8', data: 'example.com' } }]],
  * });
  * ```
  */
@@ -1183,82 +1050,46 @@ export const CERTUtils: {
   Name: typeof X509C.Name;
   TBSCertificate: typeof X509C.TBSCertificate;
   Certificate: typeof X509C.Certificate;
-} = /* @__PURE__ */ (() => ({
-  Name: X509C.Name,
-  TBSCertificate: X509C.TBSCertificate,
-  Certificate: X509C.Certificate,
-}))();
+} = /* @__PURE__ */ deepFreeze(
+  /* @__PURE__ */ (() => ({
+    Name: X509C.Name,
+    TBSCertificate: X509C.TBSCertificate,
+    Certificate: X509C.Certificate,
+  }))()
+);
 
-const ASN1BoolInner = /* @__PURE__ */ P.wrap({
-  encodeStream(w, v: boolean) {
-    w.byte(v ? 0xff : 0x00);
-  },
-  decodeStream(r): boolean {
-    const b = r.byte();
-    if (!r.isEnd()) throw new Error('BOOLEAN length must be 1');
-    return b !== 0;
-  },
-});
-const ASN1Bool = /* @__PURE__ */ (() => ({
-  tagByte: 0x01,
-  tagBytes: [0x01],
-  constructed: 0,
-  inner: ASN1BoolInner,
-  ...P.wrap({
-    encodeStream(w, v: boolean) {
-      w.bytes(Uint8Array.from([0x01, 0x01, v ? 0xff : 0x00]));
-    },
-    decodeStream(r): boolean {
-      const t = RawTLV.decodeStream(r);
-      if (t.length !== 3 || t[0] !== 0x01 || t[1] !== 0x01)
-        throw new Error('DER BOOLEAN must be 01 01 xx');
-      return t[2] !== 0;
-    },
-  }),
-}))();
-const ASN1BitStringInner = /* @__PURE__ */ P.struct({
-  unused: P.U8,
-  bytes: /* @__PURE__ */ P.bytes(null),
-});
-const ASN1BitStringRaw = /* @__PURE__ */ (() => ({
-  tagByte: 0x03,
-  tagBytes: [0x03],
-  constructed: 0,
-  inner: ASN1BitStringInner,
-  ...P.wrap({
-    encodeStream(w, v: { unused: number; bytes: Uint8Array }) {
-      w.bytes(TLV.encode({ tag: 0x03, value: ASN1BitStringInner.encode(v) }));
-    },
-    decodeStream(r): { unused: number; bytes: Uint8Array } {
-      const t = TLV.decodeStream(r);
-      if (t.tag !== 0x03) throw new Error('expected BIT STRING');
-      const d = ASN1BitStringInner.decode(t.value);
-      if (d.unused > 7) throw new Error(`BIT STRING invalid unused bits: ${d.unused}`);
-      return d;
-    },
-  }),
-}))();
 // Generic IP coders (not ASN.1-specific): bytes <-> textual address.
+// Textual IPv4 should stay in strict dotted-decimal `dec-octet` form rather
+// than accepting legacy leading-zero variants that other parsers normalize.
 const IPv4: P.CoderType<string> = /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(4), {
-  encode: (b: Uint8Array): string => `${b[0]}.${b[1]}.${b[2]}.${b[3]}`,
-  decode: (s: string): Uint8Array => {
+  encode: (b: TArg<Uint8Array>): string => {
+    const bytes = b as Uint8Array;
+    return `${bytes[0]}.${bytes[1]}.${bytes[2]}.${bytes[3]}`;
+  },
+  decode: (s: string): TRet<Uint8Array> => {
     const p = s.split('.');
     if (p.length !== 4) throw new Error(`invalid IPv4 address ${s}`);
     const out = new Uint8Array(4);
     for (let i = 0; i < 4; i++) {
-      if (!/^[0-9]+$/.test(p[i])) throw new Error(`invalid IPv4 address ${s}`);
+      // RFC 3986 section 3.2.2: `dec-octet` permits only canonical 0..255 decimal
+      // octets; section 7.4 warns that broader leading-zero forms are platform-dependent.
+      if (!/^(?:0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$/.test(p[i]))
+        throw new Error(`invalid IPv4 address ${s}`);
       const n = Number(p[i]);
       if (!Number.isInteger(n) || n < 0 || n > 255) throw new Error(`invalid IPv4 address ${s}`);
       out[i] = n;
     }
-    return out;
+    return out as TRet<Uint8Array>;
   },
 }) satisfies P.CoderType<string>;
 // Generic IP coders (not ASN.1-specific): bytes <-> textual address.
+// Textual IPv6 should accept the full RFC 3986 / RFC 4291 surface,
+// including mixed `ls32` dotted-quad tails like `::ffff:192.0.2.1`.
 const IPv6: P.CoderType<string> = /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(16), {
-  encode: (b: Uint8Array): string => {
+  encode: (b: TArg<Uint8Array>): string => {
+    const bytes = b as Uint8Array;
     const w = new Array<number>(8);
-    for (let i = 0; i < 8; i++) w[i] = (b[i * 2] << 8) | b[i * 2 + 1];
+    for (let i = 0; i < 8; i++) w[i] = (bytes[i * 2] << 8) | bytes[i * 2 + 1];
     let bestAt = -1;
     let bestLen = 0;
     for (let i = 0; i < 8; ) {
@@ -1284,12 +1115,34 @@ const IPv6: P.CoderType<string> = /* @__PURE__ */ P.apply(/* @__PURE__ */ P.byte
     if (!right) return `${left}::`;
     return `${left}::${right}`;
   },
-  decode: (s: string): Uint8Array => {
+  decode: (s: string): TRet<Uint8Array> => {
     if (s.includes(':::')) throw new Error(`invalid IPv6 address ${s}`);
     if ((s.match(/::/g) || []).length > 1) throw new Error(`invalid IPv6 address ${s}`);
     const [l, r] = s.split('::');
-    const lp = l ? l.split(':').filter((i) => i.length) : [];
-    const rp = r !== undefined && r ? r.split(':').filter((i) => i.length) : [];
+    const part = (p: string, dottedTail: boolean): string[] => {
+      if (!p) return [];
+      // RFC 3986 section 3.2.2: IPv6address uses `h16 ":"` segments and the
+      // only valid empty segment marker is one `::` zero-run elision.
+      if (p.startsWith(':') || p.endsWith(':') || p.includes('::'))
+        throw new Error(`invalid IPv6 address ${s}`);
+      const items = p.split(':').filter((i) => i.length);
+      const out: string[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const x = items[i];
+        if (!x.includes('.')) {
+          out.push(x);
+          continue;
+        }
+        // RFC 3986 section 3.2.2: `ls32` may be an IPv4address; RFC 4291
+        // section 2.2 lists mixed `x:x:x:x:x:x:d.d.d.d` IPv6 text.
+        if (!dottedTail || i !== items.length - 1) throw new Error(`invalid IPv6 address ${s}`);
+        const ip = IPv4.encode(x);
+        out.push(((ip[0] << 8) | ip[1]).toString(16), ((ip[2] << 8) | ip[3]).toString(16));
+      }
+      return out;
+    };
+    const lp = part(l, r === undefined);
+    const rp = r !== undefined ? part(r, true) : [];
     if (
       !lp.every((i) => /^[0-9a-fA-F]{1,4}$/.test(i)) ||
       !rp.every((i) => /^[0-9a-fA-F]{1,4}$/.test(i))
@@ -1308,69 +1161,172 @@ const IPv6: P.CoderType<string> = /* @__PURE__ */ P.apply(/* @__PURE__ */ P.byte
       out[i * 2] = n >>> 8;
       out[i * 2 + 1] = n & 0xff;
     }
-    return out;
+    return out as TRet<Uint8Array>;
   },
 }) satisfies P.CoderType<string>;
-const IPAddress = /* @__PURE__ */ tagged(
+// RFC 5280 reuses iPAddress for both plain 4/16-octet GeneralName addresses
+// and 8/32-octet nameConstraints CIDR ranges on the same tagged arm.
+const IPAddress = /* @__PURE__ */ DERUtils.ASN1.tagged(
   0x87,
   /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
-    encode: (b: Uint8Array): string => {
-      if (b.length === 4) return IPv4.decode(b);
-      if (b.length === 16) return IPv6.decode(b);
-      return `hex:${bytesToHex(b)}`;
+    encode: (b: TArg<Uint8Array>): string => {
+      const bytes = b as Uint8Array;
+      if (bytes.length === 4) return IPv4.decode(bytes);
+      if (bytes.length === 16) return IPv6.decode(bytes);
+      return `hex:${bytesToHex(bytes)}`;
     },
-    decode: (s: string): Uint8Array => {
-      if (s.startsWith('hex:')) return hexToBytes(s.slice(4));
-      if (s.includes('.')) return IPv4.encode(s);
-      if (s.includes(':')) return IPv6.encode(s);
+    decode: (s: string): TRet<Uint8Array> => {
+      if (s.startsWith('hex:')) return hexToBytes(s.slice(4)) as TRet<Uint8Array>;
+      if (s.includes('.')) return IPv4.encode(s) as TRet<Uint8Array>;
+      if (s.includes(':')) return IPv6.encode(s) as TRet<Uint8Array>;
       throw new Error(`invalid SAN iPAddress ${s}`);
     },
   }) satisfies P.CoderType<string>
 );
+const cidrPrefix = (mask: TArg<Uint8Array>, bits: number): number => {
+  const bytes = mask as Uint8Array;
+  if (bytes.length * 8 !== bits) throw new Error('invalid nameConstraints iPAddress mask');
+  let prefix = 0;
+  let zero = false;
+  for (const byte of bytes) {
+    for (let bit = 7; bit >= 0; bit--) {
+      const one = !!(byte & (1 << bit));
+      if (!one) {
+        zero = true;
+        continue;
+      }
+      if (zero) throw new Error('invalid nameConstraints iPAddress mask');
+      prefix++;
+    }
+  }
+  return prefix;
+};
+const cidrMask = (prefix: number, bytes: number): TRet<Uint8Array> => {
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > bytes * 8)
+    throw new Error('invalid nameConstraints iPAddress prefix');
+  const out = new Uint8Array(bytes);
+  for (let i = 0; i < prefix; i++) out[i >>> 3] |= 0x80 >>> (i & 7);
+  return out as TRet<Uint8Array>;
+};
+const NameConstraintIPAddress = /* @__PURE__ */ DERUtils.ASN1.tagged(
+  0x87,
+  /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
+    encode: (b: TArg<Uint8Array>): string => {
+      const bytes = b as Uint8Array;
+      if (bytes.length === 8)
+        return `${IPv4.decode(bytes.subarray(0, 4))}/${cidrPrefix(bytes.subarray(4), 32)}`;
+      if (bytes.length === 32)
+        return `${IPv6.decode(bytes.subarray(0, 16))}/${cidrPrefix(bytes.subarray(16), 128)}`;
+      throw new Error('invalid nameConstraints iPAddress length');
+    },
+    decode: (s: string): TRet<Uint8Array> => {
+      const p = s.split('/');
+      if (p.length !== 2 || !p[0] || !/^[0-9]+$/.test(p[1]))
+        throw new Error(`invalid nameConstraints iPAddress ${s}`);
+      const prefix = Number(p[1]);
+      if (p[0].includes('.') && !p[0].includes(':'))
+        return concatBytes(IPv4.encode(p[0]), cidrMask(prefix, 4)) as TRet<Uint8Array>;
+      return concatBytes(IPv6.encode(p[0]), cidrMask(prefix, 16)) as TRet<Uint8Array>;
+    },
+  }) satisfies P.CoderType<string>
+);
+// RFC 5280 section 4.2.1.6: OtherName.value is [0] EXPLICIT
+// ANY DEFINED BY type-id, so unknown type IDs must keep the raw DER value.
 const ExtOtherName = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    type: ASN1.OID,
-    value: /* @__PURE__ */ ASN1.explicit(0, TLVNodeCodec),
+  DERUtils.ASN1.sequence({
+    type: DERUtils.ASN1.OID,
+    value: /* @__PURE__ */ DERUtils.ASN1.explicit(0, DERUtils.ASN1.any),
   }))();
 // RFC 5280 section 4.2.1.6: GeneralName.
-const ExtGeneralName = /* @__PURE__ */ (() =>
-  ASN1.choice({
-    otherName: /* @__PURE__ */ ASN1.implicit(0, ExtOtherName),
-    rfc822Name: /* @__PURE__ */ ASN1.implicit(1, IA5),
-    dNSName: /* @__PURE__ */ ASN1.implicit(2, IA5),
-    x400Address: /* @__PURE__ */ ASN1.implicit(3, ASN1.OctetString),
-    directoryName: /* @__PURE__ */ ASN1.explicit(4, X509Name),
-    ediPartyName: /* @__PURE__ */ ASN1.implicit(5, ASN1.OctetString),
-    uniformResourceIdentifier: /* @__PURE__ */ ASN1.implicit(6, IA5),
-    iPAddress: IPAddress,
-    registeredID: /* @__PURE__ */ ASN1.implicit(8, ASN1.OID),
-  }))();
+// Structured opaque name forms such as x400Address and ediPartyName still
+// need their context-specific wrappers to stay constructed on the wire.
+const extGeneralName = (iPAddress: P.CoderType<string>) =>
+  DERUtils.ASN1.choice({
+    otherName: /* @__PURE__ */ DERUtils.ASN1.implicit(0, ExtOtherName),
+    rfc822Name: /* @__PURE__ */ DERUtils.ASN1.implicit(1, DERUtils.ASN1.IA5String),
+    dNSName: /* @__PURE__ */ DERUtils.ASN1.implicit(2, DERUtils.ASN1.IA5String),
+    // RFC 5280 section 4.2.1.6 / Appendix A: x400Address [3] ORAddress and
+    // ediPartyName [5] EDIPartyName are structured values, so preserve their
+    // constructed context-specific wrappers while leaving the bodies opaque.
+    x400Address: /* @__PURE__ */ DERUtils.ASN1.tagged(0xa3, P.bytes(null)),
+    directoryName: /* @__PURE__ */ DERUtils.ASN1.explicit(4, X509Name),
+    ediPartyName: /* @__PURE__ */ DERUtils.ASN1.tagged(0xa5, P.bytes(null)),
+    uniformResourceIdentifier: /* @__PURE__ */ DERUtils.ASN1.implicit(6, DERUtils.ASN1.IA5String),
+    iPAddress,
+    registeredID: /* @__PURE__ */ DERUtils.ASN1.implicit(8, DERUtils.ASN1.OID),
+  });
+const ExtGeneralName = /* @__PURE__ */ extGeneralName(IPAddress);
+// RFC 5280 section 4.2.1.10: nameConstraints iPAddress is address plus CIDR mask,
+// encoded as 8 octets for IPv4 or 32 octets for IPv6, unlike plain SAN/IAN addresses.
+const ExtNameConstraintGeneralName = /* @__PURE__ */ extGeneralName(NameConstraintIPAddress);
 const extNonEmpty = <T extends { list: unknown[] }>(
   coder: P.CoderType<T>,
   name: string,
   item: string
 ): P.CoderType<T> =>
-  P.validate(coder, (x) => {
-    if (!x.list.length) throw new Error(`${name} must contain at least one ${item}`);
-    return x;
-  });
-const ExtGeneralNames = /* @__PURE__ */ ASN1.sequence({
+  // Shared RFC SIZE (1..MAX) guard for extension shells that are otherwise
+  // just `{ list: ... }` sequences underneath.
+  P.validate(coder, (x) => nonEmptyList(x, name, item));
+const nonEmptyList = <T extends { list: unknown[] }>(x: T, name: string, item: string): T => {
+  // RFC 5280 section 4.2.1.6 defines GeneralNames as `SEQUENCE SIZE (1..MAX)`;
+  // sibling extension shells use the same helper for their own ASN.1 SIZE rules.
+  if (!x.list.length) throw new Error(`${name} must contain at least one ${item}`);
+  return x;
+};
+const ExtGeneralNamesRaw = /* @__PURE__ */ DERUtils.ASN1.sequence({
+  // GeneralNames itself is RFC 5280 `SIZE (1..MAX)`, so bare reuse sites
+  // use the checked wrapper below while implicit-tag sites validate after decode.
   list: /* @__PURE__ */ P.array(null, ExtGeneralName),
 });
+const ExtGeneralNames = /* @__PURE__ */ P.validate(ExtGeneralNamesRaw, (x) =>
+  nonEmptyList(x, 'GeneralNames', 'GeneralName')
+) satisfies P.CoderType<P.UnwrapCoder<typeof ExtGeneralNamesRaw>>;
 // RFC 5280 section 4.2.1.6: subjectAltName uses GeneralNames SIZE (1..MAX).
-const ExtSAN = /* @__PURE__ */ extNonEmpty(ExtGeneralNames, 'subjectAltName', 'GeneralName');
+// It also forbids CAs from issuing empty GeneralName payloads, but leaves
+// client behavior undefined; OpenSSL verifies raw-forced empty names, so
+// certificate-user decode preserves them instead of enforcing CA generation policy.
+const ExtSAN = /* @__PURE__ */ P.validate(ExtGeneralNamesRaw, (x) => {
+  nonEmptyList(x, 'subjectAltName', 'GeneralName');
+  return x;
+});
 // RFC 5280 section 4.2.1.7: issuerAltName uses GeneralNames SIZE (1..MAX).
-const ExtIAN = /* @__PURE__ */ extNonEmpty(ExtGeneralNames, 'issuerAltName', 'GeneralName');
+const ExtIAN = /* @__PURE__ */ extNonEmpty(ExtGeneralNamesRaw, 'issuerAltName', 'GeneralName');
 // RFC 5280 section 4.2.1.1: AuthorityKeyIdentifier.
 const ExtAKI = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    keyIdentifier: ASN1.optional(ASN1.implicit(0, ASN1.OctetString)),
-    authorityCertIssuer: ASN1.optional(ASN1.implicit(1, ExtGeneralNames)),
-    authorityCertSerialNumber: ASN1.optional(ASN1.implicit(2, ASN1.Integer)),
-  }))();
+  P.validate(
+    DERUtils.ASN1.sequence({
+      keyIdentifier: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(0, DERUtils.ASN1.OctetString)),
+      authorityCertIssuer: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(1, ExtGeneralNamesRaw)),
+      authorityCertSerialNumber: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(2, DERUtils.ASN1.Integer)
+      ),
+    }),
+    (x) => {
+      if (x.authorityCertIssuer)
+        // RFC 5280 section 4.2.1.1 uses GeneralNames for authorityCertIssuer,
+        // so the RFC 5280 section 4.2.1.6 SIZE (1..MAX) rule applies here too.
+        nonEmptyList(
+          x.authorityCertIssuer,
+          'authorityKeyIdentifier authorityCertIssuer',
+          'GeneralName'
+        );
+      // RFC 5280 Appendix A: authorityCertIssuer and authorityCertSerialNumber
+      // "MUST both be present or both be absent".
+      if (!!x.authorityCertIssuer !== (x.authorityCertSerialNumber !== undefined))
+        throw new Error(
+          'authorityKeyIdentifier authorityCertIssuer and authorityCertSerialNumber must both be present or both be absent'
+        );
+      return x;
+    }
+  ))();
+// Raw AccessDescription shell reused by both AIA and SIA; the enclosing
+// wrappers enforce the outer SIZE (1..MAX) rule.
 const ExtAccessInfo = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    list: P.array(null, ASN1.sequence({ method: ASN1.OID, location: ExtGeneralName })),
+  DERUtils.ASN1.sequence({
+    list: P.array(
+      null,
+      DERUtils.ASN1.sequence({ method: DERUtils.ASN1.OID, location: ExtGeneralName })
+    ),
   }))();
 // RFC 5280 section 4.2.2.1: AuthorityInfoAccessSyntax is SEQUENCE SIZE (1..MAX) OF AccessDescription.
 const ExtAIA = /* @__PURE__ */ extNonEmpty(
@@ -1381,25 +1337,30 @@ const ExtAIA = /* @__PURE__ */ extNonEmpty(
 // RFC 5280 section 4.2.2.2: SubjectInfoAccessSyntax is SEQUENCE SIZE (1..MAX) OF AccessDescription.
 const ExtSIA = /* @__PURE__ */ extNonEmpty(ExtAccessInfo, 'subjectInfoAccess', 'AccessDescription');
 // RFC 3820 section 3.8: ProxyCertInfo extension.
-const OctetsHex = /* @__PURE__ */ tagged(
+// proxyPolicy is an arbitrary OCTET STRING; keep the public `policy` field as canonical lowercase
+// hex so raw policy bytes survive decode/encode without ASN.1-specific interpretation.
+const OctetsHex = /* @__PURE__ */ DERUtils.ASN1.tagged(
   0x04,
   /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), hex)
 );
-const PROXY_POLICY_INHERIT_ALL = '1.3.6.1.5.5.7.21.1';
-const PROXY_POLICY_INDEPENDENT = '1.3.6.1.5.5.7.21.2';
+// This raw shell mirrors RFC 3820 section 3.8 structure only; range and special-language
+// policy rules are enforced in ExtProxyCertInfoChecked before the public extension surface uses it.
 const ExtProxyCertInfo = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    pathLen: ASN1.optional(ASN1.Integer),
-    policy: ASN1.sequence({ language: ASN1.OID, policy: ASN1.optional(OctetsHex) }),
+  DERUtils.ASN1.sequence({
+    pathLen: DERUtils.ASN1.optional(DERUtils.ASN1.Integer),
+    policy: DERUtils.ASN1.sequence({
+      language: DERUtils.ASN1.OID,
+      policy: DERUtils.ASN1.optional(OctetsHex),
+    }),
   }))();
 const ExtProxyCertInfoChecked = /* @__PURE__ */ P.validate(ExtProxyCertInfo, (x) => {
   // RFC 3820 section 3.8.1: pCPathLenConstraint is INTEGER (0..MAX) when present.
-  if (x.pathLen !== undefined && x.pathLen < 0n)
+  if (x.pathLen !== undefined && x.pathLen < _0n)
     throw new Error('proxyCertInfo pCPathLenConstraint must be >= 0');
   // RFC 3820 section 3.8.2: inheritAll/independent MUST NOT carry policy bytes.
   if (
-    (x.policy.language === PROXY_POLICY_INHERIT_ALL ||
-      x.policy.language === PROXY_POLICY_INDEPENDENT) &&
+    (x.policy.language === 'proxyPolicyInheritAll' ||
+      x.policy.language === 'proxyPolicyIndependent') &&
     x.policy.policy !== undefined
   )
     throw new Error(
@@ -1412,12 +1373,14 @@ const ExtProxyCertInfoChecked = /* @__PURE__ */ P.validate(ExtProxyCertInfo, (x)
 }>;
 // RFC 7633 section 4.1 + IANA TLS extension registry: Features are TLS extension identifiers (uint16 space).
 const ExtTLSFeature = /* @__PURE__ */ (() =>
-  P.validate(ASN1.sequence({ list: P.array(null, ASN1.Integer) }), (x) => {
+  P.validate(DERUtils.ASN1.sequence({ list: P.array(null, DERUtils.ASN1.Integer) }), (x) => {
     for (const f of x.list) {
-      if (f < 0n || f > 65535n) throw new Error(`tlsFeature value must be in 0..65535, got ${f}`);
+      if (f < _0n || f > U16_MAX) throw new Error(`tlsFeature value must be in 0..65535, got ${f}`);
     }
     return x;
   }))() satisfies P.CoderType<{ list: bigint[] }>;
+// This is the RFC 6962 v1 SignedCertificateTimestamp wire image; version gating and
+// SerializedSCT list handling live in SCTListInner rather than this fixed-layout item codec.
 const SCTItem = /* @__PURE__ */ (() =>
   P.struct({
     version: P.U8,
@@ -1428,21 +1391,39 @@ const SCTItem = /* @__PURE__ */ (() =>
     signatureAlgorithm: P.U8,
     signature: P.bytes(P.U16BE),
   }))();
+// RFC 6962 section 3.3 makes SerializedSCT opaque at the list layer, but this
+// typed decoder intentionally accepts only the defined RFC 6962 v1 SCT format.
+// CT v2 uses RFC 9162 TransItem/extension OID 1.3.101.75, not version=1 blobs here.
 const SCTListInner = /* @__PURE__ */ (() =>
   P.validate(
     P.apply(P.bytes(null), {
-      encode: (b: Uint8Array): P.UnwrapCoder<typeof SCTItem>[] =>
+      encode: (b: TArg<Uint8Array>): TRet<P.UnwrapCoder<typeof SCTItem>[]> => {
         // RFC 6962 section 3.3: X.509 extension carries SignedCertificateTimestampList inside ASN.1 OCTET STRING.
-        P.prefix(P.U16BE, P.array(null, P.prefix(P.U16BE, SCTItem))).decode(
-          b.length && b[0] === 0x04 ? ASN1.OctetString.decode(b) : b
-        ),
-      decode: (v: P.UnwrapCoder<typeof SCTItem>[]): Uint8Array =>
-        P.prefix(P.U16BE, P.array(null, P.prefix(P.U16BE, SCTItem))).encode(v),
+        // The extension decoder usually passes the unwrapped OCTET STRING bytes,
+        // and a valid raw two-byte list length can itself start with 0x04; only
+        // unwrap when the input is exactly one DER OCTET STRING TLV.
+        const raw = b as Uint8Array;
+        let body = raw;
+        if (raw.length && raw[0] === 0x04) {
+          try {
+            const inner = DERUtils.ASN1.OctetString.decode(raw);
+            if (equalBytes(DERUtils.ASN1.OctetString.encode(inner), raw)) body = inner;
+          } catch {}
+        }
+        return P.prefix(P.U16BE, P.array(null, P.prefix(P.U16BE, SCTItem))).decode(body) as TRet<
+          P.UnwrapCoder<typeof SCTItem>[]
+        >;
+      },
+      decode: (v: TArg<P.UnwrapCoder<typeof SCTItem>[]>): TRet<Uint8Array> =>
+        P.prefix(P.U16BE, P.array(null, P.prefix(P.U16BE, SCTItem))).encode(
+          v as P.UnwrapCoder<typeof SCTItem>[]
+        ) as TRet<Uint8Array>,
     }),
     (x) => {
       // RFC 6962 section 3.3: SignedCertificateTimestampList.sct_list is <1..2^16-1>.
       if (!x.length) throw new Error('sct list must contain at least one SerializedSCT');
-      // RFC 6962 section 3.2: sct_version for v1 is 0.
+      // RFC 6962 section 3.2: sct_version for v1 is 0; reject opaque/proprietary blobs
+      // on this typed v1 surface instead of preserving unauthenticated unknown payloads.
       for (const sct of x) {
         if (sct.version !== 0) throw new Error(`sct_version must be v1 (0), got ${sct.version}`);
       }
@@ -1450,21 +1431,41 @@ const SCTListInner = /* @__PURE__ */ (() =>
     }
   ))() satisfies P.CoderType<P.UnwrapCoder<typeof SCTItem>[]>;
 // RFC 5280 section 4.2.1.13: DistributionPointName.
+// The nameRelativeToCRLIssuer branch is a RelativeDistinguishedName, so it must stay a non-empty
+// SET OF AttributeTypeAndValue rather than an arbitrary possibly-empty attribute list.
 const ExtDistributionPointName = /* @__PURE__ */ (() =>
-  ASN1.choice({
-    fullName: ASN1.implicit(0, ExtGeneralNames),
-    nameRelativeToCRLIssuer: ASN1.implicit(1, ASN1.set(NameAttr)),
-  }))();
+  P.validate(
+    DERUtils.ASN1.choice({
+      fullName: DERUtils.ASN1.implicit(0, ExtGeneralNamesRaw),
+      nameRelativeToCRLIssuer: DERUtils.ASN1.implicit(1, DERUtils.ASN1.set(NameAttr)),
+    }),
+    (x) => {
+      // Validate after the CHOICE: DERUtils.ASN1.implicit needs inner ASN.1 tag metadata,
+      // while P.validate intentionally returns a plain coder without that metadata.
+      // RFC 5280 section 4.2.1.13 uses GeneralNames for fullName, so the
+      // RFC 5280 section 4.2.1.6 SIZE (1..MAX) rule applies here too.
+      if (x.TAG === 'fullName') nonEmptyList(x.data, 'distributionPoint fullName', 'GeneralName');
+      // RFC 5280 Appendix A: RelativeDistinguishedName is
+      // `SET SIZE (1..MAX) OF AttributeTypeAndValue`.
+      if (x.TAG === 'nameRelativeToCRLIssuer' && !x.data.length)
+        throw new Error('nameRelativeToCRLIssuer must contain at least one AttributeTypeAndValue');
+      return x;
+    }
+  ))();
 // RFC 5280 section 4.2.1.13: DistributionPoint and CRLDistributionPoints.
+// cRLIssuer is encoded as GeneralNames on the wire, but RFC 5280 restricts it to distinguished
+// name values from the CRL issuer field rather than arbitrary GeneralName alternatives.
 const ExtCRLDP = /* @__PURE__ */ (() =>
   P.validate(
-    ASN1.sequence({
+    DERUtils.ASN1.sequence({
       list: P.array(
         null,
-        ASN1.sequence({
-          distributionPoint: ASN1.optional(ASN1.explicit(0, ExtDistributionPointName)),
-          reasons: ASN1.optional(ASN1.implicit(1, ASN1BitStringRaw)),
-          cRLIssuer: ASN1.optional(ASN1.implicit(2, ExtGeneralNames)),
+        DERUtils.ASN1.sequence({
+          distributionPoint: DERUtils.ASN1.optional(
+            DERUtils.ASN1.explicit(0, ExtDistributionPointName)
+          ),
+          reasons: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(1, DERUtils.ASN1.BitStringRaw)),
+          cRLIssuer: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(2, ExtGeneralNamesRaw)),
         })
       ),
     }),
@@ -1478,125 +1479,154 @@ const ExtCRLDP = /* @__PURE__ */ (() =>
         if (!dp.distributionPoint && !dp.cRLIssuer) {
           throw new Error('DistributionPoint must include distributionPoint or cRLIssuer');
         }
+        if (dp.cRLIssuer) {
+          // RFC 5280 section 4.2.1.13 uses GeneralNames for cRLIssuer, so the
+          // RFC 5280 section 4.2.1.6 SIZE (1..MAX) rule applies here too.
+          nonEmptyList(dp.cRLIssuer, 'cRLIssuer', 'GeneralName');
+          // RFC 5280 section 4.2.1.13: if present, cRLIssuer "MUST only contain
+          // the distinguished name (DN)" from the referenced CRL issuer field.
+          for (const n of dp.cRLIssuer.list) {
+            if (n.TAG !== 'directoryName')
+              throw new Error('cRLIssuer must only contain directoryName values');
+          }
+        }
       }
       return x;
     }
   ))() satisfies P.CoderType<{
   list: {
     distributionPoint: P.UnwrapCoder<typeof ExtDistributionPointName> | undefined;
-    reasons: P.UnwrapCoder<typeof ASN1BitStringRaw> | undefined;
+    reasons: P.UnwrapCoder<typeof DERUtils.ASN1.BitStringRaw> | undefined;
     cRLIssuer: P.UnwrapCoder<typeof ExtGeneralNames> | undefined;
   }[];
 }>;
-const oidSet = <T extends Record<string, readonly [string, unknown]>>(map: T): Set<string> =>
-  new Set((Object.values(map) as ReadonlyArray<readonly [string, unknown]>).map((v) => v[0]));
-const oidDecode = <T>(
-  coder: P.CoderType<T>,
-  set: Set<string>
-): ((id: string, val: Uint8Array) => T | undefined) => {
-  return (id, val) =>
-    set.has(id) ? coder.decode(concatBytes(ASN1.OID.encode(id), val)) : undefined;
-};
-const DisplayText = /* @__PURE__ */ ASN1.choice({
-  utf8: UTF8String,
-  ia5: IA5,
-  visible: VisibleString,
-  bmp: BMPString,
-});
-const PolicyNoticeRef = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    organization: DisplayText,
-    numbers: /* @__PURE__ */ ASN1.sequence({ list: /* @__PURE__ */ P.array(null, ASN1.Integer) }),
-  }))();
 type PolicyUserNotice = Extract<CertPolicyQualifier, { TAG: 'userNotice' }>['data'];
-const PolicyQualifierInfoRaw = /* @__PURE__ */ (() =>
-  ASN1.sequence({ oid: ASN1.OID, value: RawTLV }))();
-const PolicyQualifierUserNotice = /* @__PURE__ */ P.apply(
-  /* @__PURE__ */ ASN1.sequence({
-    noticeRef: /* @__PURE__ */ ASN1.optional(PolicyNoticeRef),
-    explicitText: /* @__PURE__ */ P.optional(HasTail, DisplayText),
-  }),
-  {
-    encode: (n): PolicyUserNotice => ({
-      noticeRef: n.noticeRef
-        ? {
-            organization: {
-              tag: n.noticeRef.organization.TAG,
-              text: n.noticeRef.organization.data,
-            },
-            numbers: n.noticeRef.numbers.list.map((v) => Number(v)),
-          }
-        : undefined,
-      explicitText: n.explicitText
-        ? { tag: n.explicitText.TAG, text: n.explicitText.data }
-        : undefined,
-    }),
-    decode: (d: PolicyUserNotice) => ({
-      noticeRef: d.noticeRef
-        ? {
-            organization: {
-              TAG: d.noticeRef.organization.tag,
-              data: d.noticeRef.organization.text,
-            } as P.UnwrapCoder<typeof DisplayText>,
-            numbers: { list: d.noticeRef.numbers.map((n) => BigInt(n)) },
-          }
-        : undefined,
-      explicitText: d.explicitText
-        ? ({ TAG: d.explicitText.tag, data: d.explicitText.text } as P.UnwrapCoder<
-            typeof DisplayText
-          >)
-        : undefined,
-    }),
-  }
-) satisfies P.CoderType<PolicyUserNotice>;
-const PolicyQualifierKnownMap = {
-  cps: ['1.3.6.1.5.5.7.2.1', IA5],
-  userNotice: ['1.3.6.1.5.5.7.2.2', PolicyQualifierUserNotice],
-} as const;
-const PolicyQualifierByOID = /* @__PURE__ */ (() =>
-  ({
-    [PolicyQualifierKnownMap.cps[0]]: { TAG: 'cps', coder: PolicyQualifierKnownMap.cps[1] },
-    [PolicyQualifierKnownMap.userNotice[0]]: {
-      TAG: 'userNotice',
-      coder: PolicyQualifierKnownMap.userNotice[1],
-    },
-  }) as const)();
-const ExtPolicyQualifierInfo = /* @__PURE__ */ P.apply(PolicyQualifierInfoRaw, {
-  encode: (x: P.UnwrapCoder<typeof PolicyQualifierInfoRaw>): CertPolicyQualifier => {
-    const d = PolicyQualifierByOID[x.oid as keyof typeof PolicyQualifierByOID];
-    if (d) return { TAG: d.TAG, data: d.coder.decode(x.value) } as CertPolicyQualifier;
-    return { TAG: 'unknown', data: { oid: x.oid, value: TLVNodeCodec.decode(x.value) } };
-  },
-  decode: (q: CertPolicyQualifier): P.UnwrapCoder<typeof PolicyQualifierInfoRaw> => {
-    if (q.TAG === 'unknown') return { oid: q.data.oid, value: TLVNodeCodec.encode(q.data.value) };
-    if (q.TAG === 'cps')
-      return {
-        oid: PolicyQualifierKnownMap.cps[0],
-        value: PolicyQualifierKnownMap.cps[1].encode(q.data),
-      };
-    return {
-      oid: PolicyQualifierKnownMap.userNotice[0],
-      value: PolicyQualifierKnownMap.userNotice[1].encode(q.data),
-    };
-  },
-}) satisfies P.CoderType<CertPolicyQualifier>;
 // RFC 5280 section 4.2.1.4: CertificatePolicies.
-const ExtPolicies = /* @__PURE__ */ (() =>
-  P.validate(
-    ASN1.sequence({
+const ExtPolicies = /* @__PURE__ */ (() => {
+  const displayTextRaw = DERUtils.ASN1.choice({
+    utf8: DERUtils.ASN1.UTF8String,
+    ia5: DERUtils.ASN1.IA5String,
+    visible: DERUtils.ASN1.VisibleString,
+    bmp: DERUtils.ASN1.BMPString,
+  });
+  // RFC 5280 section 4.2.1.4 / Appendix A.1 defines every DisplayText arm as
+  // SIZE (1..200). The stricter explicitText encoding profile is checked higher
+  // in the UserNotice wrapper.
+  const displayText = P.validate(displayTextRaw, (d) => {
+    const len = Array.from(d.data).length;
+    if (len < 1 || len > 200)
+      throw new Error('DisplayText must contain 1..200 characters by RFC 5280 section 4.2.1.4');
+    return d;
+  });
+  // RFC 5280 models noticeNumbers as a bare SEQUENCE OF INTEGER here, so this shell keeps the
+  // raw organization-plus-number-list structure and leaves any notice-file semantics to callers.
+  const policyNoticeRef = DERUtils.ASN1.sequence({
+    organization: displayText,
+    numbers: DERUtils.ASN1.sequence({ list: P.array(null, DERUtils.ASN1.Integer) }),
+  });
+  const userNotice = P.apply(
+    DERUtils.ASN1.sequence({
+      noticeRef: DERUtils.ASN1.optional(policyNoticeRef),
+      // RFC 5280 section 4.2.1.4 makes explicitText a DisplayText value. It
+      // forbids conforming CAs from generating VisibleString/BMPString here, but
+      // does not require certificate users to reject them, and OpenSSL decodes
+      // real-world vectors with VisibleString explicitText.
+      explicitText: DERUtils.ASN1.optional(displayText),
+    }),
+    {
+      encode: (n): PolicyUserNotice => ({
+        noticeRef: n.noticeRef
+          ? {
+              organization: {
+                tag: n.noticeRef.organization.TAG,
+                text: n.noticeRef.organization.data,
+              },
+              // RFC 5280 section 4.2.1.4: NoticeReference.noticeNumbers are
+              // ASN.1 INTEGER values, so decode preserves values outside the
+              // JavaScript safe-number range instead of silently rounding them.
+              numbers: n.noticeRef.numbers.list.map((v) => v),
+            }
+          : undefined,
+        explicitText: n.explicitText
+          ? { tag: n.explicitText.TAG, text: n.explicitText.data }
+          : undefined,
+      }),
+      decode: (d: PolicyUserNotice) => ({
+        noticeRef: d.noticeRef
+          ? {
+              organization: {
+                TAG: d.noticeRef.organization.tag,
+                data: d.noticeRef.organization.text,
+              } as P.UnwrapCoder<typeof displayText>,
+              numbers: {
+                list: d.noticeRef.numbers.map((n) => {
+                  if (typeof n === 'number' && !Number.isSafeInteger(n))
+                    throw new Error('noticeNumbers number input must be a safe integer');
+                  return BigInt(n);
+                }),
+              },
+            }
+          : undefined,
+        explicitText: d.explicitText
+          ? ({ TAG: d.explicitText.tag, data: d.explicitText.text } as P.UnwrapCoder<
+              typeof displayText
+            >)
+          : undefined,
+      }),
+    }
+  ) satisfies P.CoderType<PolicyUserNotice>;
+  // RFC 5280 models PolicyQualifierInfo as `{ policyQualifierId, qualifier ANY DEFINED BY id }`,
+  // so this raw shell keeps the OID plus one qualifier TLV and leaves OID-specific decoding to
+  // the next wrapper.
+  const raw = DERUtils.ASN1.sequence({ oid: DERUtils.ASN1.OID, value: DERUtils.ASN1.any });
+  // This wrapper only gives typed views to the standard CPS/UserNotice qualifier rows; unknown
+  // qualifier OIDs stay raw here so any policy-ID-specific restrictions can be enforced above it.
+  const qualifier = P.apply(raw, {
+    encode: (x: P.UnwrapCoder<typeof raw>): CertPolicyQualifier => {
+      if (x.oid === 'idQtCps') return { TAG: 'cps', data: DERUtils.ASN1.IA5String.decode(x.value) };
+      if (x.oid === 'idQtUnotice') return { TAG: 'userNotice', data: userNotice.decode(x.value) };
+      return { TAG: 'unknown', data: { oid: x.oid, value: DERUtils.ASN1.TLVNode.decode(x.value) } };
+    },
+    decode: (q: CertPolicyQualifier): P.UnwrapCoder<typeof raw> => {
+      if (q.TAG === 'unknown')
+        return {
+          oid: q.data.oid,
+          value: DERUtils.ASN1.TLVNode.encode(q.data.value) as StrictBytes,
+        };
+      if (q.TAG === 'cps')
+        return {
+          oid: 'idQtCps',
+          value: DERUtils.ASN1.IA5String.encode(q.data) as StrictBytes,
+        };
+      return {
+        oid: 'idQtUnotice',
+        value: userNotice.encode(q.data) as StrictBytes,
+      };
+    },
+  }) satisfies P.CoderType<CertPolicyQualifier>;
+  return P.validate(
+    DERUtils.ASN1.sequence({
       list: P.array(
         null,
-        ASN1.sequence({
-          policy: ASN1.OID,
-          qualifiers: ASN1.optional(ASN1.sequence({ list: P.array(null, ExtPolicyQualifierInfo) })),
+        DERUtils.ASN1.sequence({
+          policy: DERUtils.ASN1.OID,
+          qualifiers: DERUtils.ASN1.optional(
+            DERUtils.ASN1.sequence({ list: P.array(null, qualifier) })
+          ),
         })
       ),
     }),
     (x) => {
-      // RFC 5280 section 4.2.1.4: certificatePolicies and policyQualifiers are SIZE (1..MAX).
+      // RFC 5280 section 4.2.1.4: certificatePolicies and policyQualifiers are SIZE (1..MAX),
+      // and a certificate policy OID must not appear more than once in one extension.
       if (!x.list.length)
         throw new Error('certificatePolicies must contain at least one PolicyInformation');
+      const policies = new Set<string>();
       for (const p of x.list) {
+        // RFC 5280 section 4.2.1.4: "A certificate policy OID MUST NOT appear more than once".
+        if (policies.has(p.policy))
+          throw new Error('certificatePolicies policyIdentifier must not appear more than once');
+        policies.add(p.policy);
         if (p.qualifiers && !p.qualifiers.list.length)
           throw new Error(
             'policyQualifiers must contain at least one PolicyQualifierInfo when present'
@@ -1604,27 +1634,43 @@ const ExtPolicies = /* @__PURE__ */ (() =>
       }
       return x;
     }
-  ))() satisfies P.CoderType<{
+  );
+})() satisfies P.CoderType<{
   list: {
     policy: string;
     qualifiers: { list: CertPolicyQualifier[] } | undefined;
   }[];
 }>;
+// Raw GeneralSubtree shell only: preserve absent DEFAULT minimum and optional
+// maximum here, then let NameConstraints apply the RFC 5280 profile rule that
+// minimum stays 0 and maximum stays absent.
 const ExtGeneralSubtree = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    base: ExtGeneralName,
-    minimum: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(0, ASN1.Integer)),
-    maximum: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(1, ASN1.Integer)),
+  DERUtils.ASN1.sequence({
+    base: ExtNameConstraintGeneralName,
+    minimum: /* @__PURE__ */ DERUtils.ASN1.optional(
+      /* @__PURE__ */ DERUtils.ASN1.implicit(0, DERUtils.ASN1.Integer)
+    ),
+    maximum: /* @__PURE__ */ DERUtils.ASN1.optional(
+      /* @__PURE__ */ DERUtils.ASN1.implicit(1, DERUtils.ASN1.Integer)
+    ),
   }))();
 // RFC 5280 section 4.2.1.10: NameConstraints.
 const ExtNameConstraints = /* @__PURE__ */ (() =>
   P.validate(
-    ASN1.sequence({
-      permitted: ASN1.optional(
-        ASN1.explicit(0, ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) }))
+    DERUtils.ASN1.sequence({
+      permitted: DERUtils.ASN1.optional(
+        // RFC 5280 Appendix A PKIX1Implicit88 defines extension syntax under
+        // IMPLICIT TAGS, so [0]/[1] replace the GeneralSubtrees SEQUENCE tag.
+        DERUtils.ASN1.implicit(
+          0,
+          DERUtils.ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) })
+        )
       ),
-      excluded: ASN1.optional(
-        ASN1.explicit(1, ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) }))
+      excluded: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(
+          1,
+          DERUtils.ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) })
+        )
       ),
     }),
     (x) => {
@@ -1647,7 +1693,7 @@ const ExtNameConstraints = /* @__PURE__ */ (() =>
           throw new Error(
             'nameConstraints GeneralSubtree.maximum is not supported by this profile'
           );
-        if (g.minimum !== undefined && g.minimum !== 0n)
+        if (g.minimum !== undefined && g.minimum !== _0n)
           throw new Error('nameConstraints GeneralSubtree.minimum must be 0 in this profile');
       }
       return x;
@@ -1656,70 +1702,112 @@ const ExtNameConstraints = /* @__PURE__ */ (() =>
   permitted: { list: P.UnwrapCoder<typeof ExtGeneralSubtree>[] } | undefined;
   excluded: { list: P.UnwrapCoder<typeof ExtGeneralSubtree>[] } | undefined;
 }>;
+// Raw SubjectDirectoryAttributes shell only: keep the non-empty Attribute /
+// AttributeValue lists here, while extension-level profile rules such as RFC
+// 5280's non-critical recommendation stay above.
 const ExtSubjectDirectoryAttributes = /* @__PURE__ */ (() =>
-  P.apply(
-    P.validate(
-      ASN1.sequence({
-        list: P.array(null, ASN1.sequence({ type: ASN1.OID, values: ASN1.set(CertAnyCodec) })),
-      }),
-      (x) => {
-        // RFC 5280 section 4.2.1.8: SubjectDirectoryAttributes is SEQUENCE SIZE (1..MAX) OF Attribute.
-        if (!x.list.length)
-          throw new Error('subjectDirectoryAttributes must contain at least one attribute');
-        // Attribute syntax (X.501, used by RFC 5280) requires SET SIZE (1..MAX) OF AttributeValue.
-        for (const a of x.list) {
-          if (!a.values.length)
-            throw new Error(
-              'subjectDirectoryAttributes attribute values must contain at least one value'
-            );
-        }
-        return x;
+  P.validate(
+    DERUtils.ASN1.sequence({
+      list: P.array(
+        null,
+        DERUtils.ASN1.sequence({
+          type: DERUtils.ASN1.OIDMap,
+          values: DERUtils.ASN1.set(DERUtils.ASN1.AnyValue),
+        })
+      ),
+    }),
+    (x) => {
+      // RFC 5280 section 4.2.1.8: SubjectDirectoryAttributes is
+      // SEQUENCE SIZE (1..MAX) OF Attribute.
+      if (!x.list.length)
+        throw new Error('subjectDirectoryAttributes must contain at least one attribute');
+      // Attribute syntax (X.501, used by RFC 5280) requires SET SIZE (1..MAX) OF AttributeValue.
+      for (const a of x.list) {
+        if (!a.values.length)
+          throw new Error(
+            'subjectDirectoryAttributes attribute values must contain at least one value'
+          );
       }
-    ),
-    {
-      encode: (x) => ({
-        list: x.list.map((i) => ({
-          type: i.type,
-          typeName: ATTR_NAME_OID[i.type],
-          values: i.values,
-        })),
-      }),
-      decode: (x: { list: { type: string; typeName?: string; values: CertAny[] }[] }) => ({
-        list: x.list.map((i) => ({ type: i.type, values: i.values })),
-      }),
+      return x;
     }
-  ))() satisfies P.CoderType<{ list: { type: string; typeName?: string; values: CertAny[] }[] }>;
+  ))() satisfies P.CoderType<{ list: { type: string; values: CertAny[] }[] }>;
+// RFC 5280 Appendix A keeps the inherited ISO syntax and says one of notBefore / notAfter MUST be
+// present if this extension is encoded, even though the main profile body removed the old section.
 const ExtPrivateKeyUsagePeriod = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    notBefore: ASN1.optional(ASN1.implicit(0, GeneralizedTime)),
-    notAfter: ASN1.optional(ASN1.implicit(1, GeneralizedTime)),
-  }))();
+  P.validate(
+    DERUtils.ASN1.sequence({
+      notBefore: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(0, DERUtils.ASN1.GeneralizedTime)),
+      notAfter: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(1, DERUtils.ASN1.GeneralizedTime)),
+    }),
+    (x) => {
+      // RFC 5280 Appendix A: "either notBefore or notAfter MUST be present".
+      if (x.notBefore === undefined && x.notAfter === undefined)
+        throw new Error('privateKeyUsagePeriod must contain notBefore or notAfter');
+      // RFC 5280 section 4.1.2.5.2: GeneralizedTime values are `YYYYMMDDHHMMSSZ`.
+      if (x.notBefore !== undefined)
+        X509Time.decode(DERUtils.ASN1.GeneralizedTime.encode(x.notBefore));
+      if (x.notAfter !== undefined)
+        X509Time.decode(DERUtils.ASN1.GeneralizedTime.encode(x.notAfter));
+      return x;
+    }
+  ))();
+// RFC 5280 section 5.2.5 forbids the empty sequence, allows at most one of the three scope booleans
+// to be TRUE, and says conforming CRL issuers MUST keep onlyContainsAttributeCerts at FALSE.
 const ExtIssuingDistributionPoint = /* @__PURE__ */ (() =>
-  ASN1.sequence({
-    distributionPoint: ASN1.optional(ASN1.explicit(0, ExtDistributionPointName)),
-    onlyContainsUserCerts: ASN1.optional(ASN1.implicit(1, ASN1Bool)),
-    onlyContainsCACerts: ASN1.optional(ASN1.implicit(2, ASN1Bool)),
-    onlySomeReasons: ASN1.optional(ASN1.implicit(3, ASN1BitStringRaw)),
-    indirectCRL: ASN1.optional(ASN1.implicit(4, ASN1Bool)),
-    onlyContainsAttributeCerts: ASN1.optional(ASN1.implicit(5, ASN1Bool)),
-  }))();
+  P.validate(
+    DERUtils.ASN1.sequence({
+      distributionPoint: DERUtils.ASN1.optional(
+        DERUtils.ASN1.explicit(0, ExtDistributionPointName)
+      ),
+      onlyContainsUserCerts: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(1, DERUtils.ASN1.Boolean)
+      ),
+      onlyContainsCACerts: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(2, DERUtils.ASN1.Boolean)),
+      onlySomeReasons: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(3, DERUtils.ASN1.BitStringRaw)
+      ),
+      indirectCRL: DERUtils.ASN1.optional(DERUtils.ASN1.implicit(4, DERUtils.ASN1.Boolean)),
+      onlyContainsAttributeCerts: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(5, DERUtils.ASN1.Boolean)
+      ),
+    }),
+    (x) => {
+      if (x.onlyContainsAttributeCerts)
+        throw new Error('issuingDistributionPoint onlyContainsAttributeCerts must be false');
+      const scope =
+        +!!x.onlyContainsUserCerts + +!!x.onlyContainsCACerts + +!!x.onlyContainsAttributeCerts;
+      // RFC 5280 section 5.2.5: if all scope booleans are FALSE, either distributionPoint
+      // or onlySomeReasons must be present; it also allows at most one scope boolean to be TRUE.
+      if (scope > 1) throw new Error('issuingDistributionPoint must set at most one scope boolean');
+      if (
+        !x.distributionPoint &&
+        !x.onlySomeReasons &&
+        !x.onlyContainsUserCerts &&
+        !x.onlyContainsCACerts &&
+        !x.indirectCRL
+      )
+        throw new Error('issuingDistributionPoint must not be an empty sequence');
+      return x;
+    }
+  ))();
+// Raw PolicyMappings shell only: keep the issuer/subject OID pairs here, then let the checked
+// wrapper below enforce RFC 5280's non-empty list and anyPolicy prohibition on the public path.
 const ExtPolicyMappings = /* @__PURE__ */ (() =>
-  ASN1.sequence({
+  DERUtils.ASN1.sequence({
     list: /* @__PURE__ */ P.array(
       null,
-      /* @__PURE__ */ ASN1.sequence({
-        issuerDomainPolicy: ASN1.OID,
-        subjectDomainPolicy: ASN1.OID,
+      /* @__PURE__ */ DERUtils.ASN1.sequence({
+        issuerDomainPolicy: DERUtils.ASN1.OID,
+        subjectDomainPolicy: DERUtils.ASN1.OID,
       })
     ),
   }))();
-const POLICY_ANY = '2.5.29.32.0';
 const ExtPolicyMappingsChecked = /* @__PURE__ */ (() =>
   P.validate(ExtPolicyMappings, (x) => {
     // RFC 5280 section 4.2.1.5: policyMappings is SIZE (1..MAX), and either side MUST NOT be anyPolicy.
     if (!x.list.length) throw new Error('policyMappings must contain at least one mapping');
     for (const m of x.list) {
-      if (m.issuerDomainPolicy === POLICY_ANY || m.subjectDomainPolicy === POLICY_ANY)
+      if (m.issuerDomainPolicy === 'anyPolicy' || m.subjectDomainPolicy === 'anyPolicy')
         throw new Error('policyMappings must not contain anyPolicy');
     }
     return x;
@@ -1728,9 +1816,13 @@ const ExtPolicyMappingsChecked = /* @__PURE__ */ (() =>
 }>;
 const ExtPolicyConstraints = /* @__PURE__ */ (() =>
   P.validate(
-    ASN1.sequence({
-      requireExplicitPolicy: ASN1.optional(ASN1.implicit(0, ASN1.Integer)),
-      inhibitPolicyMapping: ASN1.optional(ASN1.implicit(1, ASN1.Integer)),
+    DERUtils.ASN1.sequence({
+      requireExplicitPolicy: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(0, DERUtils.ASN1.Integer)
+      ),
+      inhibitPolicyMapping: DERUtils.ASN1.optional(
+        DERUtils.ASN1.implicit(1, DERUtils.ASN1.Integer)
+      ),
     }),
     (x) => {
       // RFC 5280 section 4.2.1.11: conforming CAs MUST NOT emit empty PolicyConstraints.
@@ -1739,10 +1831,10 @@ const ExtPolicyConstraints = /* @__PURE__ */ (() =>
           'policyConstraints must contain requireExplicitPolicy or inhibitPolicyMapping'
         );
       // RFC 5280 section 4.2.1.11 / ASN.1: both fields are SkipCerts ::= INTEGER (0..MAX).
-      if (x.requireExplicitPolicy !== undefined && x.requireExplicitPolicy < 0n)
+      if (x.requireExplicitPolicy !== undefined && x.requireExplicitPolicy < _0n)
         throw new Error('policyConstraints requireExplicitPolicy must be >= 0');
       // RFC 5280 section 4.2.1.11 / ASN.1: both fields are SkipCerts ::= INTEGER (0..MAX).
-      if (x.inhibitPolicyMapping !== undefined && x.inhibitPolicyMapping < 0n)
+      if (x.inhibitPolicyMapping !== undefined && x.inhibitPolicyMapping < _0n)
         throw new Error('policyConstraints inhibitPolicyMapping must be >= 0');
       return x;
     }
@@ -1751,44 +1843,38 @@ const ExtPolicyConstraints = /* @__PURE__ */ (() =>
   inhibitPolicyMapping: bigint | undefined;
 }>;
 const ExtQCStatements = /* @__PURE__ */ (() =>
-  P.apply(
-    ASN1.sequence({
-      list: P.array(
-        null,
-        ASN1.sequence({
-          statementId: ASN1.OID,
-          statementInfo: P.optional(HasTail, CertAnyCodec),
-        })
-      ),
-    }),
-    {
-      encode: (x) => ({
-        list: x.list.map((i) => ({
-          statementId: i.statementId,
-          statementName: QC_STATEMENT_OID[i.statementId],
-          statementInfo: i.statementInfo,
-        })),
-      }),
-      decode: (x: {
-        list: { statementId: string; statementName?: string; statementInfo?: CertAny }[];
-      }) => ({
-        list: x.list.map((i) => ({ statementId: i.statementId, statementInfo: i.statementInfo })),
-      }),
-    }
-  ))() satisfies P.CoderType<{
-  list: { statementId: string; statementName?: string; statementInfo?: CertAny }[];
+  // RFC 3739 leaves QCStatements open by statementId, so keep statementInfo generic here and
+  // let higher layers decide whether a known statement OID needs stricter typed semantics.
+  DERUtils.ASN1.sequence({
+    list: P.array(
+      null,
+      DERUtils.ASN1.sequence({
+        statementId: DERUtils.ASN1.OIDMap,
+        statementInfo: /* @__PURE__ */ DERUtils.ASN1.optional(DERUtils.ASN1.AnyValue),
+      })
+    ),
+  }))() satisfies P.CoderType<{
+  list: { statementId: string; statementInfo: CertAny | undefined }[];
 }>;
 const ExtBody = /* @__PURE__ */ (() =>
-  ASN1.sequence({ critical: ASN1.optional(ASN1Bool), extnValue: ASN1.OctetString }))();
+  // Raw Extension body shell only: preserve the optional BOOLEAN DEFAULT FALSE here and let the
+  // later extension decoder normalize an absent `critical` field to the public `false` boolean.
+  DERUtils.ASN1.sequence({
+    critical: DERUtils.ASN1.optional(DERUtils.ASN1.Boolean),
+    extnValue: DERUtils.ASN1.OctetString,
+  }))();
 const ExtBasic = /* @__PURE__ */ (() =>
   P.validate(
-    /* @__PURE__ */ ASN1.sequence({
-      ca: /* @__PURE__ */ ASN1.optional(ASN1Bool),
-      pathLen: /* @__PURE__ */ ASN1.optional(ASN1.Integer),
+    // Raw BasicConstraints body only: enforce the local cA/pathLenConstraint
+    // coupling here, then let later certificate-level logic handle keyCertSign
+    // coupling and criticality requirements.
+    /* @__PURE__ */ DERUtils.ASN1.sequence({
+      ca: /* @__PURE__ */ DERUtils.ASN1.optional(DERUtils.ASN1.Boolean),
+      pathLen: /* @__PURE__ */ DERUtils.ASN1.optional(DERUtils.ASN1.Integer),
     }),
     (x) => {
       // RFC 5280 section 4.2.1.9: pathLenConstraint MUST be >= 0 and only meaningful with cA asserted.
-      if (x.pathLen !== undefined && x.pathLen < 0n)
+      if (x.pathLen !== undefined && x.pathLen < _0n)
         throw new Error('basicConstraints pathLenConstraint must be >= 0');
       // RFC 5280 section 4.2.1.9: CAs MUST NOT include pathLenConstraint unless cA is asserted.
       if (x.pathLen !== undefined && !x.ca)
@@ -1796,70 +1882,75 @@ const ExtBasic = /* @__PURE__ */ (() =>
       return x;
     }
   ))() satisfies P.CoderType<{ ca: boolean | undefined; pathLen: bigint | undefined }>;
-const EKU_OID_TO_NAME: Record<string, string> = {
-  '2.5.29.37.0': 'anyExtendedKeyUsage',
-  '1.3.6.1.5.5.7.3.4': 'emailProtection',
-  '1.3.6.1.5.5.7.3.3': 'codeSigning',
-};
-const EKU_NAME_TO_OID = /* @__PURE__ */ Object.fromEntries(
-  /* @__PURE__ */ Object.entries(EKU_OID_TO_NAME).map(([oid, name]) => [name, oid])
-) as Record<string, string>;
 const ExtEKU = /* @__PURE__ */ (() =>
-  P.apply(/* @__PURE__ */ ASN1.sequence({ list: /* @__PURE__ */ P.array(null, ASN1.OID) }), {
-    encode: (x) => ({ list: x.list.map((oid) => EKU_OID_TO_NAME[oid] || `OID:${oid}`) }),
-    decode: (x: { list: string[] }) => ({
-      list: x.list.map((name) => {
-        if (EKU_NAME_TO_OID[name]) return EKU_NAME_TO_OID[name];
-        if (name.startsWith('OID:')) return name.slice(4);
-        if (/^[0-9]+(?:\.[0-9]+)+$/.test(name)) return name;
-        throw new Error(`unknown EKU name ${name}`);
-      }),
+  // `X509.extensions()` currently reaches this typed EKU coder only on decode;
+  // raw certificate re-encode still preserves extension bytes from `ExtCodec`,
+  // so friendly-name rows must stay synced.
+  // RFC 5280 section 4.2.1.12: ExtKeyUsageSyntax is `SEQUENCE SIZE (1..MAX) OF KeyPurposeId`.
+  extNonEmpty(
+    /* @__PURE__ */ DERUtils.ASN1.sequence({
+      list: /* @__PURE__ */ P.array(null, DERUtils.ASN1.OIDMap),
     }),
-  }))() satisfies P.CoderType<{ list: string[] }>;
-const ExtKnownMap: Record<string, [string, P.CoderType<any>]> = /* @__PURE__ */ (() => ({
-  ski: ['2.5.29.14', ASN1.OctetString],
-  basic: ['2.5.29.19', ExtBasic],
-  keyUsage: ['2.5.29.15', ASN1BitStringRaw],
-  eku: ['2.5.29.37', ExtEKU],
-  san: ['2.5.29.17', ExtSAN],
-  aki: ['2.5.29.35', ExtAKI],
-  aia: ['1.3.6.1.5.5.7.1.1', ExtAIA],
-  proxyCertInfo: ['1.3.6.1.5.5.7.1.14', ExtProxyCertInfoChecked],
-  tlsFeature: ['1.3.6.1.5.5.7.1.24', ExtTLSFeature],
-  sct: ['1.3.6.1.4.1.11129.2.4.2', SCTListInner],
-  crlDistributionPoints: ['2.5.29.31', ExtCRLDP],
-  policies: ['2.5.29.32', ExtPolicies],
-  nameConstraints: ['2.5.29.30', ExtNameConstraints],
-  subjectDirectoryAttributes: ['2.5.29.9', ExtSubjectDirectoryAttributes],
-  privateKeyUsagePeriod: ['2.5.29.16', ExtPrivateKeyUsagePeriod],
-  issuerAltName: ['2.5.29.18', ExtIAN],
-  issuingDistributionPoint: ['2.5.29.28', ExtIssuingDistributionPoint],
-  certificateIssuer: ['2.5.29.29', ExtGeneralNames],
-  policyMappings: ['2.5.29.33', ExtPolicyMappingsChecked],
-  policyConstraints: ['2.5.29.36', ExtPolicyConstraints],
-  freshestCRL: ['2.5.29.46', ExtCRLDP],
-  inhibitAnyPolicy: ['2.5.29.54', ASN1.Integer],
-  qcStatements: ['1.3.6.1.5.5.7.1.3', ExtQCStatements],
-  subjectInfoAccess: ['1.3.6.1.5.5.7.1.11', ExtSIA],
-  msCertType: ['1.3.6.1.4.1.311.21.1', CertAnyCodec],
-}))();
+    'extendedKeyUsage',
+    'KeyPurposeId'
+  ))() satisfies P.CoderType<{ list: string[] }>;
+const ExtKnownIDs = [
+  'subjectKeyIdentifier',
+  'basicConstraints',
+  'keyUsage',
+  'extendedKeyUsage',
+  'subjectAltName',
+  'authorityKeyIdentifier',
+  'authorityInfoAccess',
+  'proxyCertInfo',
+  'tlsFeature',
+  'sctList',
+  'crlDistributionPoints',
+  'certificatePolicies',
+  'nameConstraints',
+  'subjectDirectoryAttributes',
+  'privateKeyUsagePeriod',
+  'issuerAltName',
+  'issuingDistributionPoint',
+  'certificateIssuer',
+  'policyMappings',
+  'policyConstraints',
+  'freshestCRL',
+  'inhibitAnyPolicy',
+  'qcStatements',
+  'subjectInfoAccess',
+  'msCertType',
+] as const;
+const KnownCriticalCert = /* @__PURE__ */ (() =>
+  new Set<string>(
+    ExtKnownIDs.filter((name) => {
+      // RFC 5280 section 5.2.5 defines issuingDistributionPoint for CRLs, and
+      // section 5.3.3 defines certificateIssuer for CRL entries; OpenSSL rejects
+      // these as critical certificate extensions with "unhandled critical extension".
+      return name !== 'issuingDistributionPoint' && name !== 'certificateIssuer';
+    })
+  ))();
 const bitFlags = <T extends Record<string, number>>(
-  bs: { unused: number; bytes: Uint8Array },
+  bs: TArg<{ unused: number; bytes: Uint8Array }>,
   ix: T,
   name: string
 ): { [K in keyof T]: boolean } => {
-  if (bs.unused > 7) throw new Error(`${name} BIT STRING invalid unused bits: ${bs.unused}`);
-  const bits = P.array(bs.bytes.length * 8, P.bits(1)).decode(bs.bytes);
-  const used = bits.length - bs.unused;
+  const bitsrc = bs as { unused: number; bytes: Uint8Array };
+  if (bitsrc.unused > 7)
+    throw new Error(`${name} BIT STRING invalid unused bits: ${bitsrc.unused}`);
+  const bits = P.array(bitsrc.bytes.length * 8, P.bits(1)).decode(bitsrc.bytes);
+  const used = bits.length - bitsrc.unused;
   const get = (i: number): boolean => (i < used ? !!bits[i] : false);
   const out: Partial<{ [K in keyof T]: boolean }> = {};
   for (const k in ix) out[k] = get(ix[k]);
   return out as { [K in keyof T]: boolean };
 };
-const keyUsageBits = (bs: {
-  unused: number;
-  bytes: Uint8Array;
-}): {
+const keyUsageBits = (
+  bs: TArg<{
+    unused: number;
+    bytes: Uint8Array;
+  }>
+): {
   digitalSignature: boolean;
   nonRepudiation: boolean;
   keyEncipherment: boolean;
@@ -1870,6 +1961,8 @@ const keyUsageBits = (bs: {
   encipherOnly: boolean;
   decipherOnly: boolean;
 } => {
+  // RFC 5280 section 4.2.1.3 uses fixed KeyUsage BIT STRING numbering;
+  // omitted trailing bits stay false.
   return bitFlags(
     bs,
     {
@@ -1886,31 +1979,84 @@ const keyUsageBits = (bs: {
     'KeyUsage'
   );
 };
-const ExtValueByOID = /* @__PURE__ */ (() => P.mappedTag(ASN1.OID, ExtKnownMap))();
-const extValueDecode = /* @__PURE__ */ (() => oidDecode(ExtValueByOID, oidSet(ExtKnownMap)))();
+const ExtValueByOID = /* @__PURE__ */ (() =>
+  P.mappedTag(DERUtils.ASN1.OID, {
+    // This decode map includes a few CRL/CRL-entry OIDs for low-level inspection; the
+    // certificate critical-extension allowlist above is intentionally narrower.
+    ski: ['subjectKeyIdentifier', DERUtils.ASN1.OctetString],
+    basic: ['basicConstraints', ExtBasic],
+    keyUsage: ['keyUsage', DERUtils.ASN1.BitStringRaw],
+    eku: ['extendedKeyUsage', ExtEKU],
+    san: ['subjectAltName', ExtSAN],
+    aki: ['authorityKeyIdentifier', ExtAKI],
+    aia: ['authorityInfoAccess', ExtAIA],
+    proxyCertInfo: ['proxyCertInfo', ExtProxyCertInfoChecked],
+    tlsFeature: ['tlsFeature', ExtTLSFeature],
+    sct: ['sctList', SCTListInner],
+    crlDistributionPoints: ['crlDistributionPoints', ExtCRLDP],
+    policies: ['certificatePolicies', ExtPolicies],
+    nameConstraints: ['nameConstraints', ExtNameConstraints],
+    subjectDirectoryAttributes: ['subjectDirectoryAttributes', ExtSubjectDirectoryAttributes],
+    privateKeyUsagePeriod: ['privateKeyUsagePeriod', ExtPrivateKeyUsagePeriod],
+    issuerAltName: ['issuerAltName', ExtIAN],
+    issuingDistributionPoint: ['issuingDistributionPoint', ExtIssuingDistributionPoint],
+    certificateIssuer: ['certificateIssuer', ExtGeneralNames],
+    policyMappings: ['policyMappings', ExtPolicyMappingsChecked],
+    policyConstraints: ['policyConstraints', ExtPolicyConstraints],
+    freshestCRL: ['freshestCRL', ExtCRLDP],
+    inhibitAnyPolicy: ['inhibitAnyPolicy', DERUtils.ASN1.Integer],
+    qcStatements: ['qcStatements', ExtQCStatements],
+    subjectInfoAccess: ['subjectInfoAccess', ExtSIA],
+    msCertType: ['msCertType', DERUtils.ASN1.AnyValue],
+  }))();
+const extValueDecode = /* @__PURE__ */ (() => {
+  const known = new Set<string>(ExtKnownIDs);
+  return ((id: string, val: TArg<Uint8Array>) =>
+    known.has(id)
+      ? ExtValueByOID.decode(concatBytes(DERUtils.ASN1.OID.encode(id), val as Uint8Array))
+      : undefined) as TRet<
+    (id: string, val: Uint8Array) => P.UnwrapCoder<typeof ExtValueByOID> | undefined
+  >;
+})();
 
-export const X509: {
+type X509Api = {
   decode: (der: Uint8Array, opts?: BEROpts) => Cert;
   encode: (cert: Cert) => Uint8Array;
   extensions: (cert: Cert) => CertExt[];
-} = /* @__PURE__ */ (() =>
-  ({
-    decode: (der: Uint8Array, opts: BEROpts = {}): Cert =>
-      X509C.Certificate.decode(berView(der, opts).der),
-    encode: (cert: Cert): Uint8Array => X509C.Certificate.encode(cert),
-    extensions: (cert: Cert): CertExt[] => {
-      const out: CertExt[] = [];
-      for (const e of cert.tbs.extensions?.list || []) {
-        const body = ExtBody.inner.decode(e.rest);
-        const d: CertExt = { oid: e.oid, critical: !!body.critical };
-        const k = extValueDecode(e.oid, body.extnValue);
-        if (k) (d as Record<string, unknown>)[k.TAG] = k.data;
-        out.push(d);
-      }
-      return out;
-    },
-  }) as const)();
-const knownCritical = /* @__PURE__ */ (() => oidSet(ExtKnownMap))();
+};
+const X509Api: X509Api = /* @__PURE__ */ deepFreeze({
+  // Public certificate wrapper: BER-normalized decode, raw DER re-encode, and
+  // best-effort typed extension projection.
+  decode: (der: TArg<Uint8Array>, opts: BEROpts = {}): Cert => {
+    const cert = X509C.Certificate.decode(berView(der, opts).der);
+    // RFC 5280 §4.1 defines Extension as critical BOOLEAN plus extnValue OCTET STRING;
+    // raw X509.decode preserves extension bytes, so run that DER shell before returning.
+    for (const e of cert.tbs.extensions?.list || []) {
+      const body = ExtBody.inner.decode(e.rest);
+      if (e.oid !== 'keyUsage') continue;
+      // RFC 5280 §4.2.1.3 defines KeyUsage as a BIT STRING inside Extension.extnValue;
+      // raw X509.decode preserves extension bytes, so enforce X.690 §11.2.1 here too.
+      DERUtils.ASN1.BitStringRaw.decode(body.extnValue);
+    }
+    return cert;
+  },
+  encode: (cert: Cert): TRet<Uint8Array> => X509C.Certificate.encode(cert) as TRet<Uint8Array>,
+  extensions: (cert: Cert): TRet<CertExt[]> => {
+    const out: CertExt[] = [];
+    for (const e of cert.tbs.extensions?.list || []) {
+      const body = ExtBody.inner.decode(e.rest);
+      const d: CertExt = { oid: e.oid, critical: !!body.critical };
+      const k = extValueDecode(e.oid, body.extnValue);
+      if (k) (d as Record<string, unknown>)[k.TAG] = k.data;
+      out.push(d);
+    }
+    return out as TRet<CertExt[]>;
+  },
+});
+/** X.509 certificate DER helpers. */
+export const X509: TRet<X509Api> = X509Api as unknown as TRet<X509Api>;
+// Collapse parsed extension state into the CA/pathLen/keyUsage/EKU summary shared by
+// signer and issuer checks; purpose-specific validation still belongs to the callers.
 const certInfo = (
   cert: Cert
 ): {
@@ -1940,75 +2086,201 @@ const certInfo = (
     throw new Error('keyUsage keyCertSign requires basicConstraints cA=true');
   return { isCA, pathLen, keyUsage, eku, critical };
 };
-const subjectDer = (cert: Cert): Uint8Array => X509C.Name.encode(cert.tbs.subject);
+// Exact DER form of the subject Name, kept for diagnostics and exact identity
+// checks. RFC 5280 section 7.1 defines DN comparison through RFC 4518
+// StringPrep for PrintableString/UTF8String DirectoryString values: RFC 4518
+// sections 2.2/2.3/2.6.1 require mapping, NFKC, and insignificant-space
+// handling, while RFC 5280 section 7.1 adds RFC 3454 Appendix B.2 case folding
+// and says RDN SET members are unordered but RDN order is significant.
+//
+// This comparator covers:
+// - exact DER equality
+// - RFC 4518 map-to-space/drop characters; OpenSSL only maps ASCII spaces
+// - NFKC; OpenSSL does not normalize UTF8 strings
+// - JavaScript lowercasing; OpenSSL lowercases only ASCII bytes
+// - RFC 4518 attribute-value space compression; OpenSSL compresses ASCII spaces to one SP
+// - unordered attributes inside each RDN
+// - raw ANY AttributeValue tags by exact TLV bytes; OpenSSL preserves unsupported entries
+//
+// Missing pieces:
+// - full RFC 3454 Appendix B.2 case-fold table
+// - RFC 4518 section 2.4 prohibited/unassigned Unicode 3.2 tables
+// - per-AttributeType equality rules such as RFC 5280 section 7.3 domainComponent
+const subjectDer = (cert: Cert): TRet<Uint8Array> =>
+  X509C.Name.encode(cert.tbs.subject) as TRet<Uint8Array>;
+const nameEqual = (a: NameCodec, b: NameCodec): boolean => {
+  if (equalBytes(X509C.Name.encode(a), X509C.Name.encode(b))) return true;
+  const key = (n: NameCodec): string =>
+    JSON.stringify(
+      n.rdns.map((rdn) =>
+        rdn
+          .map((attr) => {
+            if (attr.value.TAG === 'raw')
+              return JSON.stringify([
+                attr.oid,
+                `raw:${bytesToHex(DERUtils.ASN1.TLVNode.encode(attr.value.data))}`,
+              ]);
+            let mapped = '';
+            for (const ch of attr.value.data) {
+              const c = ch.codePointAt(0)!;
+              // RFC 4518 section 2.2 maps these separators to U+0020 before NFKC.
+              // Keep the RFC's closed list here; JS whitespace classes include extra chars.
+              const space =
+                c === 0x09 ||
+                c === 0x0a ||
+                c === 0x0b ||
+                c === 0x0c ||
+                c === 0x0d ||
+                c === 0x20 ||
+                c === 0x85 ||
+                c === 0xa0 ||
+                c === 0x1680 ||
+                (c >= 0x2000 && c <= 0x200a) ||
+                c === 0x2028 ||
+                c === 0x2029 ||
+                c === 0x202f ||
+                c === 0x205f ||
+                c === 0x3000;
+              if (space) {
+                mapped += ' ';
+                continue;
+              }
+              // RFC 4518 section 2.2 maps ignorable/control-function chars to nothing.
+              // The first clauses mirror RFC 3454 Appendix B.1 values named by RFC 4518;
+              // the later clauses are RFC 4518's complete control-function list.
+              const drop =
+                c === 0x00ad ||
+                c === 0x034f ||
+                c === 0x1806 ||
+                (c >= 0x180b && c <= 0x180e) ||
+                (c >= 0x200b && c <= 0x200f) ||
+                (c >= 0x202a && c <= 0x202e) ||
+                (c >= 0x2060 && c <= 0x206f) ||
+                (c >= 0xfe00 && c <= 0xfe0f) ||
+                c === 0xfeff ||
+                (c >= 0xfff9 && c <= 0xfffc) ||
+                (c >= 0x1d173 && c <= 0x1d17a) ||
+                c === 0xe0001 ||
+                (c >= 0xe0020 && c <= 0xe007f) ||
+                (c >= 0x00 && c <= 0x08) ||
+                (c >= 0x0e && c <= 0x1f) ||
+                (c >= 0x7f && c <= 0x84) ||
+                (c >= 0x86 && c <= 0x9f) ||
+                c === 0x06dd ||
+                c === 0x070f;
+              // This is comparison canonicalization only; RFC 4518 section 2.4
+              // prohibited/unassigned enforcement is intentionally still missing above.
+              if (!drop) mapped += ch;
+            }
+            const folded = mapped.toLowerCase().normalize('NFKC');
+            const parts = folded.split(' ').filter((p) => p.length);
+            return JSON.stringify([
+              attr.oid,
+              `text:${parts.length ? ` ${parts.join('  ')} ` : '  '}`,
+            ]);
+          })
+          .sort()
+      )
+    );
+  return key(a) === key(b);
+};
 const ensureCritical = (c: Cert): void => {
   // RFC 5280 section 4.2: unrecognized critical extensions require certificate rejection.
-  for (const oid of certInfo(c).critical) {
-    if (!knownCritical.has(oid)) throw new Error(`unknown critical extension ${oid}`);
+  for (const id of certInfo(c).critical) {
+    if (!KnownCriticalCert.has(id)) throw new Error(`unknown critical extension ${id}`);
   }
 };
-const ECDSASig = /* @__PURE__ */ (() => ASN1.sequence({ r: ASN1.Integer, s: ASN1.Integer }))();
 
+const checkSignerInfoShape = (signerInfo: TArg<SignerInfoCodec>): void => {
+  const info = signerInfo as SignerInfoCodec;
+  // RFC 5652 section 10.2.5: CMSVersion is v0..v5.
+  if (info.version < _0n || info.version > _5n)
+    throw new Error(`SignerInfo.version CMSVersion must be in v0..v5, got ${info.version}`);
+  // RFC 5652 section 5.3: SignedAttributes/UnsignedAttributes are SET SIZE (1..MAX) OF Attribute.
+  if (info.signedAttrs && info.signedAttrs.length === 0)
+    throw new Error('SignedAttributes present but empty');
+  if (info.unsignedAttrs && info.unsignedAttrs.length === 0)
+    throw new Error('UnsignedAttributes present but empty');
+  // RFC 5652 section 5.3: SignerInfo.version is coupled to SignerIdentifier choice.
+  // issuerAndSerialNumber => version 1, subjectKeyIdentifier => version 3.
+  if (info.sid.TAG === 'issuerSerial' && info.version !== _1n)
+    throw new Error(`SignerInfo.version must be 1 for issuerSerial SID, got ${info.version}`);
+  if (info.sid.TAG === 'subjectKeyIdentifier') {
+    if (!info.sid.data.length)
+      throw new Error('SignerInfo.sid subjectKeyIdentifier must be non-empty');
+    if (info.version !== _3n)
+      throw new Error(
+        `SignerInfo.version must be 3 for subjectKeyIdentifier SID, got ${info.version}`
+      );
+  }
+};
+
+// Strict CMS SignedData parser: decode ContentInfo->SignedData and enforce the
+// version/content invariants this API relies on before higher-level checks run.
 const cmsSignedData = (
-  src: Uint8Array
+  src: TArg<Uint8Array>
 ): {
   contentInfo: P.UnwrapCoder<typeof CMSX.ContentInfo>;
   signedData: P.UnwrapCoder<typeof CMSX.SignedData>;
 } => {
-  const contentInfo = CMSX.ContentInfo.decode(src);
+  const contentInfo = CMSX.ContentInfo.decode(src as Uint8Array);
   // RFC 5652 section 3: contentType identifies the associated [0] EXPLICIT content payload type.
   // RFC 5652 sections 10.2.6 (UserKeyingMaterial/UKM) and 10.2.7 (OtherKeyAttribute)
   // apply to recipient/key-management flows under EnvelopedData, which are intentionally
   // unsupported in this signed-data-only API.
-  if (cmsContentTypeOID(contentInfo.contentType) !== CMSOID.signedData)
+  if (contentInfo.contentType !== 'signedData')
     throw new Error(`expected SignedData contentType, got ${contentInfo.contentType}`);
   // RFC 5652 section 5.2.1: PKCS #7 compatibility fallback to `content ANY` is MAY, not MUST.
   // This implementation is strict CMS-only and intentionally does not attempt PKCS #7 ANY fallback decode.
   const signedData = CMSX.SignedData.decode(contentInfo.content);
   // RFC 5652 section 10.2.5: CMSVersion ::= INTEGER { v0(0), v1(1), v2(2), v3(3), v4(4), v5(5) }.
-  const badSignedVersion = signedData.version < 0n || signedData.version > 5n;
+  const badSignedVersion = signedData.version < _0n || signedData.version > _5n;
   if (badSignedVersion)
     throw new Error(`SignedData.version CMSVersion must be in v0..v5, got ${signedData.version}`);
-  for (const si of signedData.signerInfos) {
-    if (si.version < 0n || si.version > 5n)
-      throw new Error(`SignerInfo.version CMSVersion must be in v0..v5, got ${si.version}`);
-  }
+  for (const si of signedData.signerInfos) checkSignerInfoShape(si);
   // RFC 5652 section 5.1: SignedData.version depends on cert/crl choices, signer versions, and eContentType.
   const signedDataVersion = (() => {
     const certs = signedData.certificates || [];
     const crls = signedData.crls || [];
-    if (certs.some((i) => i.TAG === 'other') || crls.some((i) => i.TAG === 'other')) return 5n;
-    if (certs.some((i) => i.TAG === 'v2AttrCert')) return 4n;
+    if (certs.some((i) => i.TAG === 'other') || crls.some((i) => i.TAG === 'other')) return _5n;
+    if (certs.some((i) => i.TAG === 'v2AttrCert')) return _4n;
     if (
       certs.some((i) => i.TAG === 'v1AttrCert') ||
-      signedData.signerInfos.some((i) => i.version === 3n) ||
-      signedData.encapContentInfo.eContentType !== CMSOID.data
+      signedData.signerInfos.some((i) => i.version === _3n) ||
+      signedData.encapContentInfo.eContentType !== 'data'
     )
-      return 3n;
-    return 1n;
+      return _3n;
+    return _1n;
   })();
   if (signedData.version !== signedDataVersion)
     throw new Error(`SignedData.version must be ${signedDataVersion}, got ${signedData.version}`);
   // RFC 5652 section 5.3: signedAttrs MUST be present when encapContentInfo.eContentType is not id-data.
-  if (signedData.encapContentInfo.eContentType !== CMSOID.data) {
+  if (signedData.encapContentInfo.eContentType !== 'data') {
     for (const signerInfo of signedData.signerInfos) {
       if (!signerInfo.signedAttrs)
         throw new Error('SignerInfo.signedAttrs must be present when eContentType is not id-data');
     }
   }
+  for (const signerInfo of signedData.signerInfos) {
+    for (const attr of signerInfo.signedAttrs || []) {
+      // RFC 8551 section 2.5.2: sMIMECapabilities Attribute MUST include only
+      // one AttributeValue; OpenSSL 3.5.4 accepts but does not generate duplicates.
+      if (attr.oid === 'attrSMIMECapabilities' && attr.values.length !== 1)
+        throw new Error(
+          `sMIMECapabilities attribute must have exactly one value, got ${attr.values.length}`
+        );
+    }
+  }
   // RFC 5652 section 5.1: digestAlgorithms is the collection of digest algorithm identifiers for SignerInfos.
   for (const signerInfo of signedData.signerInfos) {
-    const hasDigest = signedData.digestAlgorithms.some((d) =>
-      digestAlgEqual(d, signerInfo.digestAlg)
-    );
-    if (!hasDigest)
+    const digest = signedData.digestAlgorithms.find((d) => digestAlgEqual(d, signerInfo.digestAlg));
+    if (!digest)
       throw new Error('SignedData.digestAlgorithms must include each SignerInfo.digestAlgorithm');
   }
   // RFC 5652 section 5.2: degenerate SignedData (no signers) MUST be id-data with omitted eContent.
   if (
     signedData.signerInfos.length === 0 &&
-    (signedData.encapContentInfo.eContentType !== CMSOID.data ||
-      signedData.encapContentInfo.eContent)
+    (signedData.encapContentInfo.eContentType !== 'data' || signedData.encapContentInfo.eContent)
   )
     throw new Error('degenerate SignedData must use id-data and omit eContent');
   return { contentInfo, signedData };
@@ -2020,14 +2292,14 @@ const cmsCerts = (signedData: P.UnwrapCoder<typeof CMSX.SignedData>): Cert[] => 
     if (i.TAG !== 'certificate') continue;
     certs.push(i.data as Cert);
   }
-  // RFC 5652 section 5.1 makes CertificateSet optional; this API profile requires certs in SignedData.
-  if (!certs.length) throw new Error('SignedData.certificates missing');
   return certs;
 };
 const cmsSignerInfo = (
   signedData: P.UnwrapCoder<typeof CMSX.SignedData>
 ): P.UnwrapCoder<typeof CMSX.SignerInfo> => {
   // RFC 5652 section 5.1 allows SET OF SignerInfo; this API profile is single-signer only.
+  // Exported CMS.verify currently returns one signer result and rejects multi-signer SignedData
+  // here instead of selecting or returning multiple verified signers.
   if (signedData.signerInfos.length !== 1)
     throw new Error(
       `this API supports exactly one SignerInfo, got ${signedData.signerInfos.length}`
@@ -2036,24 +2308,11 @@ const cmsSignerInfo = (
   // issuerAndSerialNumber => version 1, subjectKeyIdentifier => version 3.
   const signerInfo = signedData.signerInfos[0];
   if (!signerInfo) throw new Error('SignerInfo[0] missing');
-  // RFC 5652 section 12.1: SignedAttributes/UnsignedAttributes ::= SET SIZE (1..MAX) OF Attribute.
-  if (signerInfo.signedAttrs && signerInfo.signedAttrs.length === 0)
-    throw new Error('SignedAttributes present but empty');
-  if (signerInfo.unsignedAttrs && signerInfo.unsignedAttrs.length === 0)
-    throw new Error('UnsignedAttributes present but empty');
-  if (signerInfo.sid.TAG === 'issuerSerial' && signerInfo.version !== 1n)
-    throw new Error(`SignerInfo.version must be 1 for issuerSerial SID, got ${signerInfo.version}`);
-  if (signerInfo.sid.TAG === 'subjectKeyIdentifier') {
-    if (!signerInfo.sid.data.length)
-      throw new Error('SignerInfo.sid subjectKeyIdentifier must be non-empty');
-    if (signerInfo.version !== 3n)
-      throw new Error(
-        `SignerInfo.version must be 3 for subjectKeyIdentifier SID, got ${signerInfo.version}`
-      );
-  }
+  checkSignerInfoShape(signerInfo);
   return signerInfo;
 };
-const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
+const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): CmsVerify => {
+  const cfg = opts as CmsVerifyOpts;
   // RFC 5280 section 6 support profile in this verifier:
   // - implemented subset: validity windows, issuer chaining, basic constraints, key usage, AKI/SKI linkage,
   //   critical-extension handling, and (when checkSignatures=true) certificate-signature continuity checks.
@@ -2061,9 +2320,11 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
   //   those controls are fail-closed when present (see checkCoreCertFields).
   const verifyIssuedCert = (child: Cert, issuer: Cert): void => {
     // RFC 5280 section 6.1.3(a)(1): verify each cert signature with issuer public key.
+    // RFC 8017 Appendix A.2 defines RSA PKCS #1 signature OIDs for X.509/PKCS #7,
+    // but this package intentionally does not implement RSA; RSA-issued chains fail closed.
     const key = certSpkiKey(issuer.tbs.spki);
     const msg = X509C.TBSCertificate.encode(child.tbs);
-    const sigOid = algOID(child.sigAlg.algorithm);
+    const sigOid = oidName.decode(oidName.encode(child.sigAlg.algorithm));
     const alg = CMS_ALG_BY_SIG_OID[sigOid as CmsAlg['sigOid']];
     if (!alg) throw new Error(`unsupported certificate signatureAlgorithm OID ${sigOid}`);
     if (key.algorithm.info.TAG === 'EC') {
@@ -2071,7 +2332,7 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
         throw new Error(
           `certificate signatureAlgorithm OID ${sigOid} is not compatible with EC issuer key`
         );
-      if (child.sigAlg.params && sigOid.startsWith('1.2.840.10045.4.3.'))
+      if (child.sigAlg.params && sigOid.startsWith('ecdsa-with-'))
         throw new Error('ECDSA certificate signatureAlgorithm params must be absent');
       const curve = spkiCurve(key);
       if (!isSignCurve(curve))
@@ -2095,19 +2356,19 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
   };
   const checkCoreCertFields = (cert: Cert, where: string): void => {
     // RFC 5280 section 4.1.2.1: version values are v1(0), v2(1), v3(2); absent field means v1.
-    const v = cert.tbs.version === undefined ? 0n : cert.tbs.version;
-    if (v < 0n || v > 2n) throw new Error(`${where}: certificate version must be 0..2, got ${v}`);
+    const v = cert.tbs.version === undefined ? _0n : cert.tbs.version;
+    if (v < _0n || v > _2n) throw new Error(`${where}: certificate version must be 0..2, got ${v}`);
     // RFC 5280 section 4.1.2.8: issuer/subject unique identifiers MUST NOT appear in v1 certificates.
-    if (v === 0n && (cert.tbs.issuerUniqueID || cert.tbs.subjectUniqueID))
+    if (v === _0n && (cert.tbs.issuerUniqueID || cert.tbs.subjectUniqueID))
       throw new Error(`${where}: certificate unique identifiers require version v2 or v3`);
     // RFC 5280 section 4.1 / 4.1.2.1: TBSCertificate.extensions [3] is only valid for v3 certificates.
-    if (v < 2n && cert.tbs.extensions)
+    if (v < _2n && cert.tbs.extensions)
       throw new Error(`${where}: certificate extensions require version v3`);
     // RFC 5280 section 4.1.2.2: certificate serialNumber MUST be a positive INTEGER.
-    if (cert.tbs.serial <= 0n)
+    if (cert.tbs.serial <= _0n)
       throw new Error(`${where}: certificate serialNumber must be positive`);
     // RFC 5280 section 4.1.2.2: conforming CAs MUST NOT use serialNumber values longer than 20 octets.
-    const serialBytes = TLV.decode(ASN1.Integer.encode(cert.tbs.serial)).value.length;
+    const serialBytes = DERUtils.ASN1.Integer.inner.encode(cert.tbs.serial).length;
     if (serialBytes > 20)
       throw new Error(`${where}: certificate serialNumber must be <= 20 octets`);
     // RFC 5280 section 4.1.2.4: issuer field MUST contain a non-empty distinguished name.
@@ -2122,8 +2383,8 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     // RFC 5280 sections 4.1.1.2 and 4.1.2.3: Certificate.signatureAlgorithm MUST match TBSCertificate.signature.
     if (
       !equalBytes(
-        AlgorithmIdentifier.encode(cert.tbs.signature),
-        AlgorithmIdentifier.encode(cert.sigAlg)
+        DERUtils.ASN1.AlgorithmIdentifier.encode(cert.tbs.signature),
+        DERUtils.ASN1.AlgorithmIdentifier.encode(cert.sigAlg)
       )
     )
       throw new Error(
@@ -2138,6 +2399,9 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     if (timeEpoch(cert.tbs.validity.notAfter) < timeEpoch(cert.tbs.validity.notBefore))
       throw new Error(`${where}: certificate validity notAfter must be >= notBefore`);
     // RFC 5280 section 4.2.1.2: SubjectKeyIdentifier identifies the cert's public key; empty SKI is invalid.
+    // Extension-profile checks below are the verify-time gate for RFC 5280
+    // certificate acceptance rules that are not already enforced by the typed
+    // extension decoders themselves.
     const exts = X509.extensions(cert);
     // RFC 5280 section 4.2: a certificate MUST NOT include more than one instance of a particular extension.
     const seenExt = new Set<string>();
@@ -2179,7 +2443,7 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     const pc = exts.find((e) => e.policyConstraints);
     if (pc && !pc.critical)
       throw new Error(`${where}: policyConstraints extension must be critical`);
-    const iap = exts.find((e) => e.oid === '2.5.29.54');
+    const iap = exts.find((e) => e.oid === 'inhibitAnyPolicy');
     if (iap && !iap.critical)
       throw new Error(`${where}: inhibitAnyPolicy extension must be critical`);
     // RFC 5280 section 6 policy/name processing (policy tree + name constraints checks) is not implemented in this verifier.
@@ -2189,54 +2453,101 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
         `${where}: nameConstraints/policyMappings/policyConstraints/inhibitAnyPolicy present but RFC 5280 section 6 processing is not implemented`
       );
   };
-  const { checkSignatures = true } = opts;
-  const { signedData } = cmsSignedData(berView(der, opts).der);
-  const certs = cmsCerts(signedData);
+  const { checkSignatures = true } = cfg;
+  const { signedData } = cmsSignedData(berView(der, cfg).der);
+  const certs = cmsCerts(signedData).map((c) => X509.decode(X509C.Certificate.encode(c), cfg));
   const signerInfo = cmsSignerInfo(signedData);
+  const signerOid = oidName.decode(oidName.encode(signerInfo.signatureAlg.algorithm));
+  const signerKind =
+    signerOid === CMS_ALG.Ed25519.sigOid
+      ? 'Ed25519'
+      : signerOid === CMS_ALG.Ed448.sigOid
+        ? 'Ed448'
+        : undefined;
+  const hasSignedAttrs = !!signerInfo.signedAttrs;
+  // RFC 8419 sections 3.1/3.2 EdDSA digestAlgorithm constraints are validation
+  // profile checks, not structural CMS decode checks; keep CMS.signed() able to
+  // inspect nonconforming OpenSSL-forced output, but reject it here.
+  checkEdDigestParams(signerKind, signerInfo.digestAlg, 'SignerInfo', hasSignedAttrs);
+  const signerDigest = signedData.digestAlgorithms.find((d) =>
+    digestAlgEqual(d, signerInfo.digestAlg)
+  );
+  if (!signerDigest)
+    throw new Error('SignedData.digestAlgorithms must include each SignerInfo.digestAlgorithm');
+  checkEdDigestParams(signerKind, signerDigest, 'SignedData.digestAlgorithms', hasSignedAttrs);
+  const chainSrc = cfg.chain || [];
+  const chainItems = chainSrc.map((c) => {
+    if (typeof c === 'string') return X509.decode(onePem(c, 'CERTIFICATE').der, cfg);
+    if (isBytes(c)) return X509.decode(c, cfg);
+    return X509.decode(X509C.Certificate.encode(c), cfg);
+  });
+  // RFC 5652 section 5.1 makes CertificateSet optional, and says the signer's
+  // certificate MAY be included; use opts.chain as the alternate signer source.
   const oneMatch = (
+    items: Cert[],
     test: (c: Cert) => boolean,
     msg:
       | 'SignerInfo.sid issuerSerial matched multiple certificates'
       | 'SignerInfo.sid subjectKeyIdentifier matched multiple certificates'
   ): Cert | undefined => {
-    const matches = certs.filter(test);
+    const matches = items.filter(test);
     if (matches.length > 1) throw new Error(msg);
     return matches[0];
+  };
+  const signerMatch = (
+    test: (c: Cert) => boolean,
+    msg:
+      | 'SignerInfo.sid issuerSerial matched multiple certificates'
+      | 'SignerInfo.sid subjectKeyIdentifier matched multiple certificates'
+  ): Cert | undefined => {
+    const a = oneMatch(certs, test, msg);
+    const b = oneMatch(chainItems, test, msg);
+    // RFC 5652 section 5.3 identifies an X.509 signer certificate by
+    // issuerAndSerialNumber or subjectKeyIdentifier. Exact DER duplicates across
+    // the CMS CertificateSet and opts.chain are the same cert; distinct matches
+    // with the same identifier are ambiguous and fail closed.
+    if (a && b && !equalBytes(X509C.Certificate.encode(a), X509C.Certificate.encode(b)))
+      throw new Error(msg);
+    return a || b;
   };
   const signerCert = (() => {
     const sid = signerInfo.sid;
     if (sid.TAG === 'issuerSerial') {
-      const sIssuer = X509C.Name.encode(sid.data.issuer);
-      return oneMatch((c) => {
-        const m = { issuer: X509C.Name.encode(c.tbs.issuer), serial: c.tbs.serial };
-        return equalBytes(sIssuer, m.issuer) && sid.data.serial === m.serial;
-      }, 'SignerInfo.sid issuerSerial matched multiple certificates');
+      const test = (c: Cert): boolean => {
+        return nameEqual(sid.data.issuer, c.tbs.issuer) && sid.data.serial === c.tbs.serial;
+      };
+      return signerMatch(test, 'SignerInfo.sid issuerSerial matched multiple certificates');
     }
-    return oneMatch((c) => {
+    const test = (c: Cert): boolean => {
       const ski = X509.extensions(c).find((e) => e.ski)?.ski;
       return ski ? equalBytes(ski, sid.data) : false;
-    }, 'SignerInfo.sid subjectKeyIdentifier matched multiple certificates');
+    };
+    return signerMatch(test, 'SignerInfo.sid subjectKeyIdentifier matched multiple certificates');
   })();
-  if (!signerCert) throw new Error('SignerInfo cert not found in certificate set');
-  const signer = X509.decode(X509C.Certificate.encode(signerCert), opts);
-  checkCoreCertFields(signer, 'signer');
-  const nowMs = opts.time === undefined ? Date.now() : opts.time;
+  if (!signerCert) throw new Error('SignerInfo cert not found in certificate set or opts.chain');
+  checkCoreCertFields(signerCert, 'signer');
+  const nowMs = cfg.time === undefined ? Date.now() : cfg.time;
   if (!Number.isSafeInteger(nowMs))
     throw new Error(`expected safe integer time in milliseconds, got ${nowMs}`);
   const now = Math.floor(nowMs / 1000);
   if (
-    now < timeEpoch(signer.tbs.validity.notBefore) ||
-    now > timeEpoch(signer.tbs.validity.notAfter)
+    now < timeEpoch(signerCert.tbs.validity.notBefore) ||
+    now > timeEpoch(signerCert.tbs.validity.notAfter)
   )
     // RFC 5280 section 6.1.3(a)(2): certificate validity period must include validation time.
     throw new Error('signer certificate outside validity window');
-  const signerCertInfo = certInfo(signer);
-  // This API profile requires an end-entity signer certificate (not a CA certificate).
-  if (signerCertInfo.isCA) throw new Error('signer certificate must not be a CA certificate');
-  // RFC 5280 section 4.2.1.3: signer key usage must allow digitalSignature for CMS signature validation.
-  if (signerCertInfo.keyUsage && !signerCertInfo.keyUsage.digitalSignature)
-    throw new Error('signer keyUsage missing digitalSignature');
-  const purpose = opts.purpose || 'any';
+  const signerCertInfo = certInfo(signerCert);
+  // RFC 5280 section 4.2.1.9 cA=true only controls certificate-signature use; section 4.2.1.3
+  // explicitly allows digitalSignature/nonRepudiation together with keyCertSign for other objects.
+  // RFC 5750 section 4.4.2: S/MIME message signatures require digitalSignature or nonRepudiation
+  // when keyUsage is present, so do not reject CA signer certs solely because cA is asserted.
+  if (
+    signerCertInfo.keyUsage &&
+    !signerCertInfo.keyUsage.digitalSignature &&
+    !signerCertInfo.keyUsage.nonRepudiation
+  )
+    throw new Error('signer keyUsage missing digitalSignature or nonRepudiation');
+  const purpose = cfg.purpose || 'any';
   const eku = signerCertInfo.eku;
   // RFC 5280 section 4.2.1.12: if EKU is present, certificate use is constrained to listed purposes
   // (except anyExtendedKeyUsage).
@@ -2246,35 +2557,39 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     if (purpose === 'codeSigning' && !eku.has('codeSigning'))
       throw new Error('EKU missing codeSigning');
   }
-  ensureCritical(signer);
-  const chainSrc = opts.chain || [];
-  const chainItems = chainSrc.map((c) => {
-    if (typeof c === 'string') return X509.decode(onePem(c, 'CERTIFICATE').der, opts);
-    if (c instanceof Uint8Array) return X509.decode(c, opts);
-    return X509.decode(X509C.Certificate.encode(c), opts);
-  });
-  const pool = [
-    ...certs.map((c) => X509.decode(X509C.Certificate.encode(c), opts)),
-    ...chainItems,
-  ].filter(
-    (c) => !(equalBytes(subjectDer(c), subjectDer(signer)) && c.tbs.serial === signer.tbs.serial)
+  ensureCritical(signerCert);
+  const pool = [...certs, ...chainItems].filter(
+    (c) =>
+      !(equalBytes(subjectDer(c), subjectDer(signerCert)) && c.tbs.serial === signerCert.tbs.serial)
   );
   for (const c of pool) ensureCritical(c);
   const seen = new Set<string>();
-  const chain: Cert[] = [signer];
-  let cur = signer;
+  const chain: Cert[] = [signerCert];
+  let cur = signerCert;
   while (true) {
     const id = `${base64.encode(subjectDer(cur))}:${cur.tbs.serial.toString(16)}`;
     if (seen.has(id)) throw new Error('certificate chain loop detected');
     seen.add(id);
-    const curIssuer = X509C.Name.encode(cur.tbs.issuer);
+    const curDer = X509C.Certificate.encode(cur);
     const curSubject = subjectDer(cur);
-    if (equalBytes(curIssuer, curSubject)) break;
     if (now < timeEpoch(cur.tbs.validity.notBefore) || now > timeEpoch(cur.tbs.validity.notAfter))
       // RFC 5280 section 6.1.3(a)(2): each certificate in the path must be valid at validation time.
       throw new Error(`certificate not valid at time: ${base64.encode(curSubject)}`);
-    const curAki = X509.extensions(cur).find((e) => e.aki)?.aki;
-    const candidatesAll = pool.filter((i) => equalBytes(curIssuer, subjectDer(i)));
+    const curExts = X509.extensions(cur);
+    const curAki = curExts.find((e) => e.aki)?.aki;
+    const selfIssued = nameEqual(cur.tbs.issuer, cur.tbs.subject);
+    if (checkSignatures && selfIssued) {
+      try {
+        // RFC 5280 section 3.2: self-signed is the self-issued terminal case
+        // whose signature verifies with its own public key.
+        verifyIssuedCert(cur, cur);
+        break;
+      } catch {}
+    }
+    const candidatesAll = pool.filter(
+      (i) =>
+        !equalBytes(X509C.Certificate.encode(i), curDer) && nameEqual(cur.tbs.issuer, i.tbs.subject)
+    );
     const candidates = (() => {
       const out: Cert[] = [];
       const seenIssuer = new Set<string>();
@@ -2290,7 +2605,9 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     if (!candidates.length) {
       // RFC 5280 section 6.1 path validation is anchored in trust anchors supplied by relying party.
       // Without supplied anchors (common in browser/wasm contexts), return best-effort partial chain.
-      if (!checkSignatures || !chainItems.length) break;
+      // RFC 5280 sections 3.2 and 6.1.4(l)/(m): self-issued intermediates are processed in
+      // the path; issuer==subject terminates only after no separate parent candidate remains.
+      if (!checkSignatures || !chainItems.length || selfIssued) break;
       if (chain.length === 1) throw new Error('no issuer found for signer in chain');
       throw new Error(`no issuer found in chain for certificate at depth ${chain.length}`);
     }
@@ -2312,9 +2629,7 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
       if (curAki.authorityCertIssuer) {
         const names = curAki.authorityCertIssuer.list.filter((n) => n.TAG === 'directoryName');
         if (names.length)
-          authorityCertIssuerOk = names.some((n) =>
-            equalBytes(X509C.Name.encode(n.data), subjectDer(issuer))
-          );
+          authorityCertIssuerOk = names.some((n) => nameEqual(n.data, issuer.tbs.subject));
       }
       const authorityCertSerialOk =
         curAki.authorityCertSerialNumber === undefined ||
@@ -2377,16 +2692,21 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
       );
     // RFC 5280 section 4.2.1.9: certificate-signing issuer must be a CA (basicConstraints cA asserted).
     if (!issuerInfo.isCA) throw new Error('issuer certificate is not CA');
+    // RFC 5280 section 4.2.1.9 makes critical basicConstraints a conforming-CA
+    // generation requirement; path validation in section 6.1.4(k) only requires
+    // the extension to be present with cA asserted, so verifiers accept it here.
     // RFC 5280 section 4.2.1.3: CA cert used to issue certs must allow keyCertSign.
     if (issuerInfo.keyUsage && !issuerInfo.keyUsage.keyCertSign)
       throw new Error('issuer keyUsage missing keyCertSign');
-    // RFC 5280 section 4.2.1.9 and section 6.1.4(m): pathLenConstraint limits only
-    // non-self-issued CA certs below this issuer in the candidate path.
-    const pathLenUsed = chain.reduce((acc, c) => {
+    // RFC 5280 section 4.2.1.9: the final certificate is not an intermediate
+    // and is not included in pathLenConstraint even when it is a CA certificate.
+    // RFC 5280 section 6.1.4(l)/(m): count only non-self-issued CA intermediates.
+    const pathLenUsed = chain.reduce((acc, c, i) => {
+      if (i === 0) return acc;
       const isCA = certInfo(c).isCA;
-      const selfIssued = equalBytes(X509C.Name.encode(c.tbs.issuer), subjectDer(c));
-      return isCA && !selfIssued ? acc + 1n : acc;
-    }, 0n);
+      const selfIssued = nameEqual(c.tbs.issuer, c.tbs.subject);
+      return isCA && !selfIssued ? acc + _1n : acc;
+    }, _0n);
     if (issuerInfo.pathLen !== undefined && pathLenUsed > issuerInfo.pathLen)
       throw new Error('issuer pathLenConstraint exceeded');
     if (checkSignatures) verifyIssuedCert(cur, issuer);
@@ -2403,93 +2723,119 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
       throw new Error('certificate chain does not terminate at a supplied trust anchor');
   }
   const out = {
-    signatureOid: algOID(signerInfo.signatureAlg.algorithm),
-    signer,
+    signatureOid: oidName.decode(oidName.encode(signerInfo.signatureAlg.algorithm)),
+    signer: signerCert,
     signedAttrs: !!signerInfo.signedAttrs,
     chain,
   };
   const key = certSpkiKey(out.signer.tbs.spki);
   const attrs = signerInfo.signedAttrs;
   const content = signedData.encapContentInfo.eContent;
-  const digestHash = CMS_HASH_BY_OID[algOID(signerInfo.digestAlg.algorithm)];
+  const digestHash =
+    CMS_HASH_BY_OID[oidName.decode(oidName.encode(signerInfo.digestAlg.algorithm))];
   const checkDigestParams = (): void => {
     const da = signerInfo.digestAlg;
     // RFC 5754 section 2: for SHA-2 digest OIDs, params MUST be accepted as absent or NULL.
     if (!digestAlgParamsOk(da))
       throw new Error('SHA-2 digestAlgorithm params must be absent or NULL');
   };
-  const checkDigestAlg = (a: CmsAlg): void => {
+  const checkDigestAlg = (a: TArg<CmsAlg>): void => {
+    const alg = a as CmsAlg;
     const da = signerInfo.digestAlg;
-    const expected = hashOid(a.hash);
-    checkDigestParams();
-    const got = algOID(da.algorithm);
+    if (signerKind && 'ed' in alg) {
+      checkEdDigestParams(signerKind, da, 'SignerInfo', hasSignedAttrs);
+      return;
+    }
+    // This compare assumes `a.hash` already reflects the RFC-defined CMS
+    // digestAlgorithm for the signer family, so per-algorithm exceptions such
+    // as RFC 8419 Ed448 need to be modeled in the signer table first.
+    const expected = hashOid(alg.hash);
+    const got = oidName.decode(oidName.encode(da.algorithm));
     if (got !== expected)
       throw new Error(`digestAlgorithm OID mismatch: expected ${expected}, got ${got}`);
+    const digestParams = alg.digestParams?.();
+    if (digestParams) {
+      if (!digestParamsEqual(da.params, digestParams))
+        throw new Error('digestAlgorithm params mismatch');
+      return;
+    }
+    checkDigestParams();
   };
-  const checkSignedAttrs = (hash?: (m: Uint8Array) => Uint8Array): void => {
+  const checkSignedAttrs = (hash?: TArg<(m: Uint8Array) => Uint8Array>): void => {
     const unsigned = signerInfo.unsignedAttrs || [];
+    // This only covers the RFC 5652 core signed-only attributes tracked in the
+    // local table; profile-level MUST-signed attrs such as sMIMECapabilities
+    // need their own OID checks here if this verifier claims those profiles.
     // RFC 5652 sections 11.1/11.2/11.3: these attributes MUST be signed/authenticated, not unsigned.
-    for (const oid in CMS_SIGNED_ATTR_NAME) {
-      if (unsigned.some((a) => a.oid === oid))
+    for (const id in CMS_SIGNED_ATTR_NAME) {
+      if (unsigned.some((a) => a.oid === id))
         throw new Error(
-          `${CMS_SIGNED_ATTR_NAME[oid as keyof typeof CMS_SIGNED_ATTR_NAME]} attribute MUST NOT be unsigned`
+          `${CMS_SIGNED_ATTR_NAME[id as keyof typeof CMS_SIGNED_ATTR_NAME]} attribute MUST NOT be unsigned`
         );
     }
+    // RFC 2634 S/MIME/ESS attribute table: smimeCapabilities has Signed=MUST.
+    // RFC 5652 section 5.3 defines unsignedAttrs as attributes that are not signed.
+    if (unsigned.some((a) => a.oid === 'attrSMIMECapabilities'))
+      throw new Error('sMIMECapabilities attribute MUST NOT be unsigned');
     // RFC 5652 section 11.4: countersignature MUST be unsigned; this API does not implement it.
-    if (unsigned.some((a) => a.oid === CMSOID.attrCountersignature))
+    if (unsigned.some((a) => a.oid === 'attrCountersignature'))
       throw new Error('countersignature is unsupported by this API');
     if (!attrs) return;
-    if (attrs.some((a) => a.oid === CMSOID.attrCountersignature))
+    if (attrs.some((a) => a.oid === 'attrCountersignature'))
       throw new Error('countersignature MUST NOT be a signed attribute');
     const getAttrs = (oid: string) => attrs.filter((a) => a.oid === oid);
-    const attrOne = (oid: string, name: string): AttributeCodec => {
+    const attrOne = (oid: string, name: string): TRet<AttributeCodec> => {
       const all = getAttrs(oid);
       if (all.length !== 1)
         throw new Error(
           `signedAttrs MUST include exactly one ${name} attribute, got ${all.length}`
         );
-      return all[0];
+      return all[0] as TRet<AttributeCodec>;
     };
-    const attrZeroOrOne = (oid: string, name: string): AttributeCodec | undefined => {
+    const attrZeroOrOne = (oid: string, name: string): TRet<AttributeCodec | undefined> => {
       const all = getAttrs(oid);
       if (all.length > 1)
         throw new Error(
           `signedAttrs MUST NOT include multiple ${name} attributes, got ${all.length}`
         );
-      return all[0];
+      return all[0] as TRet<AttributeCodec | undefined>;
     };
     // RFC 5652 section 5.6: when signedAttrs exists, content-type attr MUST match encapContentInfo.eContentType.
-    const ctAttr = attrOne(CMSOID.attrContentType, 'content-type');
-    const ct = ASN1.OID.decode(ctAttr.values[0]);
+    const ctAttr = attrOne('attrContentType', 'content-type');
+    const ct = DERUtils.ASN1.OID.decode(ctAttr.values[0]);
     if (ct !== signedData.encapContentInfo.eContentType)
       throw new Error('content-type attribute does not match encapContentInfo.eContentType');
-    const mdAttr = attrOne(CMSOID.attrMessageDigest, 'messageDigest');
-    ASN1.OctetString.decode(mdAttr.values[0]);
-    const st = attrZeroOrOne(CMSOID.attrSigningTime, 'signingTime');
+    const mdAttr = attrOne('attrMessageDigest', 'messageDigest');
+    DERUtils.ASN1.OctetString.decode(mdAttr.values[0]);
+    const st = attrZeroOrOne('attrSigningTime', 'signingTime');
     if (st) X509Time.decode(st.values[0]);
     // RFC 5652 section 5.4: digest input starts from eContent OCTET STRING value bytes (no tag/len).
     // Detached verification provides content externally via CMS.verifyDetached; plain CMS.verify
     // without signature checks may still be used for detached structure/path validation.
     if (content === undefined || !hash) return;
-    const got = ASN1.OctetString.decode(mdAttr.values[0]);
-    const exp = hash(content);
+    const got = DERUtils.ASN1.OctetString.decode(mdAttr.values[0]);
+    const exp = (hash as (m: Uint8Array) => Uint8Array)(content);
     if (!equalBytes(got, exp)) throw new Error('messageDigest attribute does not match eContent');
   };
-  const verifyInputs = (a: CmsAlg, verifyOne: (data: Uint8Array) => boolean): CmsVerify => {
-    checkDigestAlg(a);
-    checkSignedAttrs(a.hash);
+  const verifyInputs = (
+    a: TArg<CmsAlg>,
+    verifyOne: TArg<(data: Uint8Array) => boolean>
+  ): CmsVerify => {
+    const alg = a as CmsAlg;
+    const verify = verifyOne as (data: Uint8Array) => boolean;
+    checkDigestAlg(alg);
+    checkSignedAttrs(alg.hash);
     if (signedData.encapContentInfo.eContent === undefined)
       throw new Error(
         'CMS.verify({checkSignatures:true}) requires attached eContent; use CMS.verifyDetached'
       );
-    for (const data of inputs) if (verifyOne(data)) return out;
+    for (const data of inputs) if (verify(data)) return out;
     throw new Error('CMS signature invalid');
   };
+  // RFC 5652 section 5.4: when signedAttrs is present, the IMPLICIT [0] tag
+  // is not used; verify only the DER EXPLICIT SET OF encoding.
   const inputs: Uint8Array[] = attrs
-    ? [
-        ASN1.set(CMSX.Attribute).encode(attrs),
-        ASN1.implicit(0, ASN1.set(CMSX.Attribute)).encode(attrs),
-      ]
+    ? [DERUtils.ASN1.set(CMSX.Attribute).encode(attrs)]
     : content
       ? [content]
       : [];
@@ -2499,7 +2845,9 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     checkSignedAttrs(digestHash);
     return out;
   }
-  const sigOid = algOID(signerInfo.signatureAlg.algorithm) as CmsAlg['sigOid'];
+  const sigOid = oidName.decode(
+    oidName.encode(signerInfo.signatureAlg.algorithm)
+  ) as CmsAlg['sigOid'];
   const sig = CMS_ALG_BY_SIG_OID[sigOid];
   if (!sig) throw new Error(`unsupported signatureAlgorithm OID ${sigOid}`);
   if (tag === 'EC') {
@@ -2508,9 +2856,9 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
       throw new Error(`CMS.verify({checkSignatures:true}) unsupported signer curve ${curve}`);
     if (!('ec' in sig)) throw new Error(`unsupported signatureAlgorithm OID ${sigOid}`);
     // RFC 5754 section 3.3: ECDSA-with-SHA2 AlgorithmIdentifier parameters MUST be absent.
-    if (signerInfo.signatureAlg.params && sigOid.startsWith('1.2.840.10045.4.3.'))
+    if (signerInfo.signatureAlg.params && sigOid.startsWith('ecdsa-with-'))
       throw new Error('ECDSA signatureAlgorithm params must be absent');
-    return verifyInputs(sig, (data) =>
+    return verifyInputs(sig, (data: TArg<Uint8Array>) =>
       ecdsaVerifyDer(curve, signerInfo.signature, sig.hash(data), key.publicKey)
     );
   }
@@ -2518,8 +2866,8 @@ const cmsVerifyEc = (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => {
     if (!('ed' in sig)) throw new Error(`unsupported signatureAlgorithm OID ${sigOid}`);
     if (CMS_ALG[tag].sigOid !== sigOid)
       throw new Error(`unsupported signatureAlgorithm OID ${signerInfo.signatureAlg.algorithm}`);
-    return verifyInputs(sig, (data) =>
-      CMS_ALG[tag].ed.verify(signerInfo.signature, data, key.publicKey)
+    return verifyInputs(sig, (data: TArg<Uint8Array>) =>
+      CMS_ALG[tag].ed.verify(signerInfo.signature, data as Uint8Array, key.publicKey)
     );
   }
   throw new Error('CMS.verify({checkSignatures:true}) supports EC/Ed signer certificates only');
@@ -2583,83 +2931,116 @@ type CmsCompactBuildOpts = Pick<
 // OpenSSL compatibility notes:
 // - `content: Uint8Array` matches `cms -sign -binary` (no text canonicalization).
 // - `content: string` matches default text mode (LF/CRLF normalized to CRLF before signing).
-const CMSOID = {
-  // RFC 5652 section 4: id-data identifies arbitrary octet string content.
-  data: '1.2.840.113549.1.7.1',
-  signedData: '1.2.840.113549.1.7.2',
-  attrContentType: '1.2.840.113549.1.9.3',
-  attrSigningTime: '1.2.840.113549.1.9.5',
-  attrMessageDigest: '1.2.840.113549.1.9.4',
-  attrCountersignature: '1.2.840.113549.1.9.6',
-} as const;
 const CMS_SIGNED_ATTR_NAME = /* @__PURE__ */ (() =>
+  // This local name map only covers the core CMS signed-attribute OIDs that the
+  // current high-level checks treat specially; supported profile attrs such as
+  // sMIMECapabilities need explicit rows if they should share those checks.
   ({
-    [CMSOID.attrContentType]: 'content-type',
-    [CMSOID.attrMessageDigest]: 'messageDigest',
-    [CMSOID.attrSigningTime]: 'signingTime',
+    attrContentType: 'content-type',
+    attrMessageDigest: 'messageDigest',
+    attrSigningTime: 'signingTime',
   }) as const)();
-const SMIME_CAPS = {
-  'aes256-cbc': '2.16.840.1.101.3.4.1.42',
-  'aes192-cbc': '2.16.840.1.101.3.4.1.22',
-  'aes128-cbc': '2.16.840.1.101.3.4.1.2',
-  'aes256-gcm': '2.16.840.1.101.3.4.1.46',
-  'aes192-gcm': '2.16.840.1.101.3.4.1.26',
-  'aes128-gcm': '2.16.840.1.101.3.4.1.6',
-  'aes256-cfb': '2.16.840.1.101.3.4.1.44',
-  'aes192-cfb': '2.16.840.1.101.3.4.1.24',
-  'aes128-cfb': '2.16.840.1.101.3.4.1.4',
-  'aes256-kw': '2.16.840.1.101.3.4.1.45',
-  'aes192-kw': '2.16.840.1.101.3.4.1.25',
-  'aes128-kw': '2.16.840.1.101.3.4.1.5',
-  'des-ede3-cbc': '1.2.840.113549.3.7',
-  'rc2-cbc': '1.2.840.113549.3.2',
-  'des-cbc': '1.3.14.3.2.7',
-} as const;
-const cmsSmimeCapabilities = (names: string[]): Uint8Array =>
-  ASN1.sequence({
+// Plain friendly-name rows only work when the SMIMECapability value is just
+// the algorithm OID; RFC 3851 §2.5.2.1 gives RC2 an INTEGER key-length
+// parameter, so `rc2-cbc` needs extra handling beyond this name allowlist.
+const SMIME_CAP_NAMES = /* @__PURE__ */ new Set([
+  'aes256-cbc',
+  'aes192-cbc',
+  'aes128-cbc',
+  'aes256-gcm',
+  'aes192-gcm',
+  'aes128-gcm',
+  'aes256-cfb',
+  'aes192-cfb',
+  'aes128-cfb',
+  'aes256-kw',
+  'aes192-kw',
+  'aes128-kw',
+  'des-ede3-cbc',
+  'rc2-cbc',
+  'des-cbc',
+]);
+const SMIME_CAPS_REQUIRES_PARAMS = /* @__PURE__ */ new Set([
+  // RFC 3851 section 2.5.2.1: rc2-cbc SMIMECapability parameters MUST
+  // contain the effective key length.
+  'rc2-cbc',
+  // RFC 3278 section 7: these ECC key-agreement SMIMECapabilities require
+  // KeyWrapAlgorithm parameters.
+  'dhSinglePass_stdDH_sha1kdf_scheme',
+  'dhSinglePass_cofactorDH_sha1kdf_scheme',
+  'mqvSinglePass_sha1kdf_scheme',
+  // RFC 5990 section 2.4: id-rsa-kem SMIMECapability MUST include GenericHybridParameters.
+  'rsaKem',
+]);
+const cmsSmimeCapabilities = (names: string[]): TRet<Uint8Array> =>
+  // This string-only helper can only build parameter-free SMIMECapability
+  // values; RFC 3851 §2.5.2.1 RC2, RFC 3278 §7 ECC key agreement, and
+  // RFC 5990 §2.4 RSA-KEM all need parameters and must not flow through the
+  // raw-OID branch here as bare capabilityID values.
+  DERUtils.ASN1.sequence({
     list: P.array(
       null,
-      ASN1.sequence({
-        capabilityID: ASN1.OID,
+      DERUtils.ASN1.sequence({
+        capabilityID: DERUtils.ASN1.OID,
       })
     ),
   }).encode({
     list: names.map((name) => {
       const n = name.trim().toLowerCase();
-      if (n in SMIME_CAPS) return { capabilityID: SMIME_CAPS[n as keyof typeof SMIME_CAPS] };
-      if (/^[0-9]+(?:\.[0-9]+)+$/.test(name)) return { capabilityID: name };
-      throw new Error(`unknown S/MIME capability ${name}`);
+      let capabilityID: string;
+      if (SMIME_CAP_NAMES.has(n)) capabilityID = n;
+      else if (/^[0-9]+(?:\.[0-9]+)+$/.test(n)) capabilityID = oidName.decode(oidName.encode(n));
+      else throw new Error(`unknown S/MIME capability ${name}`);
+      // RFC 8551 section 2.5.2: capability parameters must identify values
+      // needed to distinguish algorithm instances; this string-only helper has
+      // no parameter API, so reject known parameter-required alias/raw OID use.
+      if (SMIME_CAPS_REQUIRES_PARAMS.has(capabilityID))
+        throw new Error(`S/MIME capability ${name} requires parameters`);
+      return { capabilityID };
     }),
-  });
+  }) as TRet<Uint8Array>;
 type CmsSignerType = { tag: 'EC'; curve: Curve; alg: CmsAlg } | { tag: EdKind; alg: CmsAlg };
 const cmsAttrs = (
-  data: Uint8Array,
-  algHash: HashAlg,
+  data: TArg<Uint8Array>,
+  algHash: TArg<HashAlg>,
   createdTs: number | undefined,
   smimeCapabilities: string[] | undefined,
-  messageDigest: Uint8Array | undefined
-): AttributeCodec[] => {
+  messageDigest: TArg<Uint8Array | undefined>
+): TRet<AttributeCodec[]> => {
+  const hash = algHash as HashAlg;
+  const msgDigest = messageDigest as Uint8Array | undefined;
+  // This builder only emits the current id-data signedAttrs subset for the
+  // public sign path: mandatory content-type/message-digest plus optional
+  // signing-time and sMIMECapabilities when the caller asks for them.
   const attrs: AttributeCodec[] = [
-    { oid: CMSOID.attrContentType, values: [ASN1.OID.encode(CMSOID.data)] },
+    { oid: 'attrContentType', values: [DERUtils.ASN1.OID.encode('data') as StrictBytes] },
   ];
   if (createdTs !== undefined) {
     if (!Number.isSafeInteger(createdTs))
       throw new Error(`expected safe integer createdTs in UNIX milliseconds, got ${createdTs}`);
     attrs.push({
-      oid: CMSOID.attrSigningTime,
+      oid: 'attrSigningTime',
       values: [X509Time.encode(Math.floor(createdTs / 1000))],
     });
   }
   attrs.push({
-    oid: CMSOID.attrMessageDigest,
-    values: [ASN1.OctetString.encode(messageDigest || algHash(data))],
+    oid: 'attrMessageDigest',
+    values: [
+      DERUtils.ASN1.OctetString.encode(msgDigest || hash(data as Uint8Array)) as StrictBytes,
+    ],
   });
   if (smimeCapabilities && smimeCapabilities.length)
-    attrs.push({ oid: '1.2.840.113549.1.9.15', values: [cmsSmimeCapabilities(smimeCapabilities)] });
-  return attrs;
+    attrs.push({
+      oid: 'attrSMIMECapabilities',
+      values: [cmsSmimeCapabilities(smimeCapabilities) as StrictBytes],
+    });
+  return attrs as TRet<AttributeCodec[]>;
 };
-const cmsCertSet = (leaf: Cert, chain: Cert[]) =>
-  [
+const cmsCertSet = (leaf: Cert, chain: Cert[]) => {
+  // RFC 5652 section 10.2.3: CertificateSet ::= SET OF CertificateChoices.
+  // Sort by DER for SET OF and drop adjacent duplicate DER entries; OpenSSL
+  // cms -sign also emits one certificate when signer and -certfile repeat it.
+  const items = [
     { TAG: 'certificate' as const, data: leaf },
     ...chain.map((c) => ({ TAG: 'certificate' as const, data: c })),
   ]
@@ -2673,78 +3054,99 @@ const cmsCertSet = (leaf: Cert, chain: Cert[]) =>
         if (d) return d;
       }
       return a.length - b.length;
-    })
-    .map((x) => x.v);
+    });
+  const out: typeof items = [];
+  for (const i of items) {
+    const prev = out[out.length - 1];
+    if (!prev || !equalBytes(prev.der, i.der)) out.push(i);
+  }
+  return out.map((x) => x.v);
+};
 const cmsBuild = (
-  data: Uint8Array,
+  data: TArg<Uint8Array>,
   leaf: Cert,
   chain: Cert[],
-  attrs: AttributeCodec[],
-  signature: Uint8Array,
+  attrs: TArg<AttributeCodec[]>,
+  signature: TArg<Uint8Array>,
   digestAlgorithm: string,
   signatureAlgorithm: string,
-  digestAlgorithmParams: 'absent' | 'null'
-): Uint8Array => {
-  const digestParams = digestAlgorithmParams === 'null' ? { tag: 0x05, valueHex: '' } : undefined;
+  digestParams: TLVNode | undefined
+): TRet<Uint8Array> => {
+  const rawData = data as StrictBytes;
+  const rawAttrs = attrs as AttributeCodec[];
+  const sig = signature as StrictBytes;
+  // This is the current one-signer attached id-data assembler for the public
+  // compact/sign path; versioning and identifier choices stay fixed here and
+  // broader CMS compatibility is handled in surrounding helpers.
   const signerInfo = {
     // RFC 5652 section 5.3: issuerAndSerialNumber SID => version 1.
-    version: 1n,
+    version: _1n,
     sid: {
       TAG: 'issuerSerial' as const,
       data: { issuer: leaf.tbs.issuer, serial: leaf.tbs.serial },
     },
     digestAlg: { algorithm: digestAlgorithm, params: digestParams },
-    signedAttrs: attrs,
+    signedAttrs: rawAttrs,
     signatureAlg: { algorithm: signatureAlgorithm, params: undefined },
-    signature: signature,
+    signature: sig,
     unsignedAttrs: undefined,
   };
   const signedData = {
-    version: 1n,
+    version: _1n,
     digestAlgorithms: [{ algorithm: digestAlgorithm, params: digestParams }],
     // RFC 5652 section 4: encapsulated content type is id-data for octet payload.
-    encapContentInfo: { eContentType: CMSOID.data, eContent: data },
+    encapContentInfo: { eContentType: 'data', eContent: rawData },
     certificates: cmsCertSet(leaf, chain),
     crls: undefined,
     signerInfos: [signerInfo],
   };
   const contentInfo = {
-    contentType: CMSOID.signedData,
-    content: CMSX.SignedData.encode(signedData),
+    contentType: 'signedData',
+    content: CMSX.SignedData.encode(signedData) as StrictBytes,
   };
-  return CMSX.ContentInfo.encode(contentInfo);
+  return CMSX.ContentInfo.encode(contentInfo) as TRet<Uint8Array>;
 };
 const ecdsaVerifyDer = (
   curve: Curve,
-  signature: Uint8Array,
-  msgHash: Uint8Array,
-  publicKey: Uint8Array
+  signature: TArg<Uint8Array>,
+  msgHash: TArg<Uint8Array>,
+  publicKey: TArg<Uint8Array>
 ): boolean => {
-  ECDSASig.decode(signature);
-  return ecCurve(curve).verify(signature, msgHash, publicKey, {
+  // This is the strict DER ECDSA-Sig-Value gate plus curve verify step; the
+  // caller still binds the hash algorithm and signer curve before reaching it.
+  const sig = signature as Uint8Array;
+  // Raw DER ECDSA signature pair shape only; scalar range and curve-specific
+  // validity stay with the later signature verification step.
+  DERUtils.ASN1.ECDSASig.decode(sig);
+  return ecCurve(curve).verify(sig, msgHash as Uint8Array, publicKey as Uint8Array, {
     format: 'der',
     lowS: false,
     prehash: false,
   });
 };
 const cmsSignCtx = (
-  content: string | Uint8Array,
+  content: TArg<string | Uint8Array>,
   signingCertPem: string,
   createdTs: number | undefined,
   smimeCapabilities: string[] | undefined,
-  messageDigest: Uint8Array | undefined,
+  messageDigest: TArg<Uint8Array | undefined>,
   digestAlgorithm: string | undefined
-): {
+): TRet<{
   data: Uint8Array;
   leaf: Cert;
   signer: CmsSignerType;
+  digestHash: HashAlg;
   attrs: AttributeCodec[];
   toSign: Uint8Array;
-} => {
+}> => {
+  const input = content as string | Uint8Array;
+  // String input takes the S/MIME text convenience path here: line endings are
+  // canonicalized to CRLF before UTF-8 encoding, while Uint8Array is treated
+  // as already-canonical content bytes for CMS signedAttrs and eContent.
   const data =
-    typeof content === 'string'
-      ? new TextEncoder().encode(content.replace(/\r\n|\r|\n/g, '\r\n'))
-      : content;
+    typeof input === 'string'
+      ? new TextEncoder().encode(input.replace(/\r\n|\r|\n/g, '\r\n'))
+      : input;
   const leaf = certItem(onePem(signingCertPem, 'CERTIFICATE').der);
   const leafKey = certSpkiKey(leaf.tbs.spki);
   const leafTag = leafKey.algorithm.info.TAG;
@@ -2758,19 +3160,48 @@ const cmsSignCtx = (
       return { tag: leafTag, alg: CMS_ALG[leafTag] };
     throw new Error('cmsSign supports EC/Ed cert/key only');
   })();
-  const digestHash = digestAlgorithm ? CMS_HASH_BY_OID[algOID(digestAlgorithm)] : signer.alg.hash;
+  const defaultDigestOid = hashOid(signer.alg.hash);
+  const digestOid = digestAlgorithm
+    ? oidName.decode(oidName.encode(digestAlgorithm))
+    : defaultDigestOid;
+  // RFC 8419 section 3.1 fixes Ed25519/Ed448 digestAlgorithm OIDs when
+  // signedAttrs are present; this CMS API always emits signedAttrs.
+  checkEdDigestParams(
+    signer.tag === 'Ed25519' || signer.tag === 'Ed448' ? signer.tag : undefined,
+    {
+      algorithm: digestOid,
+      params: 'digestParams' in signer.alg ? signer.alg.digestParams() : undefined,
+    },
+    'SignerInfo'
+  );
+  const digestHash = digestAlgorithm ? CMS_HASH_BY_OID[digestOid] : signer.alg.hash;
   if (!digestHash) throw new Error(`unsupported digestAlgorithm OID ${digestAlgorithm}`);
   const attrs = cmsAttrs(data, digestHash, createdTs, smimeCapabilities, messageDigest);
-  const toSign = ASN1.set(CMSX.Attribute).encode(attrs);
-  return { data, leaf, signer, attrs, toSign };
+  const toSign = DERUtils.ASN1.set(CMSX.Attribute).encode(attrs);
+  return { data, leaf, signer, digestHash, attrs, toSign } as TRet<{
+    data: Uint8Array;
+    leaf: Cert;
+    signer: CmsSignerType;
+    digestHash: HashAlg;
+    attrs: AttributeCodec[];
+    toSign: Uint8Array;
+  }>;
 };
 const cmsCompactSign = (
-  signer: CmsSignerType,
+  signer: TArg<CmsSignerType>,
   leaf: Cert,
   privateKeyPem: string,
-  toSign: Uint8Array,
-  extraEntropy: boolean | Uint8Array | undefined
-): Uint8Array => {
+  toSign: TArg<Uint8Array>,
+  digestHash: TArg<HashAlg>,
+  extraEntropy: TArg<boolean | Uint8Array | undefined>
+): TRet<Uint8Array> => {
+  const sign = signer as CmsSignerType;
+  const msg = toSign as Uint8Array;
+  const hash = digestHash as HashAlg;
+  const entropy = extraEntropy as boolean | Uint8Array | undefined;
+  // This helper is the compact-sign emission boundary: require PKCS#8
+  // PRIVATE KEY input, confirm the private key matches the leaf cert, then
+  // emit either DER ECDSA-Sig-Value or raw EdDSA signature bytes.
   const keyBlock = onePem(privateKeyPem);
   if (keyBlock.tag !== 'PRIVATE KEY')
     throw new Error(`expected PKCS#8 PRIVATE KEY PEM, got ${keyBlock.tag}`);
@@ -2778,22 +3209,34 @@ const cmsCompactSign = (
   if (!matchCertKey(leaf, key)) throw new Error('certificate and private key do not match');
   const keyTag = key.key.algorithm.info.TAG;
   const kk = pkcs8SignKey(key.key);
-  if (signer.tag === 'EC') {
-    if (keyTag !== 'EC' || kk.kind !== 'EC' || !isSignCurve(kk.curve) || kk.curve !== signer.curve)
+  if (sign.tag === 'EC') {
+    if (keyTag !== 'EC' || kk.kind !== 'EC' || !isSignCurve(kk.curve) || kk.curve !== sign.curve)
       throw new Error('cmsSign key type mismatch');
-    return ecCurve(signer.curve).sign(signer.alg.hash(toSign), kk.secretKey, {
+    // RFC 5652 section 5.4 hashes DER SignedAttrs with SignerInfo.digestAlgorithm;
+    // RFC 5754 section 3.3 then identifies the matching ECDSA-with-SHA2 OID.
+    return ecCurve(sign.curve).sign(hash(msg), kk.secretKey, {
       prehash: false,
       format: 'der',
       lowS: false,
-      extraEntropy: extraEntropy === undefined ? true : extraEntropy,
-    });
+      extraEntropy: entropy === undefined ? true : entropy,
+    }) as TRet<Uint8Array>;
   }
-  if (keyTag !== signer.tag || kk.kind !== signer.tag) throw new Error('cmsSign key type mismatch');
-  return CMS_ALG[signer.tag].ed.sign(toSign, kk.secretKey);
+  if (keyTag !== sign.tag || kk.kind !== sign.tag) throw new Error('cmsSign key type mismatch');
+  return CMS_ALG[sign.tag].ed.sign(msg, kk.secretKey) as TRet<Uint8Array>;
 };
 
-export const CMS: CMSApi = /* @__PURE__ */ (() => ({
-  decode: (der: Uint8Array, opts: BEROpts = {}) => {
+/**
+ * CMS SignedData helpers for X.509 certificates.
+ *
+ * Public wrapper over the stricter helper layers below: ContentInfo shell
+ * handling, attached/detached eContent transforms, and sign/verify convenience
+ * composition live here, while most RFC/profile validation stays in child helpers.
+ */
+const CMSApiImpl: CMSApi = /* @__PURE__ */ deepFreeze({
+  decode: (
+    der: TArg<Uint8Array>,
+    opts: TArg<BEROpts> = {}
+  ): TRet<P.UnwrapCoder<typeof CMSX.ContentInfo> & { ber?: BERDoc }> => {
     const ber = berView(der, opts);
     const contentInfo = CMSX.ContentInfo.decode(ber.der) as P.UnwrapCoder<
       typeof CMSX.ContentInfo
@@ -2801,20 +3244,30 @@ export const CMS: CMSApi = /* @__PURE__ */ (() => ({
       ber?: BERDoc;
     };
     contentInfo.ber = ber;
-    return contentInfo;
+    return contentInfo as TRet<P.UnwrapCoder<typeof CMSX.ContentInfo> & { ber?: BERDoc }>;
   },
-  encode: (contentInfo: P.UnwrapCoder<typeof CMSX.ContentInfo> & { ber?: BERDoc }) => {
-    const der = CMSX.ContentInfo.encode(contentInfo);
-    const ber = contentInfo.ber;
-    if (!ber) return der;
-    return DERUtils.BER.encode(ber.nodes, der);
+  encode: (
+    contentInfo: TArg<P.UnwrapCoder<typeof CMSX.ContentInfo> & { ber?: BERDoc }>
+  ): TRet<Uint8Array> => {
+    const ci = contentInfo as P.UnwrapCoder<typeof CMSX.ContentInfo> & { ber?: BERDoc };
+    const der = CMSX.ContentInfo.encode(ci);
+    const ber = ci.ber;
+    if (!ber) return der as TRet<Uint8Array>;
+    return DERUtils.BER.encode(ber.nodes, der) as TRet<Uint8Array>;
   },
-  contentType: (der: Uint8Array, opts: BEROpts = {}) => CMS.decode(der, opts).contentType,
-  signed: (der: Uint8Array, opts: BEROpts = {}): P.UnwrapCoder<typeof CMSX.SignedData> => {
-    return cmsSignedData(berView(der, opts).der).signedData;
+  contentType: (der: TArg<Uint8Array>, opts: TArg<BEROpts> = {}) =>
+    CMSApiImpl.decode(der, opts).contentType,
+  signed: (
+    der: TArg<Uint8Array>,
+    opts: TArg<BEROpts> = {}
+  ): TRet<P.UnwrapCoder<typeof CMSX.SignedData>> => {
+    return cmsSignedData(berView(der, opts).der).signedData as TRet<
+      P.UnwrapCoder<typeof CMSX.SignedData>
+    >;
   },
-  verify: (der: Uint8Array, opts: CmsVerifyOpts = {}): CmsVerify => cmsVerifyEc(der, opts),
-  detach: (der: Uint8Array, opts: BEROpts = {}): CmsDetached => {
+  verify: (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): CmsVerify =>
+    cmsVerifyEc(der, opts),
+  detach: (der: TArg<Uint8Array>, opts: TArg<BEROpts> = {}): TRet<CmsDetached> => {
     // RFC 5652 section 5.2: detached signatures are represented by absent eContent.
     const { contentInfo, signedData } = cmsSignedData(berView(der, opts).der);
     if (signedData.encapContentInfo.eContent === undefined)
@@ -2822,113 +3275,173 @@ export const CMS: CMSApi = /* @__PURE__ */ (() => ({
     const content = signedData.encapContentInfo.eContent;
     const certs = cmsCerts(signedData);
     signedData.encapContentInfo.eContent = undefined;
-    contentInfo.content = CMSX.SignedData.encode(signedData);
+    contentInfo.content = CMSX.SignedData.encode(signedData) as StrictBytes;
     return {
       content,
       signature: CMSX.ContentInfo.encode(contentInfo),
       certs,
-    };
+    } as TRet<CmsDetached>;
   },
-  attach: (signature: Uint8Array, content: Uint8Array, opts: BEROpts = {}): Uint8Array => {
+  attach: (
+    signature: TArg<Uint8Array>,
+    content: TArg<Uint8Array>,
+    opts: TArg<BEROpts> = {}
+  ): TRet<Uint8Array> => {
     // RFC 5652 section 5.2: attached form carries eContent as OCTET STRING value bytes.
     const { contentInfo, signedData } = cmsSignedData(berView(signature, opts).der);
     if (signedData.encapContentInfo.eContent !== undefined)
       throw new Error('CMS.attach expects detached signature with absent eContent');
-    signedData.encapContentInfo.eContent = content;
-    contentInfo.content = CMSX.SignedData.encode(signedData);
-    return CMSX.ContentInfo.encode(contentInfo);
+    signedData.encapContentInfo.eContent = content as StrictBytes;
+    contentInfo.content = CMSX.SignedData.encode(signedData) as StrictBytes;
+    return CMSX.ContentInfo.encode(contentInfo) as TRet<Uint8Array>;
   },
   verifyDetached: (
-    signature: Uint8Array,
-    content: Uint8Array,
-    opts: CmsVerifyOpts = {}
-  ): CmsVerify => cmsVerifyEc(CMS.attach(signature, content, opts), opts),
+    signature: TArg<Uint8Array>,
+    content: TArg<Uint8Array>,
+    opts: TArg<CmsVerifyOpts> = {}
+  ): CmsVerify => cmsVerifyEc(CMSApiImpl.attach(signature, content, opts), opts),
   sign: (
-    content: string | Uint8Array,
+    content: TArg<string | Uint8Array>,
     signingCertPem: string,
     privateKeyPem: string,
     chainPem = '',
-    opts: CmsSignOpts = {}
-  ): Uint8Array => {
+    opts: TArg<CmsSignOpts> = {}
+  ): TRet<Uint8Array> => {
+    const cfg = opts as CmsSignOpts;
     const compactOpts = {
-      createdTs: opts.createdTs,
-      smimeCapabilities: opts.smimeCapabilities,
-      messageDigest: opts.messageDigest,
-      digestAlgorithm: opts.digestAlgorithm,
+      createdTs: cfg.createdTs,
+      smimeCapabilities: cfg.smimeCapabilities,
+      messageDigest: cfg.messageDigest,
+      digestAlgorithm: cfg.digestAlgorithm,
     };
     const compactBuildOpts = {
       ...compactOpts,
-      digestAlgorithmParams: opts.digestAlgorithmParams,
-      signatureAlgorithm: opts.signatureAlgorithm,
+      digestAlgorithmParams: cfg.digestAlgorithmParams,
+      signatureAlgorithm: cfg.signatureAlgorithm,
     };
-    return CMS.compact.build(
+    return CMSApiImpl.compact.build(
       content,
-      CMS.compact.sign(content, signingCertPem, privateKeyPem, {
+      CMSApiImpl.compact.sign(content, signingCertPem, privateKeyPem, {
         ...compactOpts,
-        extraEntropy: opts.extraEntropy,
+        extraEntropy: cfg.extraEntropy,
       }),
       signingCertPem,
       chainPem,
       compactBuildOpts
-    );
+    ) as TRet<Uint8Array>;
   },
   signDetached: (
-    content: string | Uint8Array,
+    content: TArg<string | Uint8Array>,
     signingCertPem: string,
     privateKeyPem: string,
     chainPem = '',
-    opts: CmsSignOpts = {}
-  ): Uint8Array =>
-    CMS.detach(CMS.sign(content, signingCertPem, privateKeyPem, chainPem, opts)).signature,
+    opts: TArg<CmsSignOpts> = {}
+  ): TRet<Uint8Array> =>
+    CMSApiImpl.detach(CMSApiImpl.sign(content, signingCertPem, privateKeyPem, chainPem, opts))
+      .signature as TRet<Uint8Array>,
   compact: {
     sign: (
-      content: string | Uint8Array,
+      content: TArg<string | Uint8Array>,
       signingCertPem: string,
       privateKeyPem: string,
-      opts: Pick<
+      opts: TArg<
+        Pick<
+          CmsSignOpts,
+          'createdTs' | 'extraEntropy' | 'smimeCapabilities' | 'messageDigest' | 'digestAlgorithm'
+        >
+      > = {}
+    ): TRet<Uint8Array> => {
+      const cfg = opts as Pick<
         CmsSignOpts,
         'createdTs' | 'extraEntropy' | 'smimeCapabilities' | 'messageDigest' | 'digestAlgorithm'
-      > = {}
-    ): Uint8Array => {
+      >;
       const c = cmsSignCtx(
         content,
         signingCertPem,
-        opts.createdTs,
-        opts.smimeCapabilities,
-        opts.messageDigest,
-        opts.digestAlgorithm
+        cfg.createdTs,
+        cfg.smimeCapabilities,
+        cfg.messageDigest,
+        cfg.digestAlgorithm
       );
-      return cmsCompactSign(c.signer, c.leaf, privateKeyPem, c.toSign, opts.extraEntropy);
+      return cmsCompactSign(
+        c.signer,
+        c.leaf,
+        privateKeyPem,
+        c.toSign,
+        c.digestHash,
+        cfg.extraEntropy
+      );
     },
     build: (
-      content: string | Uint8Array,
-      signature: Uint8Array,
+      content: TArg<string | Uint8Array>,
+      signature: TArg<Uint8Array>,
       signingCertPem: string,
       chainPem = '',
-      opts: CmsCompactBuildOpts = {}
-    ): Uint8Array => {
+      opts: TArg<CmsCompactBuildOpts> = {}
+    ): TRet<Uint8Array> => {
+      const cfg = opts as CmsCompactBuildOpts;
+      const sig = signature as Uint8Array;
       const c = cmsSignCtx(
         content,
         signingCertPem,
-        opts.createdTs,
-        opts.smimeCapabilities,
-        opts.messageDigest,
-        opts.digestAlgorithm
+        cfg.createdTs,
+        cfg.smimeCapabilities,
+        cfg.messageDigest,
+        cfg.digestAlgorithm
       );
-      const digestAlgorithm = opts.digestAlgorithm
-        ? algOID(opts.digestAlgorithm)
-        : hashOid(c.signer.alg.hash);
-      const signatureAlgorithm = opts.signatureAlgorithm
-        ? algOID(opts.signatureAlgorithm)
-        : c.signer.alg.sigOid;
+      const defaultDigestAlgorithm = hashOid(c.signer.alg.hash);
+      const digestAlgorithm = cfg.digestAlgorithm
+        ? oidName.decode(oidName.encode(cfg.digestAlgorithm))
+        : defaultDigestAlgorithm;
+      let signatureAlgorithm: string | undefined = cfg.signatureAlgorithm
+        ? oidName.decode(oidName.encode(cfg.signatureAlgorithm))
+        : undefined;
+      if (!signatureAlgorithm && c.signer.tag === 'EC') {
+        // Keep this CMS-only selection local so X509-only treeshake bundles do
+        // not retain the ECDSA digest/signature OID table.
+        if (digestAlgorithm === hashOid(sha224)) signatureAlgorithm = 'ecdsa-with-SHA224';
+        else if (digestAlgorithm === hashOid(sha256)) signatureAlgorithm = 'ecdsa-with-SHA256';
+        else if (digestAlgorithm === hashOid(sha384)) signatureAlgorithm = 'ecdsa-with-SHA384';
+        else if (digestAlgorithm === hashOid(sha512)) signatureAlgorithm = 'ecdsa-with-SHA512';
+      }
+      if (!signatureAlgorithm && c.signer.tag !== 'EC') signatureAlgorithm = c.signer.alg.sigOid;
       if (!signatureAlgorithm) throw new Error('signature algorithm OID is required');
-      const digestAlgorithmParams = opts.digestAlgorithmParams || 'absent';
-      if (c.signer.tag === 'EC') ecCurve(c.signer.curve).Signature.fromBytes(signature, 'der');
-      else {
-        const expected = c.signer.tag === 'Ed25519' ? 64 : 114;
-        if (signature.length !== expected)
+      const signerDigestParams =
+        'digestParams' in c.signer.alg && c.signer.alg.digestParams
+          ? c.signer.alg.digestParams()
+          : undefined;
+      const digestParams = cfg.digestAlgorithmParams
+        ? cfg.digestAlgorithmParams === 'null'
+          ? ASN1_NULL_TLV
+          : undefined
+        : digestAlgorithm === defaultDigestAlgorithm
+          ? signerDigestParams
+          : undefined;
+      checkEdDigestParams(
+        c.signer.tag === 'Ed25519' || c.signer.tag === 'Ed448' ? c.signer.tag : undefined,
+        { algorithm: digestAlgorithm, params: digestParams },
+        'SignerInfo'
+      );
+      const sigMeta = CMS_ALG_BY_SIG_OID[signatureAlgorithm as CmsAlg['sigOid']];
+      if (c.signer.tag === 'EC') {
+        // RFC 5754 section 3.3 couples ECDSA-with-SHA2 signature OIDs to the
+        // same hash family used by SignerInfo.digestAlgorithm.
+        if (!sigMeta || !('ec' in sigMeta))
+          throw new Error(`unsupported EC signatureAlgorithm OID ${signatureAlgorithm}`);
+        if (hashOid(sigMeta.hash) !== digestAlgorithm)
           throw new Error(
-            `invalid ${c.signer.tag} signature length: expected ${expected}, got ${signature.length}`
+            'ECDSA signatureAlgorithm must match digestAlgorithm by RFC 5754 section 3.3'
+          );
+        ecCurve(c.signer.curve).Signature.fromBytes(sig, 'der');
+      } else {
+        if (signatureAlgorithm !== c.signer.alg.sigOid)
+          throw new Error(
+            `${c.signer.tag} signatureAlgorithm must match signer key by RFC 8419 section 3.1`
+          );
+        const expected = c.signer.tag === 'Ed25519' ? 64 : 114;
+        if (sig.length !== expected)
+          throw new Error(
+            `invalid ${c.signer.tag} signature length: expected ${expected}, got ${sig.length}`
           );
       }
       const chain = (() => {
@@ -2945,37 +3458,42 @@ export const CMS: CMSApi = /* @__PURE__ */ (() => ({
         signature,
         digestAlgorithm,
         signatureAlgorithm,
-        digestAlgorithmParams
+        digestParams
       );
     },
   },
-}))();
+});
+/** CMS SignedData helpers for X.509 certificates. */
+export const CMS: TRet<CMSApi> = CMSApiImpl as unknown as TRet<CMSApi>;
+// Narrow explicit test-only hook surface for focused review artifacts; keep this
+// list intentional so helper exposure does not silently widen the public API.
 export const __TEST: {
   IPv4: typeof IPv4;
   IPv6: typeof IPv6;
-  PrintableString: typeof PrintableString;
-  NumericString: typeof NumericString;
-  TeletexString: typeof TeletexString;
+  PrintableString: typeof DERUtils.ASN1.PrintableString;
+  NumericString: typeof DERUtils.ASN1.NumericString;
+  TeletexString: typeof DERUtils.ASN1.TeletexString;
+  UniversalString: typeof DERUtils.ASN1.UniversalString;
   X509Time: typeof X509Time;
   CMSCertificateChoices: typeof CMSCertificateChoices;
   CMSRevocationInfoChoice: typeof CMSRevocationInfoChoice;
   CMSSignedData: typeof CMSSignedData;
-  SMIME_CAPS: typeof SMIME_CAPS;
   keyCurve: (privateKeyPem: string) => CertCurve | EdKind;
-} = /* @__PURE__ */ (() => ({
-  IPv4: IPv4,
-  IPv6: IPv6,
-  PrintableString: PrintableString,
-  NumericString: NumericString,
-  TeletexString: TeletexString,
-  X509Time: X509Time,
-  CMSCertificateChoices: CMSCertificateChoices,
-  CMSRevocationInfoChoice: CMSRevocationInfoChoice,
-  CMSSignedData: CMSSignedData,
-  SMIME_CAPS: SMIME_CAPS,
-  keyCurve: (privateKeyPem: string) => {
-    const block = onePem(privateKeyPem, 'PRIVATE KEY');
-    const parsed = pkcs8SignKey(pkcs8FromPem(privateKeyPem, block.der).key);
-    return parsed.kind === 'EC' ? parsed.curve : parsed.kind;
-  },
-}))();
+} = /* @__PURE__ */ (() =>
+  deepFreeze({
+    IPv4: IPv4,
+    IPv6: IPv6,
+    PrintableString: DERUtils.ASN1.PrintableString,
+    NumericString: DERUtils.ASN1.NumericString,
+    TeletexString: DERUtils.ASN1.TeletexString,
+    UniversalString: DERUtils.ASN1.UniversalString,
+    X509Time: X509Time,
+    CMSCertificateChoices: CMSCertificateChoices,
+    CMSRevocationInfoChoice: CMSRevocationInfoChoice,
+    CMSSignedData: CMSSignedData,
+    keyCurve: (privateKeyPem: string) => {
+      const block = onePem(privateKeyPem, 'PRIVATE KEY');
+      const parsed = pkcs8SignKey(pkcs8FromPem(privateKeyPem, block.der).key);
+      return parsed.kind === 'EC' ? parsed.curve : parsed.kind;
+    },
+  }))();

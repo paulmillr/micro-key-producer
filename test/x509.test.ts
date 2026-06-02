@@ -1,4 +1,7 @@
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { ed448 } from '@noble/curves/ed448.js';
 import { equalBytes, hexToBytes } from '@noble/curves/utils.js';
+import { shake256 } from '@noble/hashes/sha3.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { base64 } from '@scure/base';
 import * as P from 'micro-packed';
@@ -7,11 +10,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DERUtils } from '../src/convert.ts';
+import { oid, oidName } from '../src/pgp.ts';
 import { CERTUtils, CMS, X509, __TEST, pemBlocks } from '../src/x509.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.join(__dirname, 'vectors', 'certs');
+// Test-only: exercise compatibility with callers that still pass raw dotted OID strings.
+const rawOid = (name: string): string => oid.decode(oidName.encode(name));
 
 type VectorKind = 'cert' | 'cms' | 'cms-pem' | 'cms-eml';
 type Vector = {
@@ -277,12 +283,42 @@ const findSigPos = (haystack: Uint8Array, needle: Uint8Array): number => {
   }
   return -1;
 };
+type BerNode = ReturnType<typeof DERUtils.BER.decode>['nodes'][number];
+const berNodeSize = (n: BerNode): number => 1 + n.lenBytes + n.len;
+const berTlvAt = (nodes: BerNode[], path: number[], base = 0): { pos: number; end: number } => {
+  let cur = nodes;
+  let pos = base;
+  let node: BerNode | undefined;
+  for (let depth = 0; depth < path.length; depth++) {
+    const idx = path[depth];
+    if (idx === undefined) throw new Error(`missing BER path index depth=${depth}`);
+    for (let i = 0; i < idx; i++) pos += berNodeSize(cur[i]);
+    node = cur[idx];
+    if (!node) throw new Error(`bad BER path depth=${depth} idx=${idx}`);
+    if (depth < path.length - 1) {
+      pos += 1 + node.lenBytes;
+      cur = node.children || [];
+    }
+  }
+  if (!node) throw new Error('empty BER path');
+  return { pos, end: pos + berNodeSize(node) };
+};
 const assertNoExtRaw = (cert: ReturnType<typeof X509.decode>): void => {
   for (const e of cert.tbs.extensions?.list || [])
     deepStrictEqual(Object.prototype.hasOwnProperty.call(e, 'value'), false);
 };
 
 describe('x509', () => {
+  should('DERLen handles definite lengths above 32-bit signed range', () => {
+    const high = Uint8Array.from([0x84, 0x80, 0x00, 0x00, 0x00]);
+    deepStrictEqual(DERUtils.DERLen.encode(0x80000000), high);
+    deepStrictEqual(DERUtils.DERLen.decode(high), 0x80000000);
+  });
+  should('pemBlocks accepts RFC 7468 internal hyphen label separators', () => {
+    deepStrictEqual(pemBlocks('-----BEGIN X-THING-----\nQQ==\n-----END X-THING-----'), [
+      { tag: 'X-THING', b64: 'QQ==', der: Uint8Array.of(0x41) },
+    ]);
+  });
   should('decodes encrypted-dns .der to exact object shape', () => {
     deepStrictEqual(X509.decode(read(EDNS_JIYA_DER)), {
       tbs: {
@@ -295,7 +331,7 @@ describe('x509', () => {
             [{ oid: '2.5.4.10', value: { TAG: 'printable', data: 'ZeroSSL' } }],
             [
               {
-                oid: '2.5.4.3',
+                oid: 'commonName',
                 value: { TAG: 'printable', data: 'ZeroSSL ECC Domain Secure Site CA' },
               },
             ],
@@ -306,7 +342,7 @@ describe('x509', () => {
           notAfter: { TAG: 'utc', data: '260522235959Z' },
         },
         subject: {
-          rdns: [[{ oid: '2.5.4.3', value: { TAG: 'utf8', data: '*.angleline.' + 'cn' } }]],
+          rdns: [[{ oid: 'commonName', value: { TAG: 'utf8', data: '*.angleline.' + 'cn' } }]],
         },
         spki: {
           algorithm: {
@@ -322,36 +358,36 @@ describe('x509', () => {
         extensions: {
           list: [
             {
-              oid: '2.5.29.35',
+              oid: 'authorityKeyIdentifier',
               rest: hexToBytes('0418301680140f6be64bce3947aef67e901e79f0309192c85fa3'),
             },
             {
-              oid: '2.5.29.14',
+              oid: 'subjectKeyIdentifier',
               rest: hexToBytes('041604142ef62917d01e63d131826ffc013a1b878d45fe64'),
             },
-            { oid: '2.5.29.15', rest: hexToBytes('0101ff040403020780') },
-            { oid: '2.5.29.19', rest: hexToBytes('0101ff04023000') },
-            { oid: '2.5.29.37', rest: hexToBytes('040c300a06082b06010505070301') },
+            { oid: 'keyUsage', rest: hexToBytes('0101ff040403020780') },
+            { oid: 'basicConstraints', rest: hexToBytes('0101ff04023000') },
+            { oid: 'extendedKeyUsage', rest: hexToBytes('040c300a06082b06010505070301') },
             {
-              oid: '2.5.29.32',
+              oid: 'certificatePolicies',
               rest: hexToBytes(
                 '044230403034060b2b06010401b2310102024e3025302306082b06010505070201161768747470733a2f2f7365637469676f2e636f6d2f4350533008060667810c010201'
               ),
             },
             {
-              oid: '1.3.6.1.5.5.7.1.1',
+              oid: 'authorityInfoAccess',
               rest: hexToBytes(
                 '047c307a304b06082b06010505073002863f687474703a2f2f7a65726f73736c2e6372742e7365637469676f2e636f6d2f5a65726f53534c454343446f6d61696e5365637572655369746543412e637274302b06082b06010505073001861f687474703a2f2f7a65726f73736c2e6f6373702e7365637469676f2e636f6d'
               ),
             },
-            { oid: '1.3.6.1.5.5.7.1.24', rest: hexToBytes('04053003020105') },
+            { oid: 'tlsFeature', rest: hexToBytes('04053003020105') },
             {
-              oid: '1.3.6.1.4.1.11129.2.4.2',
+              oid: 'sctList',
               rest: hexToBytes(
                 '0481f60481f300f10076000e5794bcf3aea93e331b2c9907b3f790df9bc23d713225dd21a925ac61c54e210000019c7ea9e83f00000403004730450221008fe0aa0a78a952a293d065023458d28f3ddc590c109cf2904907ec893e7e305d02204b47114d88fe7920dbaf5469b0a8d1b4030f476d7817218197ea03bf4e667317007700d16ea9a568077e6635a03f37a5ddbc03a53c411214d48818f5e931b323cb95040000019c7ea9e7c60000040300483046022100c117c32b2b1309de60740492e86b21212600930fc37f01647a8d584d4e1ab3e9022100916b4e57891f30d8051d9082bf4bb8c5081c0d787a4f716c66baf15a81ec174f'
               ),
             },
-            { oid: '2.5.29.17', rest: hexToBytes('04123010820e2a2e616e676c656c696e652e636e') },
+            { oid: 'subjectAltName', rest: hexToBytes('04123010820e2a2e616e676c656c696e652e636e') },
           ],
         },
       },
@@ -360,6 +396,22 @@ describe('x509', () => {
         '30640230281d149f501e190fb2e80270ec042ac81547eca74195afb059563ad23213d690bd099b5f9644d7ec07a1a9524022eba1023063b89955400b2d1e9cb038ed90c53b71075c4f4a5da587e647a504d9e684c073016625891992f5661e71838a0ee1f60a'
       ),
     });
+  });
+  should('rejects DER BIT STRING encodings with nonzero unused tail bits', () => {
+    const der = read(EDNS_JIYA_DER).slice();
+    const ku = hexToBytes('03020780');
+    const at = findSigPos(der, ku);
+    if (at < 0) throw new Error('keyUsage BIT STRING marker not found');
+    der[at + ku.length - 1] = 0x81;
+    throws(() => X509.decode(der), /BIT STRING|unused/i);
+  });
+  should('rejects DER BOOLEAN TRUE encoded with noncanonical content octet', () => {
+    const der = read(EDNS_JIYA_DER).slice();
+    const ext = hexToBytes('0603551d130101ff04');
+    const at = findSigPos(der, ext);
+    if (at < 0) throw new Error('basicConstraints critical TRUE marker not found');
+    der[at + 7] = 0x01;
+    throws(() => X509.decode(der), /BOOLEAN|DER/i);
   });
   should('all vectors', () => {
     for (const v of VECTORS) {
@@ -390,7 +442,7 @@ describe('x509', () => {
       }
       const ci = CMS.decode(der, v.ber ? { allowBER: true } : undefined);
       deepStrictEqual(equalBytes(CMS.encode(ci), der), true);
-      if (ci.contentType !== '1.2.840.113549.1.7.2') continue;
+      if (ci.contentType !== 'signedData') continue;
       const parsed = CMS.signed(der, v.ber ? { allowBER: true } : undefined);
       for (const c of parsed.certificates || []) {
         if (c.TAG !== 'certificate') continue;
@@ -409,32 +461,280 @@ describe('x509', () => {
     );
 
     const qc = X509.extensions(X509.decode(certDersFromVector('openssl/fake-gp.pem')[0])).find(
-      (e) => e.oid === '1.3.6.1.5.5.7.1.3'
+      (e) => e.oid === 'qcStatements'
     );
     if (!qc?.qcStatements) throw new Error('missing qcStatements extension');
     deepStrictEqual(qc.qcStatements.list[0], {
-      statementId: '0.4.0.1862.1.1',
-      statementName: 'etsiQcCompliance',
+      statementId: 'etsiQcCompliance',
       statementInfo: undefined,
     });
     const eku = X509.extensions(X509.decode(certDersFromVector('openssl/fake-gp.pem')[0])).find(
-      (e) => e.oid === '2.5.29.37'
+      (e) => e.oid === 'extendedKeyUsage'
     );
     if (!eku?.eku) throw new Error('missing eku extension');
     deepStrictEqual(eku.eku.list.includes('emailProtection'), true);
     deepStrictEqual(eku.eku.list.includes('codeSigning'), true);
+    const allEku = X509.extensions({
+      ...X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]),
+      tbs: {
+        ...X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]).tbs,
+        extensions: {
+          list: [
+            {
+              oid: 'extendedKeyUsage',
+              rest: DERUtils.ASN1.OctetString.encode(
+                DERUtils.ASN1.sequence({
+                  list: P.array(null, DERUtils.ASN1.OID),
+                }).encode({
+                  list: [
+                    'anyExtendedKeyUsage',
+                    'serverAuth',
+                    'clientAuth',
+                    'codeSigning',
+                    'emailProtection',
+                    'timeStamping',
+                    'OCSPSigning',
+                  ],
+                })
+              ),
+            },
+          ],
+        },
+      },
+    }).find((e) => e.oid === 'extendedKeyUsage');
+    deepStrictEqual(allEku?.eku?.list, [
+      'anyExtendedKeyUsage',
+      'serverAuth',
+      'clientAuth',
+      'codeSigning',
+      'emailProtection',
+      'timeStamping',
+      'OCSPSigning',
+    ]);
+    const emptyEku = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    emptyEku.tbs.extensions = {
+      list: [{ oid: 'extendedKeyUsage', rest: Uint8Array.from([0x04, 0x02, 0x30, 0x00]) }],
+    };
+    throws(
+      () => X509.extensions(emptyEku),
+      /extendedKeyUsage must contain at least one KeyPurposeId/
+    );
 
     const ms = X509.extensions(X509.decode(certDersFromVector('openssl/grfc.pem')[0])).find(
-      (e) => e.oid === '1.3.6.1.4.1.311.21.1'
+      (e) => e.oid === 'msCertType'
     );
     if (!ms) throw new Error('missing msCertType extension');
     deepStrictEqual(ms.msCertType, { TAG: 'int', data: 0n });
+  });
+  should('decodes constructed structured GeneralName branches', () => {
+    const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    cert.tbs.extensions = {
+      list: [
+        {
+          oid: 'subjectAltName',
+          rest: Uint8Array.from([
+            0x04, 0x10, 0x30, 0x0e, 0xa3, 0x02, 0x30, 0x00, 0xa5, 0x05, 0xa1, 0x03, 0x0c, 0x01,
+            0x78, 0x85, 0x01, 0x78,
+          ]),
+        },
+      ],
+    };
+    throws(() => X509.extensions(cert));
+    cert.tbs.extensions.list[0].rest = Uint8Array.from([
+      0x04, 0x0d, 0x30, 0x0b, 0xa3, 0x02, 0x30, 0x00, 0xa5, 0x05, 0xa1, 0x03, 0x0c, 0x01, 0x78,
+    ]);
+    deepStrictEqual(X509.extensions(cert), [
+      {
+        oid: 'subjectAltName',
+        critical: false,
+        san: {
+          list: [
+            { TAG: 'x400Address', data: Uint8Array.from([0x30, 0x00]) },
+            { TAG: 'ediPartyName', data: Uint8Array.from([0xa1, 0x03, 0x0c, 0x01, 0x78]) },
+          ],
+        },
+      },
+    ]);
+  });
+  should('preserves otherName ANY values as raw DER', () => {
+    const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    // RFC 5280 section 4.2.1.6 defines OtherName.value as [0] EXPLICIT
+    // ANY DEFINED BY type-id; unknown OIDs must keep the DER value bytes.
+    const value = Uint8Array.from([0x30, 0x03, 0x9f, 0x1f, 0x00]);
+    cert.tbs.extensions = {
+      list: [
+        {
+          oid: 'subjectAltName',
+          rest: Uint8Array.from([
+            0x04,
+            0x0f,
+            0x30,
+            0x0d,
+            0xa0,
+            0x0b,
+            0x06,
+            0x02,
+            0x2a,
+            0x03,
+            0xa0,
+            0x05,
+            ...value,
+          ]),
+        },
+      ],
+    };
+    deepStrictEqual(X509.extensions(cert), [
+      {
+        oid: 'subjectAltName',
+        critical: false,
+        san: { list: [{ TAG: 'otherName', data: { type: '1.2.3', value } }] },
+      },
+    ]);
+  });
+  should('enforces RFC 5280 GeneralNames SIZE constraint on bare reuse sites', () => {
+    const base = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    const certificateIssuer = (rest: Uint8Array) => {
+      const cert = structuredClone(base);
+      cert.tbs.extensions = { list: [{ oid: 'certificateIssuer', rest }] };
+      return X509.extensions(cert)[0];
+    };
+    deepStrictEqual(
+      certificateIssuer(
+        Uint8Array.from([0x04, 0x08, 0x30, 0x06, 0x87, 0x04, 0xc0, 0x00, 0x02, 0x01])
+      ),
+      {
+        oid: 'certificateIssuer',
+        critical: false,
+        certificateIssuer: {
+          list: [{ TAG: 'iPAddress', data: '192.0.2.1' }],
+        },
+      }
+    );
+    throws(
+      () => certificateIssuer(Uint8Array.from([0x04, 0x02, 0x30, 0x00])),
+      /GeneralNames must contain at least one GeneralName/
+    );
+  });
+  should('labels X.520 objectIdentifier SubjectDirectoryAttributes attributes', () => {
+    const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    cert.tbs.extensions = {
+      list: [
+        {
+          oid: 'subjectDirectoryAttributes',
+          rest: Uint8Array.from([
+            0x04, 0x10, 0x30, 0x0e, 0x30, 0x0c, 0x06, 0x03, 0x55, 0x04, 0x6a, 0x31, 0x05, 0x06,
+            0x03, 0x55, 0x04, 0x03,
+          ]),
+        },
+      ],
+    };
+    deepStrictEqual(X509.extensions(cert), [
+      {
+        oid: 'subjectDirectoryAttributes',
+        critical: false,
+        subjectDirectoryAttributes: {
+          list: [
+            {
+              type: 'objectIdentifier',
+              values: [{ TAG: 'oid', data: 'commonName' }],
+            },
+          ],
+        },
+      },
+    ]);
   });
   should('strict mode rejects BER vectors unless opted in', () => {
     const der = read(EDNS_OLD);
     throws(() => CMS.decode(der));
     const ci = CMS.decode(der, { allowBER: true });
     deepStrictEqual(ci.contentType, 'signedData');
+  });
+  should('CMS ContentInfo exposes standard RFC 5652 contentType aliases', () => {
+    const content = Uint8Array.from([0x30, 0x00]);
+    const items = [
+      'data',
+      'signedData',
+      'envelopedData',
+      'digestedData',
+      'encryptedData',
+      'authenticatedData',
+    ];
+    deepStrictEqual(
+      items.map((name) => ({
+        byName: CMS.decode(CMS.encode({ contentType: name, content })).contentType,
+        byOID: CMS.decode(CMS.encode({ contentType: rawOid(name), content })).contentType,
+      })),
+      items.map((name) => ({ byName: name, byOID: name }))
+    );
+  });
+  should('rejects multi-valued sMIMECapabilities attrValues (RFC 8551 section 2.5.2)', () => {
+    const tpl = getEdnsJiyaTpl();
+    const { cert, key, root } = getCertKeyRoot();
+    const der = CMS.sign(tpl, cert, key, root, {
+      createdTs: CERT_CREATED,
+      smimeCapabilities: ['aes256-cbc'],
+    });
+    const ci = CMS.decode(der);
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const si = sd.signerInfos[0];
+    const attr = (si.signedAttrs || []).find((a) => a.oid === 'attrSMIMECapabilities');
+    if (!attr || !attr.values[0]) throw new Error('missing sMIMECapabilities attr');
+    deepStrictEqual(
+      { signerInfos: sd.signerInfos.length, smimeValues: attr.values.length },
+      {
+        signerInfos: 1,
+        smimeValues: 1,
+      }
+    );
+    attr.values = [attr.values[0], attr.values[0]];
+    ci.content = __TEST.CMSSignedData.encode(sd);
+    ci.ber = undefined;
+    throws(() => CMS.signed(CMS.encode(ci)), /sMIMECapabilities attribute.*exactly one value/i);
+  });
+  should('rejects malformed SignerInfo shapes in CMS.signed (RFC 5652 section 5.3)', () => {
+    const tpl = getEdnsJiyaTpl();
+    const { cert, key, root } = getCertKeyRoot();
+    const der = CMS.sign(tpl, cert, key, root, { createdTs: CERT_CREATED });
+    const mutate = (
+      fn: (si: ReturnType<typeof __TEST.CMSSignedData.decode>['signerInfos'][0]) => void
+    ) => {
+      const ci = CMS.decode(der);
+      const sd = __TEST.CMSSignedData.decode(ci.content);
+      const si = sd.signerInfos[0];
+      if (!si) throw new Error('missing signerInfo');
+      fn(si);
+      ci.content = __TEST.CMSSignedData.encode(sd);
+      ci.ber = undefined;
+      return CMS.encode(ci);
+    };
+    const si = CMS.signed(der).signerInfos[0];
+    deepStrictEqual(
+      {
+        version: si.version.toString(),
+        sid: si.sid.TAG,
+        signedAttrs: si.signedAttrs?.length,
+        unsignedAttrs: si.unsignedAttrs,
+      },
+      { version: '1', sid: 'issuerSerial', signedAttrs: 3, unsignedAttrs: undefined }
+    );
+    throws(
+      () => CMS.signed(mutate((s) => (s.signedAttrs = []))),
+      /SignedAttributes present but empty/
+    );
+    throws(
+      () => CMS.signed(mutate((s) => (s.unsignedAttrs = []))),
+      /UnsignedAttributes present but empty/
+    );
+    throws(
+      () =>
+        CMS.signed(
+          mutate((s) => {
+            s.sid = { TAG: 'subjectKeyIdentifier', data: Uint8Array.from([1]) };
+            s.version = 1n;
+          })
+        ),
+      /SignerInfo\.version must be 3 for subjectKeyIdentifier SID/
+    );
   });
   should('rejects SignedData with version that violates RFC 5652 section 5.1', () => {
     const tpl = getEdnsJiyaTpl();
@@ -491,6 +791,32 @@ describe('x509', () => {
       /SignedData\.digestAlgorithms must include each SignerInfo\.digestAlgorithm/
     );
   });
+  should(
+    'CMS.verify accepts signer certificate from opts.chain when CertificateSet is omitted',
+    () => {
+      const tpl = getEdnsJiyaTpl();
+      const { cert, key, root } = getCertKeyRoot();
+      const signed = CMS.sign(tpl, cert, key, root, {
+        createdTs: CERT_CREATED,
+        extraEntropy: false,
+      });
+      const ci = CMS.decode(signed);
+      const sd = __TEST.CMSSignedData.decode(ci.content);
+      sd.certificates = undefined;
+      ci.content = __TEST.CMSSignedData.encode(sd);
+      ci.ber = undefined;
+      const external = CMS.encode(ci);
+      const valid = CMS.verify(external, {
+        time: CERT_CREATED,
+        chain: [cert, root],
+        checkSignatures: true,
+      });
+      deepStrictEqual(
+        { signedAttrs: valid.signedAttrs, chainLen: valid.chain.length },
+        { signedAttrs: true, chainLen: 2 }
+      );
+    }
+  );
   should('fails closed on multi-signer SignedData in this API profile', () => {
     const { root } = getCertKeyRoot();
     const ci = decodeP384Cert();
@@ -583,12 +909,71 @@ describe('x509', () => {
       /SignerInfo\.sid issuerSerial matched multiple certificates/
     );
   });
+  should('fails closed when issuerSerial SID matches CertificateSet and opts.chain', () => {
+    const { root } = getCertKeyRoot();
+    const ci = decodeP384Cert();
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const sid = sd.signerInfos[0]?.sid;
+    if (!sid || sid.TAG !== 'issuerSerial') throw new Error('expected issuerSerial sid');
+    const sidIssuer = CERTUtils.Name.encode(sid.data.issuer);
+    const signerCert = (sd.certificates || []).find(
+      (i): i is Extract<NonNullable<typeof sd.certificates>[number], { TAG: 'certificate' }> =>
+        i.TAG === 'certificate' &&
+        i.data.tbs.serial === sid.data.serial &&
+        equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
+    );
+    if (!signerCert) throw new Error('certificate set missing');
+    const duplicate = CERTUtils.Certificate.decode(CERTUtils.Certificate.encode(signerCert.data));
+    duplicate.tbs.validity.notAfter = { TAG: 'utc', data: '270101000000Z' };
+    throws(
+      () =>
+        CMS.verify(CMS.encode(ci), {
+          time: CERT_CREATED,
+          chain: [duplicate, root],
+          checkSignatures: false,
+        }),
+      /SignerInfo\.sid issuerSerial matched multiple certificates/
+    );
+  });
+  should('fails closed when subjectKeyIdentifier SID matches CertificateSet and opts.chain', () => {
+    const { root } = getCertKeyRoot();
+    const ci = decodeP384Cert();
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const si = sd.signerInfos[0];
+    if (!si || si.sid.TAG !== 'issuerSerial') throw new Error('expected issuerSerial sid');
+    const sidIssuer = CERTUtils.Name.encode(si.sid.data.issuer);
+    const signerCert = (sd.certificates || []).find(
+      (i): i is Extract<NonNullable<typeof sd.certificates>[number], { TAG: 'certificate' }> =>
+        i.TAG === 'certificate' &&
+        i.data.tbs.serial === si.sid.data.serial &&
+        equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
+    );
+    if (!signerCert) throw new Error('certificate set missing');
+    const signerSki = X509.extensions(signerCert.data).find((e) => e.ski)?.ski;
+    if (!signerSki) throw new Error('signer subjectKeyIdentifier not found');
+    si.sid = { TAG: 'subjectKeyIdentifier', data: signerSki };
+    si.version = 3n;
+    sd.version = 3n;
+    ci.content = __TEST.CMSSignedData.encode(sd);
+    ci.ber = undefined;
+    const duplicate = CERTUtils.Certificate.decode(CERTUtils.Certificate.encode(signerCert.data));
+    duplicate.tbs.validity.notAfter = { TAG: 'utc', data: '270101000000Z' };
+    throws(
+      () =>
+        CMS.verify(CMS.encode(ci), {
+          time: CERT_CREATED,
+          chain: [duplicate, root],
+          checkSignatures: false,
+        }),
+      /SignerInfo\.sid subjectKeyIdentifier matched multiple certificates/
+    );
+  });
   should('rejects ContentInfo whose contentType is not id-signedData for CMS.signed', () => {
     const tpl = getEdnsJiyaTpl();
     const { cert, key, root } = getCertKeyRoot();
     const valid = CMS.sign(tpl, cert, key, root);
     const ci = CMS.decode(valid);
-    ci.contentType = '1.2.840.113549.1.7.1';
+    ci.contentType = 'data';
     throws(() => CMS.signed(CMS.encode(ci)), /expected SignedData contentType/);
   });
   should(
@@ -598,7 +983,7 @@ describe('x509', () => {
       const { cert, key, root } = getCertKeyRoot();
       const valid = CMS.sign(tpl, cert, key, root);
       const ci = CMS.decode(valid);
-      ci.contentType = '1.2.840.113549.1.7.3';
+      ci.contentType = 'envelopedData';
       throws(() => CMS.signed(CMS.encode(ci)), /expected SignedData contentType/);
     }
   );
@@ -606,8 +991,8 @@ describe('x509', () => {
     const tpl = getEdnsJiyaTpl();
     const { cert, key, root } = getCertKeyRoot();
     const out = CMS.signed(CMS.sign(tpl, cert, key, root));
-    deepStrictEqual(out.encapContentInfo.eContentType, '1.2.840.113549.1.7.1');
-    const ct = (out.signerInfos[0].signedAttrs || []).find((a) => a.oid === '1.2.840.113549.1.9.3');
+    deepStrictEqual(out.encapContentInfo.eContentType, 'data');
+    const ct = (out.signerInfos[0].signedAttrs || []).find((a) => a.oid === 'attrContentType');
     deepStrictEqual(ct?.values.length, 1);
     deepStrictEqual(
       ct?.values[0],
@@ -642,6 +1027,130 @@ describe('x509', () => {
       deepStrictEqual(p384.digestAlgorithms[0].algorithm, 'sha384');
     }
   );
+  should('rejects Ed25519 SHA-512 digestAlgorithm NULL params (RFC 8419 section 3.1)', () => {
+    const data = new TextEncoder().encode('abc');
+    const cert = pem('openssl/client-ed25519-cert.pem');
+    const key = pem('openssl/client-ed25519-key.pem');
+    const signed = CMS.sign(data, cert, key);
+    const mutate = (fn: (sd: ReturnType<typeof __TEST.CMSSignedData.decode>) => void) => {
+      const ci = CMS.decode(signed);
+      const sd = __TEST.CMSSignedData.decode(ci.content);
+      fn(sd);
+      ci.content = __TEST.CMSSignedData.encode(sd);
+      ci.ber = undefined;
+      return CMS.encode(ci);
+    };
+    throws(
+      () =>
+        CMS.verify(
+          mutate((sd) => {
+            sd.digestAlgorithms[0].params = { tag: 0x05, valueHex: '' };
+          }),
+          { checkSignatures: false }
+        ),
+      /digestAlgorithm params.*RFC 8419/i
+    );
+    throws(
+      () =>
+        CMS.verify(
+          mutate((sd) => {
+            sd.signerInfos[0].digestAlg.params = { tag: 0x05, valueHex: '' };
+          }),
+          { checkSignatures: false }
+        ),
+      /digestAlgorithm params.*RFC 8419/i
+    );
+    const sig = CMS.compact.sign(data, cert, key);
+    throws(
+      () => CMS.sign(data, cert, key, '', { digestAlgorithm: 'sha256' }),
+      /Ed25519.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.signDetached(data, cert, key, '', { digestAlgorithm: 'sha256' }),
+      /Ed25519.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.compact.sign(data, cert, key, { digestAlgorithm: 'sha256' }),
+      /Ed25519.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.compact.build(data, sig, cert, '', { digestAlgorithm: 'sha256' }),
+      /Ed25519.*digestAlgorithm.*RFC 8419/i
+    );
+  });
+  should('CMS.sign Ed448 signedAttrs follow RFC 8419 section 3.1 SHAKE256-512 profile', () => {
+    const data = new TextEncoder().encode('abc');
+    const cert = pem('openssl/client-ed448-cert.pem');
+    const key = pem('openssl/client-ed448-key.pem');
+    const out = CMS.signed(CMS.sign(data, cert, key));
+    const signer = out.signerInfos[0];
+    if (!signer) throw new Error('SignerInfo[0] missing');
+    const md = (signer.signedAttrs || []).find((a) => a.oid === 'attrMessageDigest');
+    const value = md?.values[0];
+    deepStrictEqual(
+      {
+        digestAlgorithms: out.digestAlgorithms,
+        digestAlg: signer.digestAlg,
+        signatureAlg: signer.signatureAlg,
+        messageDigest: value,
+      },
+      {
+        digestAlgorithms: [
+          {
+            algorithm: 'shake256_512',
+            params: { tag: 0x02, valueHex: '0200' },
+          },
+        ],
+        digestAlg: {
+          algorithm: 'shake256_512',
+          params: { tag: 0x02, valueHex: '0200' },
+        },
+        signatureAlg: { algorithm: 'Ed448', params: undefined },
+        messageDigest: Uint8Array.of(0x04, 0x40, ...shake256(data, { dkLen: 64 })),
+      }
+    );
+    const sig = CMS.compact.sign(data, cert, key);
+    throws(
+      () => CMS.sign(data, cert, key, '', { digestAlgorithm: 'sha512' }),
+      /Ed448.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.signDetached(data, cert, key, '', { digestAlgorithm: 'sha512' }),
+      /Ed448.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.sign(data, cert, key, '', { digestAlgorithmParams: 'null' }),
+      /Ed448.*digestAlgorithm params.*RFC 8419/i
+    );
+    throws(
+      () => CMS.compact.sign(data, cert, key, { digestAlgorithm: 'sha512' }),
+      /Ed448.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.compact.build(data, sig, cert, '', { digestAlgorithm: 'sha512' }),
+      /Ed448.*digestAlgorithm.*RFC 8419/i
+    );
+    throws(
+      () => CMS.compact.build(data, sig, cert, '', { digestAlgorithmParams: 'null' }),
+      /Ed448.*digestAlgorithm params.*RFC 8419/i
+    );
+    const withoutAttrs = (() => {
+      const ci = CMS.decode(CMS.sign(data, cert, key));
+      const sd = __TEST.CMSSignedData.decode(ci.content);
+      const signerInfo = sd.signerInfos[0];
+      const pkcs8 = DERUtils.PKCS8.decode(pemBlocks(key)[0].der);
+      if (pkcs8.privateKey.TAG !== 'raw') throw new Error('expected raw Ed448 private key');
+      const digestAlg = { algorithm: 'shake256', params: undefined };
+      sd.digestAlgorithms = [digestAlg];
+      signerInfo.digestAlg = digestAlg;
+      signerInfo.signedAttrs = undefined;
+      signerInfo.signature = ed448.sign(data, pkcs8.privateKey.data);
+      ci.content = __TEST.CMSSignedData.encode(sd);
+      ci.ber = undefined;
+      return CMS.encode(ci);
+    })();
+    deepStrictEqual(CMS.verify(withoutAttrs).signedAttrs, false);
+  });
   should(
     'CMS.sign encodes digest/signature AlgorithmIdentifier params as absent (RFC 5652 sections 10.1.1/10.1.2)',
     () => {
@@ -740,7 +1249,7 @@ describe('x509', () => {
       throws(
         () =>
           CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: true }),
-        /SignedData\.certificates missing/
+        /SignerInfo cert not found/
       );
     }
   );
@@ -769,6 +1278,18 @@ describe('x509', () => {
         if (!cmp) cmp = a.length - b.length;
         deepStrictEqual(cmp <= 0, true);
       }
+    }
+  );
+  should(
+    'CertificateSet in generated CMS dedupes repeated CertificateChoices (RFC 5652 section 10.2.3)',
+    () => {
+      const tpl = getEdnsJiyaTpl();
+      const { cert, key, root } = getCertKeyRoot();
+      const choices = (chainPem: string) =>
+        (CMS.signed(CMS.sign(tpl, cert, key, chainPem)).certificates || []).map((c) =>
+          __TEST.CMSCertificateChoices.encode(c)
+        );
+      deepStrictEqual(choices(`${cert}${root}${root}`), choices(root));
     }
   );
   should(
@@ -813,7 +1334,7 @@ describe('x509', () => {
       };
       const dupCt = make((sd) => {
         const si = sd.signerInfos[0];
-        const ct = (si.signedAttrs || []).find((a) => a.oid === '1.2.840.113549.1.9.3');
+        const ct = (si.signedAttrs || []).find((a) => a.oid === 'attrContentType');
         if (!ct) throw new Error('missing content-type attr');
         (si.signedAttrs || []).push(ct);
       });
@@ -823,7 +1344,7 @@ describe('x509', () => {
       );
       const unsignedMd = make((sd) => {
         const si = sd.signerInfos[0];
-        const md = (si.signedAttrs || []).find((a) => a.oid === '1.2.840.113549.1.9.4');
+        const md = (si.signedAttrs || []).find((a) => a.oid === 'attrMessageDigest');
         if (!md) throw new Error('missing messageDigest attr');
         si.unsignedAttrs = [md];
       });
@@ -833,7 +1354,7 @@ describe('x509', () => {
       );
       const dupSt = make((sd) => {
         const si = sd.signerInfos[0];
-        const st = (si.signedAttrs || []).find((a) => a.oid === '1.2.840.113549.1.9.5');
+        const st = (si.signedAttrs || []).find((a) => a.oid === 'attrSigningTime');
         if (!st) throw new Error('missing signingTime attr');
         (si.signedAttrs || []).push(st);
       });
@@ -843,6 +1364,40 @@ describe('x509', () => {
       );
     }
   );
+  should('enforces sMIMECapabilities as a signed attribute (RFC 2634 profile)', () => {
+    const tpl = getEdnsJiyaTpl();
+    const { cert, key, root } = getCertKeyRoot();
+    const der = CMS.sign(tpl, cert, key, root, {
+      createdTs: CERT_CREATED,
+      smimeCapabilities: ['aes256-cbc'],
+    });
+    const valid = CMS.verify(der, {
+      time: CERT_CREATED,
+      chain: [root],
+      checkSignatures: false,
+    });
+    deepStrictEqual(valid.signedAttrs, true);
+    const ci = CMS.decode(der);
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const si = sd.signerInfos[0];
+    const attrs = si.signedAttrs || [];
+    const idx = attrs.findIndex((a) => a.oid === 'attrSMIMECapabilities');
+    if (idx === -1) throw new Error('missing sMIMECapabilities attr');
+    const [attr] = attrs.splice(idx, 1);
+    if (!attr) throw new Error('missing sMIMECapabilities attr');
+    si.unsignedAttrs = [attr];
+    ci.content = __TEST.CMSSignedData.encode(sd);
+    ci.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(ci), {
+          time: CERT_CREATED,
+          chain: [root],
+          checkSignatures: false,
+        }),
+      /sMIMECapabilities attribute MUST NOT be unsigned/
+    );
+  });
   should('rejects countersignature attrs in this API (RFC 5652 section 11.4)', () => {
     const { root } = getCertKeyRoot();
     const make = (
@@ -1016,13 +1571,13 @@ describe('x509', () => {
       /signer: certificate issuer distinguished name must be non-empty/
     );
     const dupExt = make((_, signerCert) => {
-      const e = signerCert.data.tbs.extensions!.list.find((i) => i.oid === '2.5.29.14');
+      const e = signerCert.data.tbs.extensions!.list.find((i) => i.oid === 'subjectKeyIdentifier');
       if (!e) throw new Error('expected subjectKeyIdentifier extension');
       signerCert.data.tbs.extensions!.list.push({ oid: e.oid, rest: e.rest });
     });
     throws(
       () => CMS.verify(dupExt, { time: CERT_CREATED, chain: [root], checkSignatures: true }),
-      /signer: certificate contains duplicate extension 2\.5\.29\.14/
+      /signer: certificate contains duplicate extension subjectKeyIdentifier/
     );
     const badValidityOrder = make((_, signerCert) => {
       signerCert.data.tbs.validity.notBefore = { TAG: 'utc', data: '260101000000Z' };
@@ -1073,7 +1628,7 @@ describe('x509', () => {
     const badNoSan = make((_, signerCert) => {
       signerCert.data.tbs.subject = { rdns: [] };
       signerCert.data.tbs.extensions!.list = signerCert.data.tbs.extensions!.list.filter(
-        (e) => e.oid !== '2.5.29.17'
+        (e) => e.oid !== 'subjectAltName'
       );
     });
     throws(
@@ -1083,11 +1638,11 @@ describe('x509', () => {
     const badNonCriticalSan = make((_, signerCert) => {
       signerCert.data.tbs.subject = { rdns: [] };
       signerCert.data.tbs.extensions!.list = signerCert.data.tbs.extensions!.list.filter(
-        (e) => e.oid !== '2.5.29.17'
+        (e) => e.oid !== 'subjectAltName'
       );
       const san = Uint8Array.from([0x30, 0x07, 0x82, 0x05, 0x61, 0x2e, 0x63, 0x6f, 0x6d]);
       signerCert.data.tbs.extensions!.list.push({
-        oid: '2.5.29.17',
+        oid: 'subjectAltName',
         rest: Uint8Array.from([0x04, san.length, ...san]),
       });
     });
@@ -1115,8 +1670,17 @@ describe('x509', () => {
         equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
     );
     if (!signerCert) throw new Error('signer cert not found');
+    signerCert.data.tbs.version = 1n;
+    signerCert.data.tbs.issuerUniqueID = { unused: 3, bytes: Uint8Array.from([0xa0]) };
+    const encoded = CERTUtils.Certificate.encode(signerCert.data);
+    const decoded = CERTUtils.Certificate.decode(encoded);
+    deepStrictEqual(decoded.tbs.issuerUniqueID, {
+      unused: 3,
+      bytes: Uint8Array.from([0xa0]),
+    });
+    deepStrictEqual(CERTUtils.Certificate.encode(decoded), encoded);
     signerCert.data.tbs.version = 0n;
-    signerCert.data.tbs.issuerUniqueID = Uint8Array.from([0xff]);
+    signerCert.data.tbs.issuerUniqueID = { unused: 0, bytes: Uint8Array.from([0xff]) };
     c.content = __TEST.CMSSignedData.encode(sd);
     c.ber = undefined;
     throws(
@@ -1209,12 +1773,12 @@ describe('x509', () => {
     );
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
-    const ski = signerCert.data.tbs.extensions.list.find((e) => e.oid === '2.5.29.14');
+    const ski = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'subjectKeyIdentifier');
     if (!ski) throw new Error('SKI extension not found in signer cert');
     const ASN1 = DERUtils.ASN1;
-    const ExtBody = ASN1.sequence({ extnValue: ASN1.OctetString });
-    // extnValue for SKI carries KeyIdentifier octets directly (not nested DER).
-    ski.rest = ExtBody.encode({ extnValue: new Uint8Array() });
+    // Extension.extnValue wraps DER-encoded KeyIdentifier; the KeyIdentifier
+    // itself is an OCTET STRING and this test makes that inner value empty.
+    ski.rest = ASN1.OctetString.encode(ASN1.OctetString.encode(new Uint8Array()));
     c.content = __TEST.CMSSignedData.encode(sd);
     c.ber = undefined;
     throws(
@@ -1238,19 +1802,62 @@ describe('x509', () => {
     );
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
-    const aki = signerCert.data.tbs.extensions.list.find((e) => e.oid === '2.5.29.35');
+    const aki = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'authorityKeyIdentifier');
     if (!aki) throw new Error('AKI extension not found in signer cert');
     const ASN1 = DERUtils.ASN1;
-    const ExtBody = ASN1.sequence({ extnValue: ASN1.OctetString });
-    const extBody = ExtBody.decode(aki.rest);
-    if (!extBody.extnValue.length) throw new Error('AKI extnValue is empty');
-    extBody.extnValue[extBody.extnValue.length - 1] ^= 0x01;
-    aki.rest = ExtBody.encode(extBody);
+    const extnValue = ASN1.OctetString.decode(aki.rest);
+    if (!extnValue.length) throw new Error('AKI extnValue is empty');
+    extnValue[extnValue.length - 1] ^= 0x01;
+    aki.rest = ASN1.OctetString.encode(extnValue);
     c.content = __TEST.CMSSignedData.encode(sd);
     c.ber = undefined;
     throws(
       () => CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: true }),
       /authorityKeyIdentifier keyIdentifier does not match issuer subjectKeyIdentifier/
+    );
+  });
+  should('enforces RFC 5280 AKI issuer/serial pair constraint', () => {
+    const cert = X509.decode(
+      hexToBytes(
+        '3082012c3081dfa00302010202143ee39c0286eeed43006f2c6d66dce4133789957c300506032b6570300c310a300806035504030c0141301e170d3236303431363233353930325a170d3236303431373233353930325a300c310a300806035504030c0141302a300506032b65700321006a49c999d4c14eb4e10893aa46ed6202c81472ea29bc4bd8ea015e316999abcfa3533051301d0603551d0e04160414943dcd01f649df0cd0e62a2f0c55296c18cc5f7e301f0603551d23041830168014943dcd01f649df0cd0e62a2f0c55296c18cc5f7e300f0603551d130101ff040530030101ff300506032b6570034100476186c95341f535156677af510d2a5b7a01acd7d791baca60cd10fd093ab06cdd963a15a2b746b6ef24a9339ce436ff1334c30b972d6eada756996578da660b'
+      )
+    );
+    const aki = (rest: Uint8Array) => {
+      const decoded = structuredClone(cert);
+      decoded.tbs.extensions.list.push({ oid: 'authorityKeyIdentifier', rest });
+      const all = X509.extensions(decoded).filter((e) => e.oid === 'authorityKeyIdentifier');
+      return all[all.length - 1];
+    };
+    deepStrictEqual(
+      aki(
+        Uint8Array.from([
+          0x04, 0x14, 0x30, 0x12, 0xa1, 0x0d, 0x82, 0x0b, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65,
+          0x2e, 0x63, 0x6f, 0x6d, 0x82, 0x01, 0x01,
+        ])
+      )?.aki,
+      {
+        keyIdentifier: undefined,
+        authorityCertIssuer: { list: [{ TAG: 'dNSName', data: 'example.com' }] },
+        authorityCertSerialNumber: 1n,
+      }
+    );
+    throws(
+      () =>
+        aki(
+          Uint8Array.from([
+            0x04, 0x11, 0x30, 0x0f, 0xa1, 0x0d, 0x82, 0x0b, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c,
+            0x65, 0x2e, 0x63, 0x6f, 0x6d,
+          ])
+        ),
+      /authorityKeyIdentifier authorityCertIssuer and authorityCertSerialNumber/
+    );
+    throws(
+      () => aki(Uint8Array.from([0x04, 0x05, 0x30, 0x03, 0x82, 0x01, 0x01])),
+      /authorityKeyIdentifier authorityCertIssuer and authorityCertSerialNumber/
+    );
+    throws(
+      () => aki(Uint8Array.from([0x04, 0x07, 0x30, 0x05, 0xa1, 0x00, 0x82, 0x01, 0x01])),
+      /authorityKeyIdentifier authorityCertIssuer must contain at least one GeneralName/
     );
   });
   should('enforces RFC 5280 EKU purpose constraints for signer cert', () => {
@@ -1270,15 +1877,14 @@ describe('x509', () => {
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
     const ASN1 = DERUtils.ASN1;
-    const ExtBody = ASN1.sequence({ extnValue: ASN1.OctetString });
     // ExtendedKeyUsageSyntax with single id-kp-serverAuth (1.3.6.1.5.5.7.3.1).
     const ekuServerAuth = Uint8Array.from([
       0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
     ]);
     // Duplicate extension OIDs are now rejected in verify path; mutate existing EKU instead of appending a second EKU.
-    const eku = signerCert.data.tbs.extensions.list.find((e) => e.oid === '2.5.29.37');
+    const eku = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'extendedKeyUsage');
     if (!eku) throw new Error('expected extKeyUsage extension');
-    eku.rest = ExtBody.encode({ extnValue: ekuServerAuth });
+    eku.rest = ASN1.OctetString.encode(ekuServerAuth);
     c.content = __TEST.CMSSignedData.encode(sd);
     c.ber = undefined;
     throws(
@@ -1310,7 +1916,7 @@ describe('x509', () => {
       throw new Error('signer cert/extensions not found');
     // ext.rest = ExtBody inner bytes; extnValue here is DER for empty CertificatePolicies SEQUENCE.
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.32',
+      oid: 'certificatePolicies',
       rest: Uint8Array.from([0x04, 0x02, 0x30, 0x00]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1319,6 +1925,185 @@ describe('x509', () => {
       () =>
         CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
       /certificatePolicies must contain at least one PolicyInformation/
+    );
+    signerCert.data.tbs.extensions.list.pop();
+    const duplicatePolicies = Uint8Array.from([
+      0x30, 0x0e, 0x30, 0x05, 0x06, 0x03, 0x2a, 0x03, 0x04, 0x30, 0x05, 0x06, 0x03, 0x2a, 0x03,
+      0x04,
+    ]);
+    signerCert.data.tbs.extensions.list.push({
+      oid: 'certificatePolicies',
+      rest: Uint8Array.from([0x04, duplicatePolicies.length, ...duplicatePolicies]),
+    });
+    c.content = __TEST.CMSSignedData.encode(sd);
+    c.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
+      /certificatePolicies policyIdentifier must not appear more than once/
+    );
+  });
+  should('enforces RFC 5280 privateKeyUsagePeriod presence constraint', () => {
+    const { root } = getCertKeyRoot();
+
+    const c = decodeP384Cert();
+    const sd = __TEST.CMSSignedData.decode(c.content);
+    const sid = sd.signerInfos[0].sid;
+    if (sid.TAG !== 'issuerSerial') throw new Error('expected issuerSerial sid');
+    const sidIssuer = CERTUtils.Name.encode(sid.data.issuer);
+    const signerCert = (sd.certificates || []).find(
+      (i): i is Extract<NonNullable<typeof sd.certificates>[number], { TAG: 'certificate' }> =>
+        i.TAG === 'certificate' &&
+        i.data.tbs.serial === sid.data.serial &&
+        equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
+    );
+    if (!signerCert || !signerCert.data.tbs.extensions)
+      throw new Error('signer cert/extensions not found');
+    signerCert.data.tbs.extensions.list.push({
+      oid: 'privateKeyUsagePeriod',
+      rest: Uint8Array.from([
+        0x04, 0x13, 0x30, 0x11, 0x80, 0x0f, 0x32, 0x30, 0x32, 0x36, 0x30, 0x34, 0x31, 0x37, 0x30,
+        0x30, 0x30, 0x30, 0x30, 0x30, 0x5a,
+      ]),
+    });
+    deepStrictEqual(
+      X509.extensions(signerCert.data).find((e) => e.privateKeyUsagePeriod),
+      {
+        oid: 'privateKeyUsagePeriod',
+        critical: false,
+        privateKeyUsagePeriod: { notBefore: '20260417000000Z', notAfter: undefined },
+      }
+    );
+    signerCert.data.tbs.extensions.list.pop();
+    signerCert.data.tbs.extensions.list.push({
+      oid: 'privateKeyUsagePeriod',
+      rest: Uint8Array.from([0x04, 0x02, 0x30, 0x00]),
+    });
+    c.content = __TEST.CMSSignedData.encode(sd);
+    c.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
+      /privateKeyUsagePeriod must contain notBefore or notAfter/
+    );
+    signerCert.data.tbs.extensions.list.pop();
+    signerCert.data.tbs.extensions.list.push({
+      oid: 'privateKeyUsagePeriod',
+      rest: Uint8Array.from([0x04, 0x04, 0x30, 0x02, 0x80, 0x00]),
+    });
+    c.content = __TEST.CMSSignedData.encode(sd);
+    c.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
+      /expected X509 time/
+    );
+  });
+  should('enforces RFC 5280 DisplayText SIZE constraints', () => {
+    const cert = X509.decode(
+      hexToBytes(
+        '3082012c3081dfa00302010202143ee39c0286eeed43006f2c6d66dce4133789957c300506032b6570300c310a300806035504030c0141301e170d3236303431363233353930325a170d3236303431373233353930325a300c310a300806035504030c0141302a300506032b65700321006a49c999d4c14eb4e10893aa46ed6202c81472ea29bc4bd8ea015e316999abcfa3533051301d0603551d0e04160414943dcd01f649df0cd0e62a2f0c55296c18cc5f7e301f0603551d23041830168014943dcd01f649df0cd0e62a2f0c55296c18cc5f7e300f0603551d130101ff040530030101ff300506032b6570034100476186c95341f535156677af510d2a5b7a01acd7d791baca60cd10fd093ab06cdd963a15a2b746b6ef24a9339ce436ff1334c30b972d6eada756996578da660b'
+      )
+    );
+    const cat = (...chunks: Uint8Array[]): Uint8Array => {
+      const out = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+      let pos = 0;
+      for (const chunk of chunks) {
+        out.set(chunk, pos);
+        pos += chunk.length;
+      }
+      return out;
+    };
+    const tlv = (tag: number, body: Uint8Array): Uint8Array =>
+      cat(Uint8Array.of(tag), DERUtils.DERLen.encode(body.length), body);
+    const seq = (body: Uint8Array): Uint8Array => tlv(0x30, body);
+    const policies = (userNotice: Uint8Array, qualifierOid = '1.3.6.1.5.5.7.2.2') => {
+      const decoded = structuredClone(cert);
+      decoded.tbs.extensions.list.push({
+        oid: 'certificatePolicies',
+        rest: DERUtils.ASN1.OctetString.encode(
+          seq(
+            seq(
+              cat(
+                DERUtils.ASN1.OID.encode('anyPolicy'),
+                seq(seq(cat(DERUtils.ASN1.OID.encode(qualifierOid), seq(userNotice))))
+              )
+            )
+          )
+        ),
+      });
+      return X509.extensions(decoded).find((e) => e.policies);
+    };
+    deepStrictEqual(policies(tlv(0x0c, Uint8Array.of(0x41)))?.policies?.list, [
+      {
+        policy: 'anyPolicy',
+        qualifiers: {
+          list: [
+            {
+              TAG: 'userNotice',
+              data: {
+                noticeRef: undefined,
+                explicitText: { tag: 'utf8', text: 'A' },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    deepStrictEqual(
+      policies(
+        seq(
+          cat(
+            tlv(0x0c, new TextEncoder().encode('O')),
+            seq(tlv(0x02, hexToBytes('20000000000001')))
+          )
+        )
+      )?.policies?.list,
+      [
+        {
+          policy: 'anyPolicy',
+          qualifiers: {
+            list: [
+              {
+                TAG: 'userNotice',
+                data: {
+                  noticeRef: {
+                    organization: { tag: 'utf8', text: 'O' },
+                    numbers: [9007199254740993n],
+                  },
+                  explicitText: undefined,
+                },
+              },
+            ],
+          },
+        },
+      ]
+    );
+    deepStrictEqual(policies(seq(Uint8Array.of(0xbf, 0x1f, 0x00)), '1.2.3.5')?.policies?.list, [
+      {
+        policy: 'anyPolicy',
+        qualifiers: {
+          list: [
+            {
+              TAG: 'unknown',
+              data: {
+                oid: '1.2.3.5',
+                value: {
+                  tag: 0x30,
+                  children: [
+                    { tag: 0x30, children: [{ tag: 0xbf, tagHex: 'bf1f', children: [] }] },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    throws(() => policies(tlv(0x0c, new Uint8Array())), /DisplayText.*1\.\.200/);
+    throws(
+      () => policies(tlv(0x1a, new TextEncoder().encode('A'.repeat(201)))),
+      /DisplayText.*1\.\.200/
     );
   });
   should('enforces RFC 5280 policyMappings constraints', () => {
@@ -1342,7 +2127,7 @@ describe('x509', () => {
       0x30, 0x0c, 0x30, 0x0a, 0x06, 0x04, 0x55, 0x1d, 0x20, 0x00, 0x06, 0x02, 0x2a, 0x03,
     ]);
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.33',
+      oid: 'policyMappings',
       rest: Uint8Array.from([0x04, mapping.length, ...mapping]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1369,10 +2154,9 @@ describe('x509', () => {
     );
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
-    signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.17',
-      rest: Uint8Array.from([0x04, 0x02, 0x30, 0x00]),
-    });
+    const san = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'subjectAltName');
+    if (!san) throw new Error('expected subjectAltName extension');
+    san.rest = Uint8Array.from([0x04, 0x02, 0x30, 0x00]);
     c.content = __TEST.CMSSignedData.encode(sd);
     c.ber = undefined;
     throws(
@@ -1380,6 +2164,36 @@ describe('x509', () => {
         CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
       /subjectAltName must contain at least one GeneralName/
     );
+    const emptyNames: [
+      Uint8Array,
+      { TAG: 'rfc822Name' | 'dNSName' | 'uniformResourceIdentifier' | 'iPAddress'; data: string },
+    ][] = [
+      [Uint8Array.from([0x04, 0x04, 0x30, 0x02, 0x81, 0x00]), { TAG: 'rfc822Name', data: '' }],
+      [Uint8Array.from([0x04, 0x04, 0x30, 0x02, 0x82, 0x00]), { TAG: 'dNSName', data: '' }],
+      [
+        Uint8Array.from([0x04, 0x04, 0x30, 0x02, 0x86, 0x00]),
+        { TAG: 'uniformResourceIdentifier', data: '' },
+      ],
+      [Uint8Array.from([0x04, 0x04, 0x30, 0x02, 0x87, 0x00]), { TAG: 'iPAddress', data: 'hex:' }],
+    ];
+    for (const [rest, name] of emptyNames) {
+      san.rest = rest;
+      c.content = __TEST.CMSSignedData.encode(sd);
+      c.ber = undefined;
+      deepStrictEqual(
+        X509.extensions(signerCert.data).find((e) => e.san),
+        {
+          oid: 'subjectAltName',
+          critical: false,
+          san: { list: [name] },
+        }
+      );
+      deepStrictEqual(
+        CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false })
+          .chain.length,
+        2
+      );
+    }
   });
   should('enforces RFC 5280 issuerAltName GeneralNames SIZE constraint', () => {
     const { root } = getCertKeyRoot();
@@ -1398,7 +2212,7 @@ describe('x509', () => {
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.18',
+      oid: 'issuerAltName',
       rest: Uint8Array.from([0x04, 0x02, 0x30, 0x00]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1426,7 +2240,7 @@ describe('x509', () => {
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.9',
+      oid: 'subjectDirectoryAttributes',
       rest: Uint8Array.from([0x04, 0x02, 0x30, 0x00]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1455,7 +2269,7 @@ describe('x509', () => {
       if (!signerCert || !signerCert.data.tbs.extensions)
         throw new Error('signer cert/extensions not found');
       signerCert.data.tbs.extensions.list.push({
-        oid: '2.5.29.30',
+        oid: 'nameConstraints',
         rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, extnValue.length, ...extnValue]),
       });
       c.content = __TEST.CMSSignedData.encode(sd);
@@ -1470,14 +2284,75 @@ describe('x509', () => {
     // NameConstraints with permittedSubtrees and GeneralSubtree.minimum=1.
     const badMinimum = make(
       Uint8Array.from([
-        0x30, 0x10, 0xa0, 0x0e, 0x30, 0x0c, 0x30, 0x0a, 0x82, 0x05, 0x61, 0x2e, 0x63, 0x6f, 0x6d,
-        0x80, 0x01, 0x01,
+        0x30, 0x0e, 0xa0, 0x0c, 0x30, 0x0a, 0x82, 0x05, 0x61, 0x2e, 0x63, 0x6f, 0x6d, 0x80, 0x01,
+        0x01,
       ])
     );
     throws(
       () => CMS.verify(badMinimum, { time: CERT_CREATED, chain: [root], checkSignatures: false }),
       /nameConstraints GeneralSubtree.minimum must be 0 in this profile/
     );
+
+    const openSSLStyle = Uint8Array.from([
+      0x30, 0x12, 0xa0, 0x10, 0x30, 0x0e, 0x82, 0x0c, 0x2e, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c,
+      0x65, 0x2e, 0x63, 0x6f, 0x6d,
+    ]);
+    const openSSLStyleCert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    openSSLStyleCert.tbs.extensions = {
+      list: [
+        {
+          oid: 'nameConstraints',
+          rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, openSSLStyle.length, ...openSSLStyle]),
+        },
+      ],
+    };
+    deepStrictEqual(X509.extensions(openSSLStyleCert)[0], {
+      oid: 'nameConstraints',
+      critical: true,
+      nameConstraints: {
+        permitted: {
+          list: [
+            {
+              base: { TAG: 'dNSName', data: '.example.com' },
+              minimum: undefined,
+              maximum: undefined,
+            },
+          ],
+        },
+        excluded: undefined,
+      },
+    });
+
+    const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+    cert.tbs.extensions = {
+      list: [
+        {
+          oid: 'nameConstraints',
+          rest: Uint8Array.from([
+            0x01, 0x01, 0xff, 0x04, 0x10, 0x30, 0x0e, 0xa0, 0x0c, 0x30, 0x0a, 0x87, 0x08, 0xc0,
+            0x00, 0x02, 0x00, 0xff, 0xff, 0xff, 0x00,
+          ]),
+        },
+      ],
+    };
+    deepStrictEqual(X509.extensions(cert), [
+      {
+        oid: 'nameConstraints',
+        critical: true,
+        nameConstraints: {
+          permitted: {
+            list: [
+              {
+                base: { TAG: 'iPAddress', data: '192.0.2.0/24' },
+                minimum: undefined,
+                maximum: undefined,
+              },
+            ],
+          },
+          excluded: undefined,
+        },
+      },
+    ]);
   });
   should('enforces RFC 5280 policyConstraints syntax constraints', () => {
     const { root } = getCertKeyRoot();
@@ -1496,7 +2371,7 @@ describe('x509', () => {
       if (!signerCert || !signerCert.data.tbs.extensions)
         throw new Error('signer cert/extensions not found');
       signerCert.data.tbs.extensions.list.push({
-        oid: '2.5.29.36',
+        oid: 'policyConstraints',
         rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, extnValue.length, ...extnValue]),
       });
       c.content = __TEST.CMSSignedData.encode(sd);
@@ -1527,7 +2402,7 @@ describe('x509', () => {
     // CRLDP with one DistributionPoint containing only reasons (forbidden by RFC 5280 section 4.2.1.13).
     const crldp = Uint8Array.from([0x30, 0x06, 0x30, 0x04, 0x81, 0x02, 0x07, 0x40]);
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.31',
+      oid: 'crlDistributionPoints',
       rest: Uint8Array.from([0x04, crldp.length, ...crldp]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1535,8 +2410,133 @@ describe('x509', () => {
     throws(
       () =>
         CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
-      /DistributionPoint must include distributionPoint or cRLIssuer/
+      /BIT STRING nonzero unused tail bits/
     );
+  });
+  should('enforces RFC 5280 cRLIssuer distinguished-name constraint', () => {
+    const base = X509.decode(certDersFromVector('openssl/p384-root.pem')[0]);
+    const crldp = (body: Uint8Array) => {
+      const cert = structuredClone(base);
+      if (!cert.tbs.extensions) throw new Error('cert/extensions not found');
+      cert.tbs.extensions.list.push({
+        oid: 'crlDistributionPoints',
+        rest: Uint8Array.from([0x04, body.length, ...body]),
+      });
+      const hits = X509.extensions(cert).filter((e) => e.crlDistributionPoints);
+      return hits[hits.length - 1];
+    };
+    deepStrictEqual(
+      crldp(
+        Uint8Array.from([
+          0x30, 0x14, 0x30, 0x12, 0xa2, 0x10, 0xa4, 0x0e, 0x30, 0x0c, 0x31, 0x0a, 0x30, 0x08, 0x06,
+          0x03, 0x55, 0x04, 0x03, 0x0c, 0x01, 0x41,
+        ])
+      ),
+      {
+        oid: 'crlDistributionPoints',
+        critical: false,
+        crlDistributionPoints: {
+          list: [
+            {
+              distributionPoint: undefined,
+              reasons: undefined,
+              cRLIssuer: {
+                list: [
+                  {
+                    TAG: 'directoryName',
+                    data: {
+                      rdns: [[{ oid: 'commonName', value: { TAG: 'utf8', data: 'A' } }]],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }
+    );
+    throws(
+      () =>
+        crldp(
+          Uint8Array.from([
+            0x30, 0x11, 0x30, 0x0f, 0xa2, 0x0d, 0x82, 0x0b, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c,
+            0x65, 0x2e, 0x63, 0x6f, 0x6d,
+          ])
+        ),
+      /cRLIssuer must only contain directoryName/
+    );
+  });
+  should('enforces RFC 5280 nameRelativeToCRLIssuer non-empty RDN constraint', () => {
+    const base = X509.decode(certDersFromVector('openssl/p384-root.pem')[0]);
+    const crldp = (body: Uint8Array) => {
+      const cert = structuredClone(base);
+      if (!cert.tbs.extensions) throw new Error('cert/extensions not found');
+      cert.tbs.extensions.list.push({
+        oid: 'crlDistributionPoints',
+        rest: Uint8Array.from([0x04, body.length, ...body]),
+      });
+      const hits = X509.extensions(cert).filter((e) => e.crlDistributionPoints);
+      return hits[hits.length - 1];
+    };
+    deepStrictEqual(
+      crldp(
+        Uint8Array.from([
+          0x30, 0x10, 0x30, 0x0e, 0xa0, 0x0c, 0xa1, 0x0a, 0x30, 0x08, 0x06, 0x03, 0x55, 0x04, 0x03,
+          0x0c, 0x01, 0x41,
+        ])
+      ),
+      {
+        oid: 'crlDistributionPoints',
+        critical: false,
+        crlDistributionPoints: {
+          list: [
+            {
+              distributionPoint: {
+                TAG: 'nameRelativeToCRLIssuer',
+                data: [{ oid: 'commonName', value: { TAG: 'utf8', data: 'A' } }],
+              },
+              reasons: undefined,
+              cRLIssuer: undefined,
+            },
+          ],
+        },
+      }
+    );
+    throws(
+      () => crldp(Uint8Array.from([0x30, 0x06, 0x30, 0x04, 0xa0, 0x02, 0xa1, 0x00])),
+      /nameRelativeToCRLIssuer must contain at least one AttributeTypeAndValue/
+    );
+  });
+  should('enforces RFC 5280 issuingDistributionPoint profile constraints', () => {
+    const base = X509.decode(certDersFromVector('openssl/p384-root.pem')[0]);
+    const idp = (body: Uint8Array) => {
+      const cert = structuredClone(base);
+      if (!cert.tbs.extensions) throw new Error('cert/extensions not found');
+      cert.tbs.extensions.list.push({
+        oid: 'issuingDistributionPoint',
+        rest: Uint8Array.from([0x04, body.length, ...body]),
+      });
+      const hits = X509.extensions(cert).filter((e) => e.issuingDistributionPoint);
+      return hits[hits.length - 1];
+    };
+    deepStrictEqual(idp(Uint8Array.from([0x30, 0x03, 0x81, 0x01, 0xff])), {
+      oid: 'issuingDistributionPoint',
+      critical: false,
+      issuingDistributionPoint: {
+        distributionPoint: undefined,
+        onlyContainsUserCerts: true,
+        onlyContainsCACerts: undefined,
+        onlySomeReasons: undefined,
+        indirectCRL: undefined,
+        onlyContainsAttributeCerts: undefined,
+      },
+    });
+    throws(() => idp(Uint8Array.from([0x30, 0x00])), /issuingDistributionPoint/);
+    throws(
+      () => idp(Uint8Array.from([0x30, 0x06, 0x81, 0x01, 0xff, 0x82, 0x01, 0xff])),
+      /issuingDistributionPoint/
+    );
+    throws(() => idp(Uint8Array.from([0x30, 0x03, 0x85, 0x01, 0xff])), /issuingDistributionPoint/);
   });
   should('enforces RFC 5280 freshestCRL criticality constraint', () => {
     const { root } = getCertKeyRoot();
@@ -1553,15 +2553,12 @@ describe('x509', () => {
     );
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
-    const freshest = new Uint8Array(
-      Buffer.from(
-        // Valid CRLDistributionPoints extnValue bytes copied from openssl/embeddedSCTs3_issuer.pem.
-        '044530433041a03fa03d863b687474703a2f2f63726c2e636f6d6f646f63612e636f6d2f434f4d4f444f52534143657274696669636174696f6e417574686f726974792e63726c',
-        'hex'
-      )
+    const freshest = hexToBytes(
+      // Valid CRLDistributionPoints extnValue bytes copied from openssl/embeddedSCTs3_issuer.pem.
+      '044530433041a03fa03d863b687474703a2f2f63726c2e636f6d6f646f63612e636f6d2f434f4d4f444f52534143657274696669636174696f6e417574686f726974792e63726c'
     );
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.46',
+      oid: 'freshestCRL',
       rest: Uint8Array.from([0x01, 0x01, 0xff, ...freshest]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1681,12 +2678,30 @@ describe('x509', () => {
         throw new Error('signer cert/extensions not found');
       signerCert.data.tbs.extensions.list.push({
         oid: '1.3.6.1.4.1.11129.2.4.2',
-        rest: Uint8Array.from([0x04, sctExtnValue.length, ...sctExtnValue]),
+        rest: DERUtils.ASN1.OctetString.encode(sctExtnValue),
       });
       c.content = __TEST.CMSSignedData.encode(sd);
       c.ber = undefined;
       return CMS.encode(c);
     };
+    const largeList = (() => {
+      const signature = new Uint8Array(975);
+      const sct = Uint8Array.from([
+        0x00, // sct_version
+        ...new Uint8Array(32), // log id
+        ...new Uint8Array(8), // timestamp
+        0x00,
+        0x00, // CtExtensions length
+        0x04, // hash algorithm
+        0x03, // signature algorithm
+        signature.length >>> 8,
+        signature.length & 0xff,
+        ...signature,
+      ]);
+      deepStrictEqual(sct.length, 1022);
+      return Uint8Array.from([0x04, 0x00, 0x03, 0xfe, ...sct]);
+    })();
+    CMS.verify(make(largeList), { time: CERT_CREATED, chain: [root], checkSignatures: false });
     // SignedCertificateTimestampList.sct_list length is 0 (forbidden by RFC 6962 section 3.3).
     const emptyList = make(Uint8Array.from([0x00, 0x00]));
     throws(
@@ -1734,7 +2749,7 @@ describe('x509', () => {
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.54',
+      oid: 'inhibitAnyPolicy',
       // Non-critical inhibitAnyPolicy = 0
       rest: Uint8Array.from([0x04, 0x03, 0x02, 0x01, 0x00]),
     });
@@ -1762,7 +2777,7 @@ describe('x509', () => {
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.54',
+      oid: 'inhibitAnyPolicy',
       // Critical inhibitAnyPolicy = 0.
       rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x03, 0x02, 0x01, 0x00]),
     });
@@ -1772,6 +2787,36 @@ describe('x509', () => {
       () =>
         CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
       /nameConstraints\/policyMappings\/policyConstraints\/inhibitAnyPolicy present but RFC 5280 section 6 processing is not implemented/
+    );
+  });
+  should('rejects critical certificateIssuer on certificate surfaces', () => {
+    const { root } = getCertKeyRoot();
+    const c = decodeP384Cert();
+    const sd = __TEST.CMSSignedData.decode(c.content);
+    const sid = sd.signerInfos[0].sid;
+    if (sid.TAG !== 'issuerSerial') throw new Error('expected issuerSerial sid');
+    const sidIssuer = CERTUtils.Name.encode(sid.data.issuer);
+    const signerCert = (sd.certificates || []).find(
+      (i): i is Extract<NonNullable<typeof sd.certificates>[number], { TAG: 'certificate' }> =>
+        i.TAG === 'certificate' &&
+        i.data.tbs.serial === sid.data.serial &&
+        equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
+    );
+    if (!signerCert || !signerCert.data.tbs.extensions)
+      throw new Error('signer cert/extensions not found');
+    signerCert.data.tbs.extensions.list.push({
+      oid: 'certificateIssuer',
+      rest: Uint8Array.from([
+        0x01, 0x01, 0xff, 0x04, 0x10, 0x30, 0x0e, 0x82, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c,
+        0x65, 0x2e, 0x74, 0x65, 0x73, 0x74,
+      ]),
+    });
+    c.content = __TEST.CMSSignedData.encode(sd);
+    c.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: false }),
+      /unknown critical extension certificateIssuer/
     );
   });
   should('fails closed for unsupported RFC 5280 nameConstraints processing', () => {
@@ -1791,10 +2836,10 @@ describe('x509', () => {
       throw new Error('signer cert/extensions not found');
     // NameConstraints with one permitted dNSName subtree (valid syntax, critical extension).
     const nc = Uint8Array.from([
-      0x30, 0x0d, 0xa0, 0x0b, 0x30, 0x09, 0x30, 0x07, 0x82, 0x05, 0x61, 0x2e, 0x63, 0x6f, 0x6d,
+      0x30, 0x0b, 0xa0, 0x09, 0x30, 0x07, 0x82, 0x05, 0x61, 0x2e, 0x63, 0x6f, 0x6d,
     ]);
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.30',
+      oid: 'nameConstraints',
       rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, nc.length, ...nc]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1825,7 +2870,7 @@ describe('x509', () => {
       0x0a, 0x2a, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x01,
     ]);
     signerCert.data.tbs.extensions.list.push({
-      oid: '2.5.29.33',
+      oid: 'policyMappings',
       rest: Uint8Array.from([0x04, pm.length, ...pm]),
     });
     c.content = __TEST.CMSSignedData.encode(sd);
@@ -1868,7 +2913,7 @@ describe('x509', () => {
     const badBasic = make((_, signerCert) => {
       // pathLen with cA=false (or absent) violates RFC 5280 section 4.2.1.9.
       // Keep one BasicConstraints instance; duplicate OIDs are rejected by RFC 5280 section 4.2 guard.
-      const basic = signerCert.data.tbs.extensions!.list.find((e) => e.oid === '2.5.29.19');
+      const basic = signerCert.data.tbs.extensions!.list.find((e) => e.oid === 'basicConstraints');
       if (!basic) throw new Error('expected basicConstraints extension');
       basic.rest = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x02, 0x01, 0x00]);
     });
@@ -1879,15 +2924,15 @@ describe('x509', () => {
     const badCAUsage = make((_, signerCert) => {
       // Set cA=false and keyCertSign=true.
       // Keep one BasicConstraints instance; duplicate OIDs are rejected by RFC 5280 section 4.2 guard.
-      const basic = signerCert.data.tbs.extensions!.list.find((e) => e.oid === '2.5.29.19');
+      const basic = signerCert.data.tbs.extensions!.list.find((e) => e.oid === 'basicConstraints');
       if (!basic) throw new Error('expected basicConstraints extension');
       basic.rest = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0x00]);
-      const keyUsage = signerCert.data.tbs.extensions!.list.find((e) => e.oid === '2.5.29.15');
+      const keyUsage = signerCert.data.tbs.extensions!.list.find((e) => e.oid === 'keyUsage');
       if (keyUsage)
         keyUsage.rest = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x02, 0x04]);
       else
         signerCert.data.tbs.extensions!.list.push({
-          oid: '2.5.29.15',
+          oid: 'keyUsage',
           rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x02, 0x04]),
         });
     });
@@ -1946,7 +2991,7 @@ describe('x509', () => {
         rest: Uint8Array.from([0x01, 0x01, 0xff, 0x04, proxyInheritAll.length, ...proxyInheritAll]),
       });
       // Keep one BasicConstraints instance; duplicate OIDs are rejected by RFC 5280 section 4.2 guard.
-      const basic = signerCert.data.tbs.extensions!.list.find((e) => e.oid === '2.5.29.19');
+      const basic = signerCert.data.tbs.extensions!.list.find((e) => e.oid === 'basicConstraints');
       if (!basic) throw new Error('expected basicConstraints extension');
       basic.rest = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff]);
     });
@@ -1987,6 +3032,10 @@ describe('x509', () => {
     // keyUsage extnValue is DER BIT STRING TLV; here we supply "no bits set".
     const KU_NONE = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x00, 0x00]);
     const KU_SIGN_ONLY = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x07, 0x80]);
+    const KU_COMMIT_ONLY = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x06, 0x40]);
+    const KU_SIGN_AND_CERT = Uint8Array.from([
+      0x01, 0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x02, 0x84,
+    ]);
     const setKU = (
       cert: Extract<
         NonNullable<ReturnType<typeof __TEST.CMSSignedData.decode>['certificates']>[number],
@@ -1996,9 +3045,9 @@ describe('x509', () => {
     ) => {
       if (!cert.data.tbs.extensions) throw new Error('cert extensions missing');
       const ku =
-        cert.data.tbs.extensions.list.find((e) => e.oid === '2.5.29.15') ||
+        cert.data.tbs.extensions.list.find((e) => e.oid === 'keyUsage') ||
         (() => {
-          const e = { oid: '2.5.29.15', rest: new Uint8Array() };
+          const e = { oid: 'keyUsage', rest: new Uint8Array() };
           cert.data.tbs.extensions!.list.push(e);
           return e;
         })();
@@ -2011,6 +3060,22 @@ describe('x509', () => {
       () => CMS.verify(badSigner, { time: CERT_CREATED, chain: [root], checkSignatures: false }),
       /signer keyUsage missing digitalSignature/
     );
+    const contentCommitmentSigner = make((_, signerCert) => {
+      setKU(signerCert, KU_COMMIT_ONLY);
+    });
+    CMS.verify(contentCommitmentSigner, {
+      time: CERT_CREATED,
+      chain: [root],
+      checkSignatures: false,
+    });
+    const caSigner = make((_, signerCert) => {
+      if (!signerCert.data.tbs.extensions) throw new Error('signer cert extensions missing');
+      const basic = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'basicConstraints');
+      if (!basic) throw new Error('expected basicConstraints extension');
+      basic.rest = Uint8Array.from([0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff]);
+      setKU(signerCert, KU_SIGN_AND_CERT);
+    });
+    CMS.verify(caSigner, { time: CERT_CREATED, chain: [root], checkSignatures: false });
     const badIssuer = make((sd, signerCert) => {
       const signerIssuer = CERTUtils.Name.encode(signerCert.data.tbs.issuer);
       const issuer = (sd.certificates || []).find(
@@ -2096,8 +3161,49 @@ describe('x509', () => {
       /certificate signature invalid/
     );
   });
+  should('accepts non-critical CA basicConstraints during path validation', () => {
+    const tpl = getEdnsJiyaTpl();
+    const { cert, key, root } = getCertKeyRoot();
+    const signed = CMS.sign(tpl, cert, key, root, { createdTs: CERT_CREATED });
+    const c = CMS.decode(signed);
+    const sd = __TEST.CMSSignedData.decode(c.content);
+    const sid = sd.signerInfos[0]?.sid;
+    if (!sid || sid.TAG !== 'issuerSerial') throw new Error('expected issuerSerial sid');
+    const sidIssuer = CERTUtils.Name.encode(sid.data.issuer);
+    const signerCert = (sd.certificates || []).find(
+      (i) =>
+        i.TAG === 'certificate' &&
+        i.data.tbs.serial === sid.data.serial &&
+        equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
+    );
+    if (!signerCert || signerCert.TAG !== 'certificate') throw new Error('signer cert not found');
+    const issuerName = CERTUtils.Name.encode(signerCert.data.tbs.issuer);
+    const issuerCert = (sd.certificates || []).find(
+      (i) =>
+        i.TAG === 'certificate' && equalBytes(CERTUtils.Name.encode(i.data.tbs.subject), issuerName)
+    );
+    if (!issuerCert || issuerCert.TAG !== 'certificate') throw new Error('issuer cert not found');
+    const removeBasicCritical = (item: typeof issuerCert.data) => {
+      const basic = item.tbs.extensions?.list.find((e) => e.oid === 'basicConstraints');
+      if (!basic) throw new Error('expected basicConstraints extension');
+      deepStrictEqual(basic.rest.slice(0, 3), Uint8Array.from([0x01, 0x01, 0xff]));
+      basic.rest = basic.rest.slice(3);
+    };
+    removeBasicCritical(issuerCert.data);
+    const rootCert = CERTUtils.Certificate.decode(certDersFromVector('openssl/p384-root.pem')[0]);
+    removeBasicCritical(rootCert);
+    c.content = __TEST.CMSSignedData.encode(sd);
+    c.ber = undefined;
+    const verified = CMS.verify(CMS.encode(c), {
+      time: CERT_CREATED,
+      chain: [CERTUtils.Certificate.encode(rootCert)],
+      checkSignatures: true,
+    });
+    // RFC 5280 section 4.2.1.9's criticality MUST is for conforming CA
+    // generation; verifier path validation in section 6.1.4(k) accepts cA=true.
+    deepStrictEqual(verified.chain.length, 2);
+  });
   should('prefers valid issuer when multiple subject-matching issuer candidates exist', () => {
-    if (process.versions.bun) return;
     const { root } = getCertKeyRoot();
     const c = decodeP384Cert();
     const sd = __TEST.CMSSignedData.decode(c.content);
@@ -2130,7 +3236,6 @@ describe('x509', () => {
     CMS.verify(CMS.encode(c), { time: CERT_CREATED, chain: [root], checkSignatures: true });
   });
   should('does not collapse distinct issuer certs that share subject/serial/spki', () => {
-    if (process.versions.bun) return;
     const { root } = getCertKeyRoot();
     const c = decodeP384Cert();
     const sd = __TEST.CMSSignedData.decode(c.content);
@@ -2187,7 +3292,7 @@ describe('x509', () => {
     );
     if (!issuerCert) throw new Error('issuer cert not found');
     issuerCert.data.tbs.issuer = {
-      rdns: [[{ oid: '2.5.4.3', value: { TAG: 'utf8', data: 'missing-issuer' } }]],
+      rdns: [[{ oid: 'commonName', value: { TAG: 'utf8', data: 'missing-issuer' } }]],
     };
     c.content = __TEST.CMSSignedData.encode(sd);
     c.ber = undefined;
@@ -2214,6 +3319,29 @@ describe('x509', () => {
       );
     }
   );
+  should('verify rejects signatures over implicit signedAttrs bytes (RFC 5652 section 5.4)', () => {
+    const tpl = getEdnsJiyaTpl();
+    const cert = pem('openssl/client-ed25519-cert.pem');
+    const key = pem('openssl/client-ed25519-key.pem');
+    const der = CMS.sign(tpl, cert, key, '', { createdTs: CERT_CREATED });
+    const ci = CMS.decode(der);
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const ber = DERUtils.BER.decode(ci.content);
+    const signedAttrs = berTlvAt(ber.nodes, [0, 4, 0, 3]);
+    const pkcs8 = DERUtils.PKCS8.decode(pemBlocks(key)[0].der);
+    if (pkcs8.privateKey.TAG !== 'raw') throw new Error('expected Ed25519 PKCS#8 private key');
+    const si = sd.signerInfos[0];
+    si.signature = ed25519.sign(
+      ci.content.subarray(signedAttrs.pos, signedAttrs.end),
+      pkcs8.privateKey.data
+    );
+    ci.content = __TEST.CMSSignedData.encode(sd);
+    ci.ber = undefined;
+    throws(
+      () => CMS.verify(CMS.encode(ci), { time: CERT_CREATED, checkSignatures: true }),
+      /CMS signature invalid/
+    );
+  });
   should('attach and verifyDetached reject signature that already has eContent', () => {
     const tpl = getEdnsJiyaTpl();
     const { cert, key, root } = getCertKeyRoot();
@@ -2349,7 +3477,7 @@ describe('x509', () => {
     const c = CMS.decode(der, { allowBER: true });
     const sd = __TEST.CMSSignedData.decode(c.content);
     const si = sd.signerInfos[0];
-    const ct = (si.signedAttrs || []).find((a) => a.oid === '1.2.840.113549.1.9.3');
+    const ct = (si.signedAttrs || []).find((a) => a.oid === 'attrContentType');
     if (!ct) throw new Error('content-type attribute not found');
     ct.values = [
       Uint8Array.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]),
@@ -2405,6 +3533,27 @@ describe('x509', () => {
       /invalid ECDSA DER signature integer length|tlv|TLV|expected/
     );
   });
+  should('compact sign rejects Ed25519 PKCS#8 whose optional publicKey masks a bad seed', () => {
+    const tpl = getEdnsJiyaTpl();
+    const cert = pem('openssl/client-ed25519-cert.pem');
+    const key = pem('openssl/client-ed25519-key.pem');
+    const certObj = X509.decode(pemBlocks(cert)[0].der);
+    const pkcs8 = DERUtils.PKCS8.decode(pemBlocks(key)[0].der);
+    if (pkcs8.algorithm.info.TAG !== 'Ed25519' || pkcs8.privateKey.TAG !== 'raw')
+      throw new Error('expected raw Ed25519 PKCS#8 private key');
+    const secret = pkcs8.privateKey.data.slice();
+    secret[0] ^= 1;
+    const der = DERUtils.PKCS8.encode({
+      ...pkcs8,
+      version: 1n,
+      privateKey: { TAG: 'raw', data: secret },
+      publicKey: certObj.tbs.spki.publicKey,
+    });
+    const lines = base64.encode(der).match(/.{1,64}/g);
+    if (!lines) throw new Error('base64 line wrap failed');
+    const badKey = `-----BEGIN PRIVATE KEY-----\n${lines.join('\n')}\n-----END PRIVATE KEY-----\n`;
+    throws(() => CMS.compact.sign(tpl, cert, badKey), /certificate and private key do not match/);
+  });
   should('compact build(compact.sign) is byte-equal to CMS.sign (with createdTs)', () => {
     const tpl = getEdnsJiyaTpl();
     const { cert, key, root } = getCertKeyRoot();
@@ -2436,9 +3585,145 @@ describe('x509', () => {
     deepStrictEqual(CMS.sign(tpl, cert, key, root, opts), built);
     deepStrictEqual(CMS.signDetached(tpl, cert, key, root, opts), CMS.detach(built).signature);
   });
+  should('rejects S/MIME capabilities that require parameters when only OID is provided', () => {
+    const tpl = getEdnsJiyaTpl();
+    const { cert, key, root } = getCertKeyRoot();
+    const smimeValue = (capability: string) => {
+      const der = CMS.sign(tpl, cert, key, root, {
+        createdTs: CERT_CREATED,
+        extraEntropy: false,
+        smimeCapabilities: [capability],
+      });
+      const signed = CMS.signed(der);
+      const attr = signed.signerInfos[0].signedAttrs?.find(
+        (a) => a.oid === 'attrSMIMECapabilities'
+      );
+      if (!attr || !attr.values[0]) throw new Error('missing sMIMECapabilities attr');
+      return attr.values[0];
+    };
+    deepStrictEqual(
+      smimeValue('2.16.840.1.101.3.4.1.42'),
+      hexToBytes('300d300b060960864801650304012a')
+    );
+    deepStrictEqual(
+      smimeValue(' 2.16.840.1.101.3.4.1.42 '),
+      hexToBytes('300d300b060960864801650304012a')
+    );
+    throws(() => smimeValue('rc2-cbc'), /rc2-cbc|parameters/i);
+    throws(() => smimeValue('1.2.840.113549.3.2'), /1\.2\.840\.113549\.3\.2|parameters/i);
+    // RFC 3278 section 7 and RFC 5990 section 2.4 also require capability
+    // parameters for these raw OIDs; this string-only helper cannot emit them.
+    throws(() => smimeValue('1.3.133.16.840.63.0.2'), /1\.3\.133\.16\.840\.63\.0\.2|parameters/i);
+    throws(() => smimeValue('1.3.133.16.840.63.0.3'), /1\.3\.133\.16\.840\.63\.0\.3|parameters/i);
+    throws(() => smimeValue('1.3.133.16.840.63.0.16'), /1\.3\.133\.16\.840\.63\.0\.16|parameters/i);
+    throws(
+      () => smimeValue('1.2.840.113549.1.9.16.3.14'),
+      /1\.2\.840\.113549\.1\.9\.16\.3\.14|parameters/i
+    );
+  });
+  should(
+    'compact sign/build support SHA-224 digestAlgorithm override (RFC 5754 section 2.1)',
+    () => {
+      const tpl = getEdnsJiyaTpl();
+      const cert = pem('openssl/p256-server-cert.pem');
+      const key = pem('openssl/p256-server-key.pem');
+      const root = pem('openssl/p384-root.pem');
+      const opts = { digestAlgorithm: 'sha224', extraEntropy: false as const };
+      const sig = CMS.compact.sign(tpl, cert, key, opts);
+      const built = CMS.compact.build(tpl, sig, cert, root, opts);
+      // compact.build validates ECDSA DER shape before assembling CMS metadata,
+      // so use a real compact signature while exercising the build-only option path.
+      const byName = CMS.compact.build(tpl, sig, cert, root, {
+        digestAlgorithm: 'sha224',
+      });
+      const byOID = CMS.compact.build(tpl, sig, cert, root, {
+        digestAlgorithm: rawOid('sha224'),
+      });
+      const view = (der: Uint8Array) => {
+        const signed = CMS.signed(der);
+        return {
+          digestAlgorithms: signed.digestAlgorithms,
+          signerDigest: signed.signerInfos[0].digestAlg,
+          signatureAlg: signed.signerInfos[0].signatureAlg,
+        };
+      };
+      deepStrictEqual(
+        { built: view(built), byName: view(byName), byOID: view(byOID) },
+        {
+          built: {
+            digestAlgorithms: [{ algorithm: 'sha224', params: undefined }],
+            signerDigest: { algorithm: 'sha224', params: undefined },
+            signatureAlg: { algorithm: 'ecdsa-with-SHA224', params: undefined },
+          },
+          byName: {
+            digestAlgorithms: [{ algorithm: 'sha224', params: undefined }],
+            signerDigest: { algorithm: 'sha224', params: undefined },
+            signatureAlg: { algorithm: 'ecdsa-with-SHA224', params: undefined },
+          },
+          byOID: {
+            digestAlgorithms: [{ algorithm: 'sha224', params: undefined }],
+            signerDigest: { algorithm: 'sha224', params: undefined },
+            signatureAlg: { algorithm: 'ecdsa-with-SHA224', params: undefined },
+          },
+        }
+      );
+      CMS.verify(built, { time: CERT_CREATED, chain: [root], checkSignatures: true });
+    }
+  );
+  should('ECDSA SHA-224 algorithm aliases match RFC 5754 OIDs', () => {
+    const tpl = getEdnsJiyaTpl();
+    const cert = pem('openssl/p256-server-cert.pem');
+    const key = pem('openssl/p256-server-key.pem');
+    const root = pem('openssl/p384-root.pem');
+    const sig = CMS.compact.sign(tpl, cert, key, {
+      digestAlgorithm: 'sha224',
+      extraEntropy: false,
+    });
+    const opts = { digestAlgorithm: 'sha224' };
+    const raw = CMS.signed(
+      CMS.compact.build(tpl, sig, cert, root, {
+        ...opts,
+        signatureAlgorithm: '1.2.840.10045.4.3.1',
+      })
+    ).signerInfos[0].signatureAlg;
+    const named = CMS.signed(
+      CMS.compact.build(tpl, sig, cert, root, {
+        ...opts,
+        signatureAlgorithm: 'ecdsa-with-SHA224',
+      })
+    ).signerInfos[0].signatureAlg;
+    deepStrictEqual(
+      { raw, named },
+      {
+        raw: { algorithm: 'ecdsa-with-SHA224', params: undefined },
+        named: { algorithm: 'ecdsa-with-SHA224', params: undefined },
+      }
+    );
+    CMS.verify(CMS.compact.build(tpl, sig, cert, root, { ...opts }), {
+      time: CERT_CREATED,
+      chain: [root],
+      checkSignatures: true,
+    });
+  });
   should('SMIME capability parser covers all vector-seen capability OIDs', () => {
     const seen = new Set<string>();
-    const covered = new Set<string>(Object.values(__TEST.SMIME_CAPS));
+    const covered = new Set<string>([
+      'aes256-cbc',
+      'aes192-cbc',
+      'aes128-cbc',
+      'aes256-gcm',
+      'aes192-gcm',
+      'aes128-gcm',
+      'aes256-cfb',
+      'aes192-cfb',
+      'aes128-cfb',
+      'aes256-kw',
+      'aes192-kw',
+      'aes128-kw',
+      'des-ede3-cbc',
+      'rc2-cbc',
+      'des-cbc',
+    ]);
     const decodeCaps = DERUtils.ASN1.sequence({
       list: P.array(
         null,
@@ -2457,16 +3742,15 @@ describe('x509', () => {
           : v.kind === 'cms-pem'
             ? oneCmsFromPem(v.name)
             : cmsFromVector(v.name);
-      if (CMS.contentType(der, { allowBER: v.ber ? true : undefined }) !== '1.2.840.113549.1.7.2')
-        continue;
+      if (CMS.contentType(der, { allowBER: v.ber ? true : undefined }) !== 'signedData') continue;
       const signed = CMS.signed(der, { allowBER: v.ber ? true : undefined });
       for (const si of signed.signerInfos || [])
         for (const a of si.signedAttrs || []) {
-          if (a.oid !== '1.2.840.113549.1.9.15') continue;
+          if (a.oid !== 'attrSMIMECapabilities') continue;
           for (const c of decodeCaps.decode(a.values[0]).list) seen.add(c.capabilityID);
         }
     }
-    for (const oid of seen) deepStrictEqual(covered.has(oid), true);
+    for (const id of seen) deepStrictEqual(covered.has(id), true);
   });
   should('vectors with validBefore pass before and fail after boundary', () => {
     const timed = VECTORS.filter((v) => !v.error && v.validBefore);
@@ -2500,7 +3784,16 @@ describe('x509', () => {
         const b2 = __TEST.IPv4.encode(s);
         deepStrictEqual(b2, b1);
       }
-      const bad = ['256.0.0.1', '1.2.3', '1.2.3.4.5', 'a.b.c.d', '-1.2.3.4', '01.02.03'];
+      const bad = [
+        '256.0.0.1',
+        '1.2.3',
+        '1.2.3.4.5',
+        'a.b.c.d',
+        '-1.2.3.4',
+        '01.02.03',
+        '01.2.3.4',
+        '001.002.003.004',
+      ];
       for (const ip of bad) throws(() => __TEST.IPv4.encode(ip));
     });
     should('generic IPv6 parser roundtrip and rejects invalid inputs', () => {
@@ -2508,6 +3801,8 @@ describe('x509', () => {
         '::',
         '::1',
         '2001:db8::1',
+        '::ffff:192.0.2.1',
+        '2001:db8::192.0.2.1',
         '2001:0db8:85a3:0000:0000:8a2e:0370:7334',
         'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
       ];
@@ -2523,7 +3818,12 @@ describe('x509', () => {
         '2001:db8',
         '2001:db8:zzzz::1',
         '1.2.3.4',
+        '::ffff:001.002.003.004',
         '2001:db8:0:0:0:0:0:0:1',
+        ':1:2:3:4:5:6:7:8',
+        '1:2:3:4:5:6:7:8:',
+        ':2001:db8::1',
+        '2001:db8::1:',
       ];
       for (const ip of bad) throws(() => __TEST.IPv6.encode(ip));
     });
@@ -2552,11 +3852,81 @@ describe('x509', () => {
       );
       throws(() => __TEST.TeletexString.encode('\u20AC'));
     });
+    should('X509.encode rejects malformed UTF-16 in UTF8String values', () => {
+      const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+      cert.tbs.subject.rdns[0][0].value = { TAG: 'utf8', data: 'A\u{1F600}' };
+      const encoded = X509.encode(cert);
+      deepStrictEqual(X509.decode(encoded).tbs.subject.rdns[0][0].value, {
+        TAG: 'utf8',
+        data: 'A\u{1F600}',
+      });
+      cert.tbs.subject.rdns[0][0].value = { TAG: 'utf8', data: '\uD800' };
+      throws(() => X509.encode(cert), /utf8 expected well-formed string/);
+    });
+    should('X509.encode rejects BMPString values outside the Basic Multilingual Plane', () => {
+      const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
+      cert.tbs.subject.rdns[0][0].value = { TAG: 'bmp', data: 'A\u2603' };
+      const encoded = X509.encode(cert);
+      deepStrictEqual(X509.decode(encoded).tbs.subject.rdns[0][0].value, {
+        TAG: 'bmp',
+        data: 'A\u2603',
+      });
+      cert.tbs.subject.rdns[0][0].value = { TAG: 'bmp', data: 'A\u{1F600}' };
+      throws(() => X509.encode(cert), /BMPString|Basic Multilingual Plane|surrogate/i);
+    });
+    should('X509.decode accepts RFC 5280 UniversalString commonName values', () => {
+      const universalCN = hexToBytes(
+        '3082012f3081e2a00302010202143ee39c0286eeed43006f2c6d66dce4133789957c300506032b6570300c310a300806035504030c0141301e170d3236303431363233353930325a170d3236303431373233353930325a300f310d300b06035504031c0400000041302a300506032b65700321006a49c999d4c14eb4e10893aa46ed6202c81472ea29bc4bd8ea015e316999abcfa3533051301d0603551d0e04160414943dcd01f649df0cd0e62a2f0c55296c18cc5f7e301f0603551d23041830168014943dcd01f649df0cd0e62a2f0c55296c18cc5f7e300f0603551d130101ff040530030101ff300506032b6570034100476186c95341f535156677af510d2a5b7a01acd7d791baca60cd10fd093ab06cdd963a15a2b746b6ef24a9339ce436ff1334c30b972d6eada756996578da660b'
+      );
+      deepStrictEqual(X509.decode(universalCN).tbs.subject.rdns, [
+        [{ oid: 'commonName', value: { TAG: 'universal', data: 'A' } }],
+      ]);
+    });
+    should('X509.decode preserves non-string AttributeValue as raw TLV', () => {
+      // RFC 5280 section 4.1.2.4 defines AttributeValue as ANY DEFINED BY AttributeType.
+      const rawAttr = hexToBytes(
+        '3082012f3081e2a00302010202143ee39c0286eeed43006f2c6d66dce4133789957c300506032b6570300c310a300806035504030c0141301e170d3236303431363233353930325a170d3236303431373233353930325a300f310d300b060355046a06042a030405302a300506032b65700321006a49c999d4c14eb4e10893aa46ed6202c81472ea29bc4bd8ea015e316999abcfa3533051301d0603551d0e04160414943dcd01f649df0cd0e62a2f0c55296c18cc5f7e301f0603551d23041830168014943dcd01f649df0cd0e62a2f0c55296c18cc5f7e300f0603551d130101ff040530030101ff300506032b6570034100476186c95341f535156677af510d2a5b7a01acd7d791baca60cd10fd093ab06cdd963a15a2b746b6ef24a9339ce436ff1334c30b972d6eada756996578da660b'
+      );
+      const cert = X509.decode(rawAttr);
+      deepStrictEqual(cert.tbs.subject.rdns, [
+        [
+          {
+            oid: 'objectIdentifier',
+            value: { TAG: 'raw', data: { tag: 0x06, valueHex: '2a030405' } },
+          },
+        ],
+      ]);
+      deepStrictEqual(X509.encode(cert), rawAttr);
+    });
+    should('UniversalString maps UCS-4 scalars to JS strings and rejects invalid scalars', () => {
+      const text = 'A\u{1F600}';
+      const der = Uint8Array.from([0x1c, 0x08, 0x00, 0x00, 0x00, 0x41, 0x00, 0x01, 0xf6, 0x00]);
+      deepStrictEqual(__TEST.UniversalString.encode(text), der);
+      deepStrictEqual(__TEST.UniversalString.decode(der), text);
+      throws(
+        () => __TEST.UniversalString.decode(Uint8Array.from([0x1c, 0x04, 0x00, 0x11, 0x00, 0x00])),
+        /UniversalString: expected Unicode scalar/
+      );
+      throws(
+        () => __TEST.UniversalString.decode(Uint8Array.from([0x1c, 0x04, 0x00, 0x00, 0xd8, 0x00])),
+        /UniversalString: expected Unicode scalar/
+      );
+      throws(
+        () => __TEST.UniversalString.encode('\uD800'),
+        /UniversalString: expected Unicode scalar/
+      );
+    });
   });
   describe('x509 time', () => {
     const derTime = (tag: 0x17 | 0x18, text: string): Uint8Array => {
       const b = new TextEncoder().encode(text);
       return Uint8Array.from([tag, b.length, ...b]);
+    };
+    const utcTs = (y: number, mo: number, d: number, h: number, mi: number, s: number): number => {
+      const date = new Date(0);
+      date.setUTCFullYear(y, mo, d);
+      date.setUTCHours(h, mi, s, 0);
+      return Math.floor(date.getTime() / 1000);
     };
     should('encodes timestamp as UTCTime in 1950..2049 and GeneralizedTime otherwise', () => {
       const utcTs = Math.floor(Date.UTC(2026, 0, 2, 3, 4, 5) / 1000);
@@ -2574,6 +3944,16 @@ describe('x509', () => {
       ];
       for (const ts of vals)
         deepStrictEqual(__TEST.X509Time.decode(__TEST.X509Time.encode(ts)), ts);
+    });
+    should('rejects encoding years outside the GeneralizedTime YYYY range', () => {
+      const y0 = utcTs(0, 0, 1, 0, 0, 0);
+      deepStrictEqual(__TEST.X509Time.encode(y0), derTime(0x18, '00000101000000Z'));
+      deepStrictEqual(__TEST.X509Time.decode(derTime(0x18, '00000101000000Z')), y0);
+      throws(() => __TEST.X509Time.encode(utcTs(-1, 0, 1, 0, 0, 0)), /GeneralizedTime|YYYY|0000/);
+      throws(
+        () => __TEST.X509Time.encode(utcTs(10000, 0, 1, 0, 0, 0)),
+        /GeneralizedTime|YYYY|0000/
+      );
     });
     should('rejects invalid calendar/range values in UTCTime and GeneralizedTime', () => {
       const bad = [

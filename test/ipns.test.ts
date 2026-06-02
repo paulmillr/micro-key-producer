@@ -1,6 +1,7 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { hex } from '@scure/base';
-import { deepStrictEqual } from 'node:assert';
+import { deepStrictEqual, throws } from 'node:assert';
 import * as ipns from '../src/ipns.ts';
 
 describe('ipns', () => {
@@ -22,6 +23,11 @@ describe('ipns', () => {
     });
     const parsed = ipns.parseAddress(addr);
     deepStrictEqual(ipns.formatPublicKey(parsed), addr);
+  });
+  should('parseAddress rejects invalid wrapped Ed25519 public keys', () => {
+    const invalid = 'ff'.repeat(32);
+    throws(() => ed25519.Point.fromHex(invalid));
+    throws(() => ipns.parseAddress(`ipns://f0172002408011220${invalid}`));
   });
 });
 

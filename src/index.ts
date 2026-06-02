@@ -1,1 +1,1 @@
-throw new Error('The module has no entry-point: consult README for usage');
+throw new Error('root module cannot be imported: import submodules instead.');

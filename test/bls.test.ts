@@ -1,4 +1,7 @@
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
+import { ctr } from '@noble/ciphers/aes.js';
+import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { utf8 } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
@@ -37,14 +40,31 @@ function bytesToNumberBE(item) {
 describe('BLS', () => {
   should('derivation validators', () => {
     const seed = hexToBytes(vectors[0][0]);
-    throws(() => bls.deriveSeedTree(seed, 1 as any), TypeError);
+    throws(() => bls.deriveSeedTree(seed, 1 as never), TypeError);
     throws(() => bls.deriveSeedTree(seed, 'x/12381/3600/0/0'), RangeError);
-    throws(() => bls.deriveEIP2334Key('x' as any, 'signing', 0), TypeError);
-    throws(() => bls.deriveEIP2334Key(seed, 1 as any, 0), TypeError);
-    throws(() => bls.deriveEIP2334Key(seed, 'other' as any, 0), RangeError);
+    throws(() => bls.deriveSeedTree(seed, 'm'), RangeError);
+    throws(() => bls.deriveSeedTree(seed, 'm/12381'), RangeError);
+    throws(() => bls.deriveSeedTree(seed, 'm/12381/3600/0'), RangeError);
+    throws(() => bls.deriveSeedTree(seed, 'm/12381x/3600/0/0'), RangeError);
+    throws(() => bls.deriveSeedTree(seed, 'm/12381/3600/0/0x'), RangeError);
+    throws(() => bls.deriveEIP2334Key('x' as never, 'signing', 0), TypeError);
+    throws(() => bls.deriveEIP2334Key(seed, 1 as never, 0), TypeError);
+    throws(() => bls.deriveEIP2334Key(seed, 'other' as never, 0), RangeError);
     throws(() => bls.deriveEIP2334Key(seed, 'signing', -1), RangeError);
+    throws(() => bls.deriveEIP2334Key(new Uint8Array(31), 'withdrawal', 0), RangeError);
+    throws(() => bls.deriveEIP2334Key(new Uint8Array(31), 'signing', 0), RangeError);
   });
   describe('EIP2333', () => {
+    should('hkdfModR rejects ikm shorter than 32 bytes', () => {
+      throws(() => bls.hkdfModR(new Uint8Array(31)), RangeError);
+    });
+    should('deriveMaster rejects seeds shorter than 32 bytes', () => {
+      throws(() => bls.deriveMaster(new Uint8Array(31)), RangeError);
+    });
+    should('deriveChild rejects parent keys that are not 32 bytes', () => {
+      throws(() => bls.deriveChild(Uint8Array.of(1, 2, 3), 0), RangeError);
+      throws(() => bls.deriveChild(new Uint8Array(33), 0), RangeError);
+    });
     vectors.forEach((vector, i) => {
       should(`run vector ${i}`, () => {
         const [seed, expMaster, childIndex, expChild] = vector;
@@ -65,6 +85,25 @@ describe('BLS', () => {
     });
   });
   describe('EIP2335', () => {
+    const ctx = () => {
+      const values = [
+        new Uint8Array(32).fill(1),
+        new Uint8Array(16).fill(2),
+        new Uint8Array(16).fill(3),
+      ];
+      const randomBytes = (len) => {
+        const next = values.shift();
+        if (!next || next.length !== len) throw new Error('wrong randomBytes call');
+        return next;
+      };
+      return new bls.EIP2335Keystore('password', 'pbkdf2', randomBytes);
+    };
+    should('create rejects non-string paths', () => {
+      throws(() => ctx().create(new Uint8Array(32).fill(9), 123 as never), TypeError);
+    });
+    should('createDerivedEIP2334 rejects seeds shorter than 32 bytes', () => {
+      throws(() => ctx().createDerivedEIP2334(new Uint8Array(31), 'signing', 0), RangeError);
+    });
     should('normalize keystore passwords', () => {
       const TESTS = [
         ['', ''],
@@ -121,6 +160,14 @@ describe('BLS', () => {
         bls.decryptEIP2335Keystore(vector, '𝔱𝔢𝔰𝔱𝔭𝔞𝔰𝔰𝔴𝔬𝔯𝔡🔑'),
         hexToBytes('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
       );
+      const decryptInvalid = (store: unknown) =>
+        bls.decryptEIP2335Keystore(store as bls.Keystore<'scrypt'>, '𝔱𝔢𝔰𝔱𝔭𝔞𝔰𝔰𝔴𝔬𝔯𝔡🔑');
+      const missingPath = structuredClone(vector) as Partial<typeof vector>;
+      delete missingPath.path;
+      throws(() => decryptInvalid(missingPath));
+      const badPath = structuredClone(vector) as typeof vector & { path: number | string };
+      badPath.path = 123;
+      throws(() => decryptInvalid(badPath));
     });
     should('decrypt PBKDF2', () => {
       const vector = {
@@ -158,6 +205,46 @@ describe('BLS', () => {
       deepStrictEqual(
         bls.decryptEIP2335Keystore(vector, '𝔱𝔢𝔰𝔱𝔭𝔞𝔰𝔰𝔴𝔬𝔯𝔡🔑'),
         hexToBytes('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
+      );
+      vector.uuid = '64625DEF-3331-4EEA-AB6F-782F3ED16A83';
+      deepStrictEqual(
+        bls.decryptEIP2335Keystore(vector, '𝔱𝔢𝔰𝔱𝔭𝔞𝔰𝔰𝔴𝔬𝔯𝔡🔑'),
+        hexToBytes('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
+      );
+    });
+    should('decrypt PBKDF2 with stored module params', () => {
+      const password = 'password';
+      const salt = new Uint8Array(32).fill(4);
+      const iv = new Uint8Array(16).fill(5);
+      const secret = new Uint8Array(32).fill(6);
+      const key = pbkdf2(sha256, utf8ToBytes(password), salt, { c: 1, dkLen: 32 });
+      const ciphertext = ctr(key.subarray(0, 16), iv).encrypt(secret);
+      const checksum = sha256(concatBytes(key.subarray(16, 32), ciphertext));
+      deepStrictEqual(
+        bls.decryptEIP2335Keystore(
+          {
+            version: 4,
+            description: '',
+            pubkey: undefined,
+            path: '',
+            uuid: '64625def-3331-4eea-ab6f-782f3ed16a83',
+            crypto: {
+              kdf: {
+                function: 'pbkdf2',
+                params: { dklen: 32, c: 1, prf: 'hmac-sha256', salt: bytesToHex(salt) },
+                message: '',
+              },
+              checksum: { function: 'sha256', params: {}, message: bytesToHex(checksum) },
+              cipher: {
+                function: 'aes-128-ctr',
+                params: { iv: bytesToHex(iv) },
+                message: bytesToHex(ciphertext),
+              },
+            },
+          },
+          password
+        ),
+        secret
       );
     });
     should('throw on previous versions', () => {
