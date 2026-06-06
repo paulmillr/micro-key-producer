@@ -390,6 +390,12 @@ declare class HDKey {
 }
 ```
 
+### BLS EIP-2333, EIP-2334 key generation
+
+BLS keygen (EIP-2333, EIP-2334) was previously available in the module.
+
+It got moved into [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer).
+
 ## License
 
 MIT (c) Paul Miller [(https://paulmillr.com)](https://paulmillr.com), see LICENSE file.
