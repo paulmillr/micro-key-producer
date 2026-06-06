@@ -3,7 +3,7 @@
   "version": "0.8.6",
   "exports": {
     ".": "./src/index.ts",
-    "./bls.js": "./src/bls.ts",
+    "./asn1.js": "./src/asn1.ts",
     "./convert.js": "./src/convert.ts",
     "./ipns.js": "./src/ipns.ts",
     "./otp.js": "./src/otp.ts",

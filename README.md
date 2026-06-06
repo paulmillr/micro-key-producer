@@ -26,7 +26,6 @@ import slip10 from 'micro-key-producer/slip10.js';
 import * as webconv from 'micro-key-producer/convert.js';
 import ipns from 'micro-key-producer/ipns.js';
 import tor from 'micro-key-producer/tor.js';
-import { createDerivedEIP2334Keystores } from 'micro-key-producer/bls.js';
 import { secureMask } from 'micro-key-producer/password.js';
 import { hotp, totp } from 'micro-key-producer/otp.js';
 
@@ -201,30 +200,6 @@ console.log(k.privateKey, k.publicKey, k.base16, k.base32, k.base36, k.contentha
 // ipns://k51qzi5uqu5dgnfwb...
 // 0xe501017200240801122012...
 ```
-
-### bls: EIP-2333 keys for ETH validators
-
-> `npm install @scure/bip39`
-
-```js
-import { mnemonicToSeedSync } from '@scure/bip39';
-import { createDerivedEIP2334Keystores } from 'micro-key-producer/bls.js';
-
-const password = 'my_password';
-const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
-const keyType = 'signing'; // or 'withdrawal'
-const indexes = [0, 1, 2, 3]; // create 4 keys
-
-const keystores = createDerivedEIP2334Keystores(
-  password,
-  'scrypt',
-  mnemonicToSeedSync(mnemonic, ''),
-  keyType,
-  indexes
-);
-```
-
-Conforms to EIP-2333 / EIP-2334 / EIP-2335. Online demo: [eip2333-tool](https://iancoleman.io/eip2333/)
 
 ### password: secure passwords with masks
 

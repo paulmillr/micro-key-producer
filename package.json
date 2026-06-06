@@ -41,7 +41,7 @@
   },
   "exports": {
     ".": "./index.js",
-    "./bls.js": "./bls.js",
+    "./asn1.js": "./asn1.js",
     "./convert.js": "./convert.js",
     "./ipns.js": "./ipns.js",
     "./otp.js": "./otp.js",
