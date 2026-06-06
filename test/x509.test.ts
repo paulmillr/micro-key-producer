@@ -9,8 +9,8 @@ import { deepStrictEqual, throws } from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DERUtils } from '../src/convert.ts';
-import { oid, oidName } from '../src/pgp.ts';
+import { ASN1, BER, DER, oid, oidName } from '../src/asn1.ts';
+import { PKCS8 } from '../src/convert.ts';
 import { CERTUtils, CMS, X509, __TEST, pemBlocks } from '../src/x509.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -283,7 +283,7 @@ const findSigPos = (haystack: Uint8Array, needle: Uint8Array): number => {
   }
   return -1;
 };
-type BerNode = ReturnType<typeof DERUtils.BER.decode>['nodes'][number];
+type BerNode = ReturnType<typeof BER.decode>['nodes'][number];
 const berNodeSize = (n: BerNode): number => 1 + n.lenBytes + n.len;
 const berTlvAt = (nodes: BerNode[], path: number[], base = 0): { pos: number; end: number } => {
   let cur = nodes;
@@ -309,10 +309,10 @@ const assertNoExtRaw = (cert: ReturnType<typeof X509.decode>): void => {
 };
 
 describe('x509', () => {
-  should('DERLen handles definite lengths above 32-bit signed range', () => {
+  should('DER.length handles definite lengths above 32-bit signed range', () => {
     const high = Uint8Array.from([0x84, 0x80, 0x00, 0x00, 0x00]);
-    deepStrictEqual(DERUtils.DERLen.encode(0x80000000), high);
-    deepStrictEqual(DERUtils.DERLen.decode(high), 0x80000000);
+    deepStrictEqual(DER.length.encode(0x80000000), high);
+    deepStrictEqual(DER.length.decode(high), 0x80000000);
   });
   should('pemBlocks accepts RFC 7468 internal hyphen label separators', () => {
     deepStrictEqual(pemBlocks('-----BEGIN X-THING-----\nQQ==\n-----END X-THING-----'), [
@@ -482,9 +482,9 @@ describe('x509', () => {
           list: [
             {
               oid: 'extendedKeyUsage',
-              rest: DERUtils.ASN1.OctetString.encode(
-                DERUtils.ASN1.sequence({
-                  list: P.array(null, DERUtils.ASN1.OID),
+              rest: ASN1.OctetString.encode(
+                ASN1.sequence({
+                  list: P.array(null, ASN1.OID),
                 }).encode({
                   list: [
                     'anyExtendedKeyUsage',
@@ -1138,7 +1138,7 @@ describe('x509', () => {
       const ci = CMS.decode(CMS.sign(data, cert, key));
       const sd = __TEST.CMSSignedData.decode(ci.content);
       const signerInfo = sd.signerInfos[0];
-      const pkcs8 = DERUtils.PKCS8.decode(pemBlocks(key)[0].der);
+      const pkcs8 = PKCS8.decode(pemBlocks(key)[0].der);
       if (pkcs8.privateKey.TAG !== 'raw') throw new Error('expected raw Ed448 private key');
       const digestAlg = { algorithm: 'shake256', params: undefined };
       sd.digestAlgorithms = [digestAlg];
@@ -1775,7 +1775,6 @@ describe('x509', () => {
       throw new Error('signer cert/extensions not found');
     const ski = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'subjectKeyIdentifier');
     if (!ski) throw new Error('SKI extension not found in signer cert');
-    const ASN1 = DERUtils.ASN1;
     // Extension.extnValue wraps DER-encoded KeyIdentifier; the KeyIdentifier
     // itself is an OCTET STRING and this test makes that inner value empty.
     ski.rest = ASN1.OctetString.encode(ASN1.OctetString.encode(new Uint8Array()));
@@ -1804,7 +1803,6 @@ describe('x509', () => {
       throw new Error('signer cert/extensions not found');
     const aki = signerCert.data.tbs.extensions.list.find((e) => e.oid === 'authorityKeyIdentifier');
     if (!aki) throw new Error('AKI extension not found in signer cert');
-    const ASN1 = DERUtils.ASN1;
     const extnValue = ASN1.OctetString.decode(aki.rest);
     if (!extnValue.length) throw new Error('AKI extnValue is empty');
     extnValue[extnValue.length - 1] ^= 0x01;
@@ -1876,7 +1874,6 @@ describe('x509', () => {
     );
     if (!signerCert || !signerCert.data.tbs.extensions)
       throw new Error('signer cert/extensions not found');
-    const ASN1 = DERUtils.ASN1;
     // ExtendedKeyUsageSyntax with single id-kp-serverAuth (1.3.6.1.5.5.7.3.1).
     const ekuServerAuth = Uint8Array.from([
       0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
@@ -2015,18 +2012,18 @@ describe('x509', () => {
       return out;
     };
     const tlv = (tag: number, body: Uint8Array): Uint8Array =>
-      cat(Uint8Array.of(tag), DERUtils.DERLen.encode(body.length), body);
+      cat(Uint8Array.of(tag), DER.length.encode(body.length), body);
     const seq = (body: Uint8Array): Uint8Array => tlv(0x30, body);
     const policies = (userNotice: Uint8Array, qualifierOid = '1.3.6.1.5.5.7.2.2') => {
       const decoded = structuredClone(cert);
       decoded.tbs.extensions.list.push({
         oid: 'certificatePolicies',
-        rest: DERUtils.ASN1.OctetString.encode(
+        rest: ASN1.OctetString.encode(
           seq(
             seq(
               cat(
-                DERUtils.ASN1.OID.encode('anyPolicy'),
-                seq(seq(cat(DERUtils.ASN1.OID.encode(qualifierOid), seq(userNotice))))
+                ASN1.OID.encode('anyPolicy'),
+                seq(seq(cat(ASN1.OID.encode(qualifierOid), seq(userNotice))))
               )
             )
           )
@@ -2678,7 +2675,7 @@ describe('x509', () => {
         throw new Error('signer cert/extensions not found');
       signerCert.data.tbs.extensions.list.push({
         oid: '1.3.6.1.4.1.11129.2.4.2',
-        rest: DERUtils.ASN1.OctetString.encode(sctExtnValue),
+        rest: ASN1.OctetString.encode(sctExtnValue),
       });
       c.content = __TEST.CMSSignedData.encode(sd);
       c.ber = undefined;
@@ -3326,9 +3323,9 @@ describe('x509', () => {
     const der = CMS.sign(tpl, cert, key, '', { createdTs: CERT_CREATED });
     const ci = CMS.decode(der);
     const sd = __TEST.CMSSignedData.decode(ci.content);
-    const ber = DERUtils.BER.decode(ci.content);
+    const ber = BER.decode(ci.content);
     const signedAttrs = berTlvAt(ber.nodes, [0, 4, 0, 3]);
-    const pkcs8 = DERUtils.PKCS8.decode(pemBlocks(key)[0].der);
+    const pkcs8 = PKCS8.decode(pemBlocks(key)[0].der);
     if (pkcs8.privateKey.TAG !== 'raw') throw new Error('expected Ed25519 PKCS#8 private key');
     const si = sd.signerInfos[0];
     si.signature = ed25519.sign(
@@ -3538,12 +3535,12 @@ describe('x509', () => {
     const cert = pem('openssl/client-ed25519-cert.pem');
     const key = pem('openssl/client-ed25519-key.pem');
     const certObj = X509.decode(pemBlocks(cert)[0].der);
-    const pkcs8 = DERUtils.PKCS8.decode(pemBlocks(key)[0].der);
+    const pkcs8 = PKCS8.decode(pemBlocks(key)[0].der);
     if (pkcs8.algorithm.info.TAG !== 'Ed25519' || pkcs8.privateKey.TAG !== 'raw')
       throw new Error('expected raw Ed25519 PKCS#8 private key');
     const secret = pkcs8.privateKey.data.slice();
     secret[0] ^= 1;
-    const der = DERUtils.PKCS8.encode({
+    const der = PKCS8.encode({
       ...pkcs8,
       version: 1n,
       privateKey: { TAG: 'raw', data: secret },
@@ -3724,11 +3721,11 @@ describe('x509', () => {
       'rc2-cbc',
       'des-cbc',
     ]);
-    const decodeCaps = DERUtils.ASN1.sequence({
+    const decodeCaps = ASN1.sequence({
       list: P.array(
         null,
-        DERUtils.ASN1.sequence({
-          capabilityID: DERUtils.ASN1.OID,
+        ASN1.sequence({
+          capabilityID: ASN1.OID,
           paramsAny: P.bytes(null),
         })
       ),
@@ -3831,26 +3828,26 @@ describe('x509', () => {
   describe('asn1 strings', () => {
     should('PrintableString validates character set', () => {
       deepStrictEqual(
-        __TEST.PrintableString.decode(__TEST.PrintableString.encode("A-Z 0/9'+=?")),
+        ASN1.PrintableString.decode(ASN1.PrintableString.encode("A-Z 0/9'+=?")),
         "A-Z 0/9'+=?"
       );
-      throws(() => __TEST.PrintableString.encode('under_score'));
-      throws(() => __TEST.PrintableString.encode('cafe\u00E9'));
+      throws(() => ASN1.PrintableString.encode('under_score'));
+      throws(() => ASN1.PrintableString.encode('cafe\u00E9'));
     });
     should('NumericString validates character set', () => {
       deepStrictEqual(
-        __TEST.NumericString.decode(__TEST.NumericString.encode('123 456 7890')),
+        ASN1.NumericString.decode(ASN1.NumericString.encode('123 456 7890')),
         '123 456 7890'
       );
-      throws(() => __TEST.NumericString.encode('12A3'));
-      throws(() => __TEST.NumericString.encode('12-3'));
+      throws(() => ASN1.NumericString.encode('12A3'));
+      throws(() => ASN1.NumericString.encode('12-3'));
     });
     should('TeletexString rejects non-latin1 characters', () => {
       deepStrictEqual(
-        __TEST.TeletexString.decode(__TEST.TeletexString.encode('caf\u00E9')),
+        ASN1.TeletexString.decode(ASN1.TeletexString.encode('caf\u00E9')),
         'caf\u00E9'
       );
-      throws(() => __TEST.TeletexString.encode('\u20AC'));
+      throws(() => ASN1.TeletexString.encode('\u20AC'));
     });
     should('X509.encode rejects malformed UTF-16 in UTF8String values', () => {
       const cert = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
@@ -3901,18 +3898,18 @@ describe('x509', () => {
     should('UniversalString maps UCS-4 scalars to JS strings and rejects invalid scalars', () => {
       const text = 'A\u{1F600}';
       const der = Uint8Array.from([0x1c, 0x08, 0x00, 0x00, 0x00, 0x41, 0x00, 0x01, 0xf6, 0x00]);
-      deepStrictEqual(__TEST.UniversalString.encode(text), der);
-      deepStrictEqual(__TEST.UniversalString.decode(der), text);
+      deepStrictEqual(ASN1.UniversalString.encode(text), der);
+      deepStrictEqual(ASN1.UniversalString.decode(der), text);
       throws(
-        () => __TEST.UniversalString.decode(Uint8Array.from([0x1c, 0x04, 0x00, 0x11, 0x00, 0x00])),
+        () => ASN1.UniversalString.decode(Uint8Array.from([0x1c, 0x04, 0x00, 0x11, 0x00, 0x00])),
         /UniversalString: expected Unicode scalar/
       );
       throws(
-        () => __TEST.UniversalString.decode(Uint8Array.from([0x1c, 0x04, 0x00, 0x00, 0xd8, 0x00])),
+        () => ASN1.UniversalString.decode(Uint8Array.from([0x1c, 0x04, 0x00, 0x00, 0xd8, 0x00])),
         /UniversalString: expected Unicode scalar/
       );
       throws(
-        () => __TEST.UniversalString.encode('\uD800'),
+        () => ASN1.UniversalString.encode('\uD800'),
         /UniversalString: expected Unicode scalar/
       );
     });

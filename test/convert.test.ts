@@ -7,6 +7,8 @@ import { describe, should } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
+import { ASN1, BER, DER } from '../src/asn1.ts';
+import { PKCS8, PKCS8SecretKey, RSAPrivateKey, SPKI } from '../src/convert.ts';
 import * as convert from '../src/convert.ts';
 import { base64armor } from '../src/utils.ts';
 import { DER_VECTORS } from './convert-vectors.ts';
@@ -54,7 +56,7 @@ describe('convert', () => {
     throws(() => base64armor('MESSAGE', 64, P.bytes(null), 1 as never), TypeError);
   });
   should('strict DER conversion rejects unknown EC namedCurve', () => {
-    const bad = convert.DERUtils.SPKI.encode({
+    const bad = SPKI.encode({
       algorithm: {
         info: { TAG: 'EC', data: { TAG: 'namedCurve', data: '1.3.6.1.4.1.8301.3.1.2.9.0.33' } },
       },
@@ -63,15 +65,14 @@ describe('convert', () => {
     throws(() => convert.p256_der.publicKey.decode(bad));
   });
   should('ASN.1', () => {
-    const { ASN1, BER, DERLen, PKCS8, PKCS8SecretKey, SPKI } = convert.DERUtils;
-    deepStrictEqual(DERLen.encode(0x7f), Uint8Array.from([0x7f]));
-    deepStrictEqual(DERLen.encode(0x80), Uint8Array.from([0x81, 0x80]));
-    deepStrictEqual(DERLen.encode(0x1234), Uint8Array.from([0x82, 0x12, 0x34]));
-    deepStrictEqual(DERLen.encode(0x80000000), Uint8Array.from([0x84, 0x80, 0x00, 0x00, 0x00]));
-    deepStrictEqual(DERLen.decode(Uint8Array.from([0x84, 0x80, 0x00, 0x00, 0x00])), 0x80000000);
-    throws(() => DERLen.decode(Uint8Array.from([0x82, 0x00, 0x80])));
-    throws(() => DERLen.encode(-1));
-    throws(() => DERLen.encode(1.5));
+    deepStrictEqual(DER.length.encode(0x7f), Uint8Array.from([0x7f]));
+    deepStrictEqual(DER.length.encode(0x80), Uint8Array.from([0x81, 0x80]));
+    deepStrictEqual(DER.length.encode(0x1234), Uint8Array.from([0x82, 0x12, 0x34]));
+    deepStrictEqual(DER.length.encode(0x80000000), Uint8Array.from([0x84, 0x80, 0x00, 0x00, 0x00]));
+    deepStrictEqual(DER.length.decode(Uint8Array.from([0x84, 0x80, 0x00, 0x00, 0x00])), 0x80000000);
+    throws(() => DER.length.decode(Uint8Array.from([0x82, 0x00, 0x80])));
+    throws(() => DER.length.encode(-1));
+    throws(() => DER.length.encode(1.5));
     deepStrictEqual(ASN1.Integer.decode(hex.decode('02020080')), 128n);
     deepStrictEqual(hex.encode(ASN1.Integer.encode(128n)), '02020080');
     throws(() => ASN1.Integer.decode(hex.decode('040101')));
@@ -277,24 +278,24 @@ describe('convert', () => {
       }),
       rsaPkcs8
     );
-    const rsaKey = convert.DERUtils.RSAPrivateKey.decode(rsaRaw);
+    const rsaKey = RSAPrivateKey.decode(rsaRaw);
     const rsaVersionOnly = rsaRaw.slice();
     rsaVersionOnly[6] = 1;
-    throws(() => convert.DERUtils.RSAPrivateKey.decode(rsaVersionOnly));
-    throws(() => convert.DERUtils.RSAPrivateKey.encode({ ...rsaKey, version: 1n }));
+    throws(() => RSAPrivateKey.decode(rsaVersionOnly));
+    throws(() => RSAPrivateKey.encode({ ...rsaKey, version: 1n }));
     const rsaMulti = {
       ...rsaKey,
       version: 1n,
       otherPrimeInfos: [{ prime: 17n, exponent: 3n, coefficient: 5n }],
     };
     deepStrictEqual(
-      convert.DERUtils.RSAPrivateKey.decode(convert.DERUtils.RSAPrivateKey.encode(rsaMulti)),
+      RSAPrivateKey.decode(RSAPrivateKey.encode(rsaMulti)),
       rsaMulti
     );
-    throws(() => convert.DERUtils.RSAPrivateKey.encode({ ...rsaMulti, version: 0n }));
-    const rsaMultiVersion0 = convert.DERUtils.RSAPrivateKey.encode(rsaMulti);
+    throws(() => RSAPrivateKey.encode({ ...rsaMulti, version: 0n }));
+    const rsaMultiVersion0 = RSAPrivateKey.encode(rsaMulti);
     rsaMultiVersion0[6] = 0;
-    throws(() => convert.DERUtils.RSAPrivateKey.decode(rsaMultiVersion0));
+    throws(() => RSAPrivateKey.decode(rsaMultiVersion0));
     const dsa = DER_VECTORS.find((i) => i.name === 'unenc-dsa-pkcs8.pub.pem');
     if (!dsa || !dsa.decoded) throw new Error('missing unenc-dsa-pkcs8.pub.pem vector');
     const dsaSpki = base64armor('PUBLIC KEY', 10, P.bytes(null)).decode(dsa.pem);
@@ -512,7 +513,7 @@ describe('convert', () => {
           throws(() => der.publicKey.decode(otherFullSpki));
           if (oid) {
             const otherOid = name === 'p256' ? EC_CURVES.p384 : EC_CURVES.p256;
-            const mismatch = convert.DERUtils.PKCS8.encode({
+            const mismatch = PKCS8.encode({
               version: 0n,
               algorithm: {
                 info: { TAG: 'EC' as const, data: { TAG: 'namedCurve' as const, data: oid } },

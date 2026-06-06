@@ -10,6 +10,7 @@ import { describe, should } from '@paulmillr/jsbt/test.js';
 import { base64, hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
+import { oid } from '../src/asn1.ts';
 import * as pgp from '../src/pgp.ts';
 import { base64armor } from '../src/utils.ts';
 
@@ -541,21 +542,21 @@ const packetOverview = (packet) => {
 
 describe('pgp', () => {
   should('OID', () => {
-    deepStrictEqual(hex.encode(pgp.oid.encode('1.2.840.10045.3.1.7')), '2a8648ce3d030107');
-    deepStrictEqual(pgp.oid.decode(pgp.oid.encode('1.2.840.10045.3.1.7')), '1.2.840.10045.3.1.7');
-    deepStrictEqual(hex.encode(pgp.oid.encode('1.3.132.0.34')), '2b81040022');
-    deepStrictEqual(pgp.oid.decode(hex.decode('2b81040022')), '1.3.132.0.34');
-    deepStrictEqual(hex.encode(pgp.oid.encode('1.3.132.0.35')), '2b81040023');
-    deepStrictEqual(pgp.oid.decode(hex.decode('2b81040023')), '1.3.132.0.35');
-    deepStrictEqual(pgp.oid.encode('1.2.0'), Uint8Array.of(0x2a, 0x00));
-    deepStrictEqual(pgp.oid.decode(Uint8Array.of(0x2a, 0x00)), '1.2.0');
-    deepStrictEqual(pgp.oid.encode('2.48.1'), Uint8Array.of(0x81, 0x00, 0x01));
-    deepStrictEqual(pgp.oid.decode(Uint8Array.of(0x81, 0x00, 0x01)), '2.48.1');
-    deepStrictEqual(hex.encode(pgp.oid.encode('1.3.132.0.10')), '2b8104000a');
-    throws(() => pgp.oid.encode('1'));
-    throws(() => pgp.oid.encode('3.0'));
-    throws(() => pgp.oid.decode(Uint8Array.of(0x80, 0x2a)));
-    throws(() => pgp.oid.decode(Uint8Array.of(0x2a, 0x80, 0x00)));
+    deepStrictEqual(hex.encode(oid.encode('1.2.840.10045.3.1.7')), '2a8648ce3d030107');
+    deepStrictEqual(oid.decode(oid.encode('1.2.840.10045.3.1.7')), '1.2.840.10045.3.1.7');
+    deepStrictEqual(hex.encode(oid.encode('1.3.132.0.34')), '2b81040022');
+    deepStrictEqual(oid.decode(hex.decode('2b81040022')), '1.3.132.0.34');
+    deepStrictEqual(hex.encode(oid.encode('1.3.132.0.35')), '2b81040023');
+    deepStrictEqual(oid.decode(hex.decode('2b81040023')), '1.3.132.0.35');
+    deepStrictEqual(oid.encode('1.2.0'), Uint8Array.of(0x2a, 0x00));
+    deepStrictEqual(oid.decode(Uint8Array.of(0x2a, 0x00)), '1.2.0');
+    deepStrictEqual(oid.encode('2.48.1'), Uint8Array.of(0x81, 0x00, 0x01));
+    deepStrictEqual(oid.decode(Uint8Array.of(0x81, 0x00, 0x01)), '2.48.1');
+    deepStrictEqual(hex.encode(oid.encode('1.3.132.0.10')), '2b8104000a');
+    throws(() => oid.encode('1'));
+    throws(() => oid.encode('3.0'));
+    throws(() => oid.decode(Uint8Array.of(0x80, 0x2a)));
+    throws(() => oid.decode(Uint8Array.of(0x2a, 0x80, 0x00)));
   });
   should('MPI canonical boundaries', () => {
     deepStrictEqual(pgp.mpi.encode(0n), Uint8Array.of(0, 0));

@@ -6,7 +6,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DERUtils } from '../src/convert.ts';
+import { ASN1 } from '../src/asn1.ts';
 import { CMS, __TEST } from '../src/x509.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -726,11 +726,11 @@ describe('x509 openssl', () => {
       (a) => a.oid === 'attrSMIMECapabilities'
     );
     if (!smime) throw new Error('openssl signedAttrs missing sMIMECapabilities');
-    const caps = DERUtils.ASN1.sequence({
+    const caps = ASN1.sequence({
       list: P.array(
         null,
-        DERUtils.ASN1.sequence({
-          capabilityID: DERUtils.ASN1.OID,
+        ASN1.sequence({
+          capabilityID: ASN1.OID,
           paramsAny: P.bytes(null),
         })
       ),

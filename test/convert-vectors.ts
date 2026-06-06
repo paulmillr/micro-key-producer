@@ -164,7 +164,7 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHKz/tV8vLO/YnYnrN0smgRUkUoAt
     },
   },
   // RFC 5208 §6 / RFC 5958 §2 make PKCS#8 privateKey algorithm-defined;
-  // RFC 8017 Appendix A.1.2 represents RSA as RSAPrivateKey. DERUtils keeps
+  // RFC 8017 Appendix A.1.2 represents RSA as RSAPrivateKey. DER key schemas keep
   // that PKCS#1 payload raw; high-level RSA math is out of scope.
   {
     name: 'rsa2048-priv',
