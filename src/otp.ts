@@ -6,8 +6,10 @@
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha1 } from '@noble/hashes/legacy.js';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { abytes, anumber } from '@noble/hashes/utils.js';
 import { base32, type TArg, type TRet } from '@scure/base';
-import { U32BE, U64BE } from 'micro-packed';
+import { U32BE, U64BE, utils as packedUtils } from 'micro-packed';
+import { astring } from './utils.ts';
 
 /** HOTP/TOTP configuration. */
 export type OTPOpts = {
@@ -41,6 +43,7 @@ function parseSecret(secret: string): TRet<Uint8Array> {
  * ```
  */
 export function parse(otp: string): TRet<OTPOpts> {
+  otp = astring(otp, 'otp');
   const opts = {
     secret: Uint8Array.of() as Uint8Array,
     algorithm: 'sha1',
@@ -101,6 +104,12 @@ export function parse(otp: string): TRet<OTPOpts> {
  * ```
  */
 export function buildURL(opts: TArg<OTPOpts>): string {
+  if (!packedUtils.isPlainObject(opts))
+    throw new TypeError('"opts" expected object, got type=' + typeof opts);
+  opts.algorithm = astring(opts.algorithm, 'opts.algorithm');
+  anumber(opts.digits, 'opts.digits');
+  anumber(opts.interval, 'opts.interval');
+  abytes(opts.secret, undefined, 'opts.secret');
   // OTPOpts only carries the secret/hash/digits/interval core, so serialization
   // canonicalizes back to the minimal unlabeled TOTP URL and drops any original
   // issuer/label metadata.
@@ -125,6 +134,15 @@ export function buildURL(opts: TArg<OTPOpts>): string {
  * ```
  */
 export function hotp(opts: TArg<OTPOpts>, counter: number | bigint): string {
+  if (!packedUtils.isPlainObject(opts))
+    throw new TypeError('"opts" expected object, got type=' + typeof opts);
+  opts.algorithm = astring(opts.algorithm, 'opts.algorithm');
+  anumber(opts.digits, 'opts.digits');
+  anumber(opts.interval, 'opts.interval');
+  abytes(opts.secret, undefined, 'opts.secret');
+  if (typeof counter === 'number') anumber(counter, 'counter');
+  else if (typeof counter !== 'bigint')
+    throw new TypeError('"counter" expected number or bigint, got type=' + typeof counter);
   const hash = { sha1, sha256, sha512 }[opts.algorithm];
   if (!hash) throw new Error(`TOTP: unknown hash: ${opts.algorithm}`);
   // RFC 4226 §5.3 says implementations MUST extract a 6-digit code at
@@ -155,6 +173,10 @@ export function hotp(opts: TArg<OTPOpts>, counter: number | bigint): string {
  * ```
  */
 export function totp(opts: TArg<OTPOpts>, ts: number = Date.now()): string {
+  if (!packedUtils.isPlainObject(opts))
+    throw new TypeError('"opts" expected object, got type=' + typeof opts);
+  anumber(opts.interval, 'opts.interval');
+  anumber(ts, 'ts');
   // RFC 6238 uses T = floor((Unix time - T0) / X); this helper fixes T0 at 0,
   // accepts timestamps in milliseconds, and delegates the derived step counter to HOTP.
   return hotp(opts, Math.floor(ts / (opts.interval * 1000)));

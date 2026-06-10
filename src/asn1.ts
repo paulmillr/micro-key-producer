@@ -8,7 +8,7 @@ import { numberToVarBytesBE } from '@noble/curves/utils.js';
 import { bytesToHex, concatBytes, hexToBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { ascii, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
-import { deepFreeze } from './utils.ts';
+import { astring, deepFreeze } from './utils.ts';
 
 // ASN.1 OID (object identifier) without tag & length.
 // First two elements: [i0 * 40 + i1].
@@ -25,6 +25,7 @@ import { deepFreeze } from './utils.ts';
 export const oid: P.CoderType<string> = /* @__PURE__ */ deepFreeze(
   /* @__PURE__ */ P.wrap({
     encodeStream: (w: P.Writer, value: string) => {
+      value = astring(value, 'value');
       const items = value.split('.').map((arc) => {
         if (!/^[0-9]+$/.test(arc)) throw new Error(`invalid oid arc ${arc}`);
         const n = Number(arc);
@@ -193,8 +194,12 @@ const OIDS_INVERT = /* @__PURE__ */ (() =>
  */
 export const oidName: P.CoderType<string> = /* @__PURE__ */ deepFreeze(
   /* @__PURE__ */ P.apply(oid, {
-    encode: (v: TArg<string>): string => OIDS_INVERT[v as string] || (v as string),
+    encode: (v: TArg<string>): string => {
+      v = astring(v as string, 'value');
+      return OIDS_INVERT[v as string] || (v as string);
+    },
     decode: (v: TArg<string>): string => {
+      v = astring(v as string, 'value');
       const s = v as string;
       const id = OIDS[s as keyof typeof OIDS];
       if (id) return id;
@@ -203,7 +208,6 @@ export const oidName: P.CoderType<string> = /* @__PURE__ */ deepFreeze(
     },
   })
 );
-
 
 const lenBody = (len: number, width?: number, minimal = true): number[] => {
   const out: number[] = [];

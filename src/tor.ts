@@ -7,6 +7,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { sha3_256 } from '@noble/hashes/sha3.js';
 import { abytes, concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { base32, base64, utf8 } from '@scure/base';
+import { astring } from './utils.ts';
 
 // Tor v3 onion addresses append the fixed version byte `0x03` after the public
 // key and checksum when forming the base32 payload.
@@ -51,6 +52,7 @@ export function formatPublicKey(pubBytes: TArg<Uint8Array>): string {
  * ```
  */
 export function parseAddress(address: string): TRet<Uint8Array> {
+  address = astring(address, 'address');
   if (!address.endsWith('.onion')) throw new Error('Address must end with .onion');
   const addr = base32.decode(address.replace(/\.onion$/, '').toUpperCase());
   // BIP-0155 Appendix B / ZIP-0155 "Tor v3 address encoding" make the payload

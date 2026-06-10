@@ -22,6 +22,27 @@ export type { TArg, TRet } from '@scure/base';
 export const randomBytes: typeof nobleRandomBytes = nobleRandomBytes;
 
 /**
+ * Asserts something is a string.
+ * @param value - Value to validate.
+ * @param title - Label included in thrown errors.
+ * @returns The validated string.
+ * @throws On wrong argument types. {@link TypeError}
+ * @example
+ * Validate a label string.
+ *
+ * ```ts
+ * astring('example', 'label');
+ * ```
+ */
+export function astring(value: unknown, title: string = ''): string {
+  if (typeof value !== 'string') {
+    const prefix = title && `"${title}" `;
+    throw new TypeError(prefix + 'expected string, got type=' + typeof value);
+  }
+  return value;
+}
+
+/**
  * Deep-freeze an exported object graph.
  * @param obj - Value to freeze.
  * @returns The same value after freezing reachable objects.

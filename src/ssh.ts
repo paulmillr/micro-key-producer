@@ -6,10 +6,17 @@
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { equalBytes } from '@noble/curves/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { concatBytes, randomBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
+import {
+  abytes,
+  anumber,
+  concatBytes,
+  randomBytes,
+  type TArg,
+  type TRet,
+} from '@noble/hashes/utils.js';
 import { ascii, base64 } from '@scure/base';
 import * as P from 'micro-packed';
-import { base64armor, deepFreeze } from './utils.ts';
+import { astring, base64armor, deepFreeze } from './utils.ts';
 
 /**
  * SSH length-prefixed string coder.
@@ -294,6 +301,8 @@ export const PrivateExport: TRet<P.Coder<PrivateExportValue, string>> = /* @__PU
  * ```
  */
 export function formatPublicKey(bytes: TArg<Uint8Array>, comment?: string): string {
+  bytes = abytes(bytes, 32, 'bytes');
+  if (comment !== undefined) comment = astring(comment, 'comment');
   const blob = PublicKey.encode({ pubKey: bytes });
   // RFC 8709 §4 only defines the `ssh-ed25519` public-key blob; OpenSSH
   // .pub/authorized_keys records are one physical line, so reject CR/LF before
@@ -317,6 +326,7 @@ export function formatPublicKey(bytes: TArg<Uint8Array>, comment?: string): stri
  * ```
  */
 export function getFingerprint(bytes: TArg<Uint8Array>): string {
+  bytes = abytes(bytes, 32, 'bytes');
   const blob = PublicKey.encode({ pubKey: bytes });
   // OpenSSH fingerprints hash the SSH public-key blob, not the bare Ed25519
   // point bytes, and display the SHA-256 digest as unpadded base64 after
@@ -352,6 +362,9 @@ export function getKeys(
   fingerprint: string;
   privateKey: string;
 }> {
+  privateKey = abytes(privateKey, 32, 'privateKey');
+  if (comment !== undefined) comment = astring(comment, 'comment');
+  checkBytes = abytes(checkBytes, 4, 'checkBytes');
   const pubKey = ed25519.getPublicKey(privateKey);
   // This wrapper must keep the OpenSSH public line, fingerprint, and
   // private-key armor derived from the same Ed25519 secret so downstream tools
@@ -402,10 +415,30 @@ export function getKeys(
  * ```
  */
 export function authSign(privateKey: TArg<Uint8Array>, data: TArg<AuthDataType>): TRet<Uint8Array> {
+  privateKey = abytes(privateKey, 32, 'privateKey');
+  if (!P.utils.isPlainObject(data))
+    throw new TypeError('"data" expected object, got type=' + typeof data);
+  abytes((data as AuthDataType).nonce, undefined, 'data.nonce');
+  anumber((data as AuthDataType).userAuthRequest, 'data.userAuthRequest');
+  if ((data as AuthDataType).userAuthRequest !== 50)
+    throw new Error('"data.userAuthRequest" expected SSH_MSG_USERAUTH_REQUEST=50');
+  (data as AuthDataType).user = astring((data as AuthDataType).user, 'data.user');
+  (data as AuthDataType).conn = astring((data as AuthDataType).conn, 'data.conn');
+  (data as AuthDataType).auth = astring((data as AuthDataType).auth, 'data.auth');
+  if ((data as AuthDataType).auth !== 'publickey')
+    throw new Error('"data.auth" expected method name publickey');
+  anumber((data as AuthDataType).haveSig, 'data.haveSig');
+  if ((data as AuthDataType).haveSig !== 1)
+    throw new Error('"data.haveSig" expected publickey signature flag TRUE');
+  if (!P.utils.isPlainObject((data as AuthDataType).pubKey))
+    throw new TypeError(
+      '"data.pubKey" expected object, got type=' + typeof (data as AuthDataType).pubKey
+    );
+  abytes((data as AuthDataType).pubKey.pubKey, 32, 'data.pubKey.pubKey');
   // This helper returns the naked 64-byte RFC 8032 Ed25519 signature over the
   // encoded auth payload. Callers that need the SSH wire signature wrapper must
   // add `string "ssh-ed25519"` plus `string signature` themselves.
-  return ed25519.sign(AuthData.encode(data), privateKey);
+  return ed25519.sign(AuthData.encode(data as AuthDataType), privateKey);
 }
 
 export default getKeys;

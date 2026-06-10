@@ -288,10 +288,7 @@ describe('convert', () => {
       version: 1n,
       otherPrimeInfos: [{ prime: 17n, exponent: 3n, coefficient: 5n }],
     };
-    deepStrictEqual(
-      RSAPrivateKey.decode(RSAPrivateKey.encode(rsaMulti)),
-      rsaMulti
-    );
+    deepStrictEqual(RSAPrivateKey.decode(RSAPrivateKey.encode(rsaMulti)), rsaMulti);
     throws(() => RSAPrivateKey.encode({ ...rsaMulti, version: 0n }));
     const rsaMultiVersion0 = RSAPrivateKey.encode(rsaMulti);
     rsaMultiVersion0[6] = 0;

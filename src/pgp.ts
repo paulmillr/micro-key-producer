@@ -32,6 +32,7 @@ import { md5, ripemd160, sha1 } from '@noble/hashes/legacy.js';
 import { sha224, sha256, sha384, sha512 } from '@noble/hashes/sha2.js';
 import { sha3_256, sha3_512 } from '@noble/hashes/sha3.js';
 import {
+  abytes,
   concatBytes,
   isBytes,
   randomBytes,
@@ -42,7 +43,7 @@ import {
 import { hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { oidName } from './asn1.ts';
-import { base64armor, deepFreeze } from './utils.ts';
+import { astring, base64armor, deepFreeze } from './utils.ts';
 
 /** Byte-array alias used across the PGP helpers. */
 export type Bytes = Uint8Array;
@@ -2258,7 +2259,20 @@ export function decodeSecretKey(
   key: TArg<SecretKeyType>,
   packetTag?: SecretKeyPacketTag
 ): bigint {
+  password = astring(password, 'password');
+  // Plain packets do not use packetTag, so validate it before packet-type branching.
+  if (packetTag !== undefined) {
+    packetTag = astring(packetTag, 'packetTag') as SecretKeyPacketTag;
+    if (packetTag !== 'secretKey' && packetTag !== 'secretSubkey')
+      throw new Error(`"packetTag" expected "secretKey" or "secretSubkey", got ${packetTag}`);
+  }
+  if (!P.utils.isPlainObject(key))
+    throw new TypeError('"key" expected object, got type=' + typeof key);
   const secret = key as SecretKeyType;
+  if (!P.utils.isPlainObject(secret.pub))
+    throw new TypeError('"key.pub" expected object, got type=' + typeof secret.pub);
+  if (!P.utils.isPlainObject(secret.type))
+    throw new TypeError('"key.type" expected object, got type=' + typeof secret.type);
   if (secret.type.TAG === 'plain') {
     if (secret.pub.version === 6) return secretPayload(secret).decode(secret.type.data.secret);
     return secretChecksumCoder.decode(secret, secret.type.data.secret);
@@ -2430,15 +2444,19 @@ export const sigArmor: TRet<P.Coder<Packet[], string>> = /* @__PURE__ */ deepFre
   >
 );
 
-function validateDate(timestamp: number) {
+function validateDate(timestamp: number, title = 'timestamp', kind = 'PGP key creation time') {
+  if (typeof timestamp !== 'number')
+    throw new TypeError(`"${title}" expected number, got type=${typeof timestamp}`);
   // RFC 4880 §3.5 / RFC 9580 §3.5 define time fields as unsigned four-octet
   // seconds, and RFC 9580 §5.5.2.2 uses that field for v4 key creation time.
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 0xffffffff)
-    throw new Error('invalid PGP key creation time: must be a valid UNIX timestamp');
+    throw new RangeError(
+      `invalid ${kind}: "${title}" expected valid UNIX timestamp, got ${timestamp}`
+    );
 }
 
 function getPublicPackets(edPriv: TArg<Bytes>, cvPriv: TArg<Bytes>, createdAt: number) {
-  validateDate(createdAt);
+  validateDate(createdAt, 'createdAt');
   // These legacy v4 packets use prefixed-native `0x40 || point` encodings for
   // Ed25519 / Curve25519, and the Curve25519 ECDH subkey keeps Table 30
   // SHA-256 + AES-128 parameters.
@@ -2542,6 +2560,10 @@ export function formatPublic(
   user: string,
   createdAt: number
 ): string {
+  edPriv = abytes(edPriv, 32, 'edPriv');
+  cvPriv = abytes(cvPriv, 32, 'cvPriv');
+  user = astring(user, 'user');
+  validateDate(createdAt, 'createdAt');
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   // Keep this wrapper as the fixed v4 transferable-public-key packet sequence;
   // policy changes for the emitted self-signatures belong in `getCerts()`.
@@ -2589,6 +2611,15 @@ export function formatPrivate(
   cvSalt: TArg<Uint8Array> = randomBytes(8),
   cvIV: TArg<Uint8Array> = randomBytes(16)
 ): string {
+  edPriv = abytes(edPriv, 32, 'edPriv');
+  cvPriv = abytes(cvPriv, 32, 'cvPriv');
+  user = astring(user, 'user');
+  if (password !== undefined) password = astring(password, 'password');
+  validateDate(createdAt, 'createdAt');
+  edSalt = abytes(edSalt, 8, 'edSalt');
+  edIV = abytes(edIV, 16, 'edIV');
+  cvSalt = abytes(cvSalt, 8, 'cvSalt');
+  cvIV = abytes(cvIV, 16, 'cvIV');
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
   const edSecret = createPrivKey(edPubPacket, edPriv, password, edSalt, edIV);
   // Keep this wrapper as the fixed v4 transferable-secret-key packet sequence;
@@ -2651,6 +2682,8 @@ export function getKeyId(
     };
   };
 } {
+  edPrivKey = abytes(edPrivKey, 32, 'edPrivKey');
+  validateDate(createdAt, 'createdAt');
   // Reuse the same expanded-head -> Curve25519 sibling derivation as
   // `getKeys()` so standalone fingerprint/key-id queries match emitted bundles.
   const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(edPrivKey);
@@ -2689,6 +2722,10 @@ export function getKeys(
   privateKey: string;
   publicKey: string;
 } {
+  privKey = abytes(privKey, 32, 'privKey');
+  user = astring(user, 'user');
+  if (password !== undefined) password = astring(password, 'password');
+  validateDate(createdAt, 'createdAt');
   // Derive the Curve25519 sibling once and reuse it for the key-id lookup plus
   // both armor writers so exported artifacts stay aligned for one seed/date pair.
   const { head: cvPrivate } = ed25519.utils.getExtendedPublicKey(privKey);
@@ -2740,7 +2777,8 @@ export default getKeys;
 // };
 
 function detachedType(data: TArg<Bytes | string>) {
-  if (!isBytes(data) && typeof data !== 'string') throw new Error('wrong data');
+  if (!isBytes(data) && typeof data !== 'string')
+    throw new TypeError('"data" expected Uint8Array or string, got type=' + typeof data);
   // Keep the API-level boundary simple: JS strings opt into canonical-text
   // signature semantics, while raw byte arrays stay binary.
   return typeof data === 'string' ? 'text' : 'binary';
@@ -2770,10 +2808,11 @@ export function signDetached(
   fingerprint: string,
   signedAt: number = 0
 ): string {
+  privateKey = abytes(privateKey, 32, 'privateKey');
+  fingerprint = astring(fingerprint, 'fingerprint');
+  validateDate(signedAt, 'signedAt', 'PGP signature creation time');
   // RFC 4880 §3.5 and RFC 9580 §3.5 define OpenPGP time fields as unsigned
   // four-octet seconds; RFC 9580 §5.2.3.11 makes Signature Creation Time that field.
-  if (!Number.isInteger(signedAt) || signedAt < 0 || signedAt > 0xffffffff)
-    throw new Error('invalid PGP signature creation time');
   const dataType = detachedType(data);
   const keyId = fingerprint.slice(-16);
   const head: SignatureHeadType = {
@@ -2817,6 +2856,9 @@ export function verifyDetached(
   data: TArg<Bytes | string>,
   fingerprint?: string
 ): boolean {
+  publicKey = abytes(publicKey, 32, 'publicKey');
+  signature = astring(signature, 'signature');
+  if (fingerprint !== undefined) fingerprint = astring(fingerprint, 'fingerprint');
   const sigPacket = sigArmor.decode(signature);
   // NOTE: in theory there can be multiple signatures inside!
   if (sigPacket.length !== 1 || sigPacket[0].TAG !== 'signature')
@@ -2876,6 +2918,11 @@ export async function parsePrivateKey(
   // NOTE: we cannot just provide password as argument since private key can be unprotected
   getPassword?: () => Promise<string>
 ): Promise<TRet<ParsedPrivateKey>> {
+  privateKey = astring(privateKey, 'privateKey');
+  if (getPassword !== undefined && typeof getPassword !== 'function')
+    throw new TypeError(
+      '"getPassword" expected function or undefined, got type=' + typeof getPassword
+    );
   // This helper intentionally extracts only the primary Ed25519 secret packet
   // and recomputes fingerprint/keyId locally; it does not validate User IDs,
   // certifications, subkeys, or other transferable-key wrapper packets.

@@ -11,7 +11,14 @@ import { p256, p384, p521 } from '@noble/curves/nist.js';
 import { equalBytes } from '@noble/curves/utils.js';
 import { sha224, sha256, sha384, sha512 } from '@noble/hashes/sha2.js';
 import { shake256 } from '@noble/hashes/sha3.js';
-import { bytesToHex, concatBytes, hexToBytes, isBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
+import {
+  bytesToHex,
+  concatBytes,
+  hexToBytes,
+  isBytes,
+  type TArg,
+  type TRet,
+} from '@noble/hashes/utils.js';
 import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { ASN1, BER, oidName } from './asn1.ts';
@@ -23,7 +30,7 @@ import {
   type PKCS8Key as DERPKCS8Key,
   type SPKIKey as DERSPKIKey,
 } from './convert.ts';
-import { deepFreeze } from './utils.ts';
+import { astring, deepFreeze } from './utils.ts';
 
 const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
@@ -330,6 +337,7 @@ const hashOid = (h: TArg<{ oid?: Uint8Array }>) => {
  * ```
  */
 export const pemBlocks = (text: string): TRet<PemBlock[]> => {
+  text = astring(text, 'text');
   const out: PemBlock[] = [];
   // PEM files may contain multiple textual encoding instances; this helper
   // preserves source order and only normalizes whitespace inside each base64
@@ -370,8 +378,7 @@ const ecParamCurve = (d: DERECParams): CertCurve => {
   const info = fieldId?.info as Record<string, unknown> | undefined;
   const curve = raw.curve as Record<string, unknown> | undefined;
   if (info?.TAG !== 'primeField' || typeof info.data !== 'bigint') return 'specifiedCurve';
-  if (!isBytes(curve?.a) || !isBytes(curve?.b))
-    return 'specifiedCurve';
+  if (!isBytes(curve?.a) || !isBytes(curve?.b)) return 'specifiedCurve';
   if (!isBytes(raw.base) || typeof raw.order !== 'bigint') return 'specifiedCurve';
   if (raw.cofactor !== undefined && typeof raw.cofactor !== 'bigint') return 'specifiedCurve';
   // OpenSSL can serialize a standard EC key with explicit domain parameters while the
@@ -577,9 +584,9 @@ const CMS_HASH_BY_OID = /* @__PURE__ */ (() =>
 // Decode optional PKCS#8 attributes as raw Attribute OID + SET OF value TLVs;
 // interpretation of individual attribute semantics stays above this helper.
 const pkcs8Attrs = (k: TArg<DERPKCS8Key>): TRet<Pkcs8Attr[] | undefined> =>
-  k.attributes?.map((raw) =>
-    (ASN1.Attribute as P.CoderType<Pkcs8Attr>).decode(raw)
-  ) as TRet<Pkcs8Attr[] | undefined>;
+  k.attributes?.map((raw) => (ASN1.Attribute as P.CoderType<Pkcs8Attr>).decode(raw)) as TRet<
+    Pkcs8Attr[] | undefined
+  >;
 // Keep the original PEM/DER bundle alongside the decoded PKCS#8, and
 // eagerly decode the inner RSAPrivateKey only for the RSA branch.
 const pkcs8FromPem = (pem: string, der: TArg<Uint8Array>): TRet<PrivateKey> => {
@@ -802,8 +809,7 @@ const X509Name = /* @__PURE__ */ ASN1.sequence({
 // RFC 5912 (PKIX1Explicit-2009): Extension.
 // Raw Extension shell: keep `extnID` separate and leave the
 // `critical`/`extnValue` pair packed in `rest` for ExtBody.
-const X509Ext = /* @__PURE__ */ (() =>
-  ASN1.sequence({ oid: ASN1.OID, rest: strictBytes }))();
+const X509Ext = /* @__PURE__ */ (() => ASN1.sequence({ oid: ASN1.OID, rest: strictBytes }))();
 // RFC 5912 (PKIX1Explicit-2009): SubjectPublicKeyInfo.
 // Raw SubjectPublicKeyInfo shell: keep AlgorithmIdentifier and the
 // subjectPublicKey BIT STRING separate; key-shape checks live later.
@@ -817,9 +823,7 @@ const X509SPKI = /* @__PURE__ */ (() =>
 // here and leave RFC 5280 version-coupling checks to later certificate validation.
 const X509TBSCertificate = /* @__PURE__ */ (() =>
   ASN1.sequence({
-    version: /* @__PURE__ */ ASN1.optional(
-      /* @__PURE__ */ ASN1.explicit(0, ASN1.Integer)
-    ),
+    version: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.explicit(0, ASN1.Integer)),
     serial: ASN1.Integer,
     signature: ASN1.AlgorithmIdentifier,
     issuer: X509Name,
@@ -978,9 +982,7 @@ const CMSSignerInfo = /* @__PURE__ */ (() =>
     signedAttrs: ASN1.optional(ASN1.implicit(0, ASN1.set(CMSAttribute))),
     signatureAlg: ASN1.AlgorithmIdentifier,
     signature: ASN1.OctetString,
-    unsignedAttrs: ASN1.optional(
-      ASN1.implicit(1, ASN1.set(CMSAttribute, { ber: true }))
-    ),
+    unsignedAttrs: ASN1.optional(ASN1.implicit(1, ASN1.set(CMSAttribute, { ber: true }))),
   }))();
 // RFC 5652 section 5.2: EncapsulatedContentInfo.
 // Raw EncapsulatedContentInfo shell: preserve the contentType OID plus the
@@ -1002,12 +1004,8 @@ const CMSSignedData: P.CoderType<SignedDataCodec> = /* @__PURE__ */ (() =>
     digestAlgorithms: ASN1.set(ASN1.AlgorithmIdentifier, { ber: true }),
     encapContentInfo: CMSEncapContentInfo,
     // RFC 5652 section 10.2.3: CertificateSet ::= SET OF CertificateChoices.
-    certificates: ASN1.optional(
-      ASN1.implicit(0, ASN1.set(CMSCertificateChoices, { ber: true }))
-    ),
-    crls: ASN1.optional(
-      ASN1.implicit(1, ASN1.set(CMSRevocationInfoChoice, { ber: true }))
-    ),
+    certificates: ASN1.optional(ASN1.implicit(0, ASN1.set(CMSCertificateChoices, { ber: true }))),
+    crls: ASN1.optional(ASN1.implicit(1, ASN1.set(CMSRevocationInfoChoice, { ber: true }))),
     signerInfos: ASN1.set(CMSSignerInfo, { ber: true }),
   }))();
 // RFC 5652 section 3: ContentInfo.
@@ -1295,9 +1293,7 @@ const ExtAKI = /* @__PURE__ */ (() =>
     ASN1.sequence({
       keyIdentifier: ASN1.optional(ASN1.implicit(0, ASN1.OctetString)),
       authorityCertIssuer: ASN1.optional(ASN1.implicit(1, ExtGeneralNamesRaw)),
-      authorityCertSerialNumber: ASN1.optional(
-        ASN1.implicit(2, ASN1.Integer)
-      ),
+      authorityCertSerialNumber: ASN1.optional(ASN1.implicit(2, ASN1.Integer)),
     }),
     (x) => {
       if (x.authorityCertIssuer)
@@ -1321,10 +1317,7 @@ const ExtAKI = /* @__PURE__ */ (() =>
 // wrappers enforce the outer SIZE (1..MAX) rule.
 const ExtAccessInfo = /* @__PURE__ */ (() =>
   ASN1.sequence({
-    list: P.array(
-      null,
-      ASN1.sequence({ method: ASN1.OID, location: ExtGeneralName })
-    ),
+    list: P.array(null, ASN1.sequence({ method: ASN1.OID, location: ExtGeneralName })),
   }))();
 // RFC 5280 section 4.2.2.1: AuthorityInfoAccessSyntax is SEQUENCE SIZE (1..MAX) OF AccessDescription.
 const ExtAIA = /* @__PURE__ */ extNonEmpty(
@@ -1459,9 +1452,7 @@ const ExtCRLDP = /* @__PURE__ */ (() =>
       list: P.array(
         null,
         ASN1.sequence({
-          distributionPoint: ASN1.optional(
-            ASN1.explicit(0, ExtDistributionPointName)
-          ),
+          distributionPoint: ASN1.optional(ASN1.explicit(0, ExtDistributionPointName)),
           reasons: ASN1.optional(ASN1.implicit(1, ASN1.BitStringRaw)),
           cRLIssuer: ASN1.optional(ASN1.implicit(2, ExtGeneralNamesRaw)),
         })
@@ -1608,9 +1599,7 @@ const ExtPolicies = /* @__PURE__ */ (() => {
         null,
         ASN1.sequence({
           policy: ASN1.OID,
-          qualifiers: ASN1.optional(
-            ASN1.sequence({ list: P.array(null, qualifier) })
-          ),
+          qualifiers: ASN1.optional(ASN1.sequence({ list: P.array(null, qualifier) })),
         })
       ),
     }),
@@ -1645,12 +1634,8 @@ const ExtPolicies = /* @__PURE__ */ (() => {
 const ExtGeneralSubtree = /* @__PURE__ */ (() =>
   ASN1.sequence({
     base: ExtNameConstraintGeneralName,
-    minimum: /* @__PURE__ */ ASN1.optional(
-      /* @__PURE__ */ ASN1.implicit(0, ASN1.Integer)
-    ),
-    maximum: /* @__PURE__ */ ASN1.optional(
-      /* @__PURE__ */ ASN1.implicit(1, ASN1.Integer)
-    ),
+    minimum: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(0, ASN1.Integer)),
+    maximum: /* @__PURE__ */ ASN1.optional(/* @__PURE__ */ ASN1.implicit(1, ASN1.Integer)),
   }))();
 // RFC 5280 section 4.2.1.10: NameConstraints.
 const ExtNameConstraints = /* @__PURE__ */ (() =>
@@ -1659,16 +1644,10 @@ const ExtNameConstraints = /* @__PURE__ */ (() =>
       permitted: ASN1.optional(
         // RFC 5280 Appendix A PKIX1Implicit88 defines extension syntax under
         // IMPLICIT TAGS, so [0]/[1] replace the GeneralSubtrees SEQUENCE tag.
-        ASN1.implicit(
-          0,
-          ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) })
-        )
+        ASN1.implicit(0, ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) }))
       ),
       excluded: ASN1.optional(
-        ASN1.implicit(
-          1,
-          ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) })
-        )
+        ASN1.implicit(1, ASN1.sequence({ list: P.array(null, ExtGeneralSubtree) }))
       ),
     }),
     (x) => {
@@ -1742,10 +1721,8 @@ const ExtPrivateKeyUsagePeriod = /* @__PURE__ */ (() =>
       if (x.notBefore === undefined && x.notAfter === undefined)
         throw new Error('privateKeyUsagePeriod must contain notBefore or notAfter');
       // RFC 5280 section 4.1.2.5.2: GeneralizedTime values are `YYYYMMDDHHMMSSZ`.
-      if (x.notBefore !== undefined)
-        X509Time.decode(ASN1.GeneralizedTime.encode(x.notBefore));
-      if (x.notAfter !== undefined)
-        X509Time.decode(ASN1.GeneralizedTime.encode(x.notAfter));
+      if (x.notBefore !== undefined) X509Time.decode(ASN1.GeneralizedTime.encode(x.notBefore));
+      if (x.notAfter !== undefined) X509Time.decode(ASN1.GeneralizedTime.encode(x.notAfter));
       return x;
     }
   ))();
@@ -1754,20 +1731,12 @@ const ExtPrivateKeyUsagePeriod = /* @__PURE__ */ (() =>
 const ExtIssuingDistributionPoint = /* @__PURE__ */ (() =>
   P.validate(
     ASN1.sequence({
-      distributionPoint: ASN1.optional(
-        ASN1.explicit(0, ExtDistributionPointName)
-      ),
-      onlyContainsUserCerts: ASN1.optional(
-        ASN1.implicit(1, ASN1.Boolean)
-      ),
+      distributionPoint: ASN1.optional(ASN1.explicit(0, ExtDistributionPointName)),
+      onlyContainsUserCerts: ASN1.optional(ASN1.implicit(1, ASN1.Boolean)),
       onlyContainsCACerts: ASN1.optional(ASN1.implicit(2, ASN1.Boolean)),
-      onlySomeReasons: ASN1.optional(
-        ASN1.implicit(3, ASN1.BitStringRaw)
-      ),
+      onlySomeReasons: ASN1.optional(ASN1.implicit(3, ASN1.BitStringRaw)),
       indirectCRL: ASN1.optional(ASN1.implicit(4, ASN1.Boolean)),
-      onlyContainsAttributeCerts: ASN1.optional(
-        ASN1.implicit(5, ASN1.Boolean)
-      ),
+      onlyContainsAttributeCerts: ASN1.optional(ASN1.implicit(5, ASN1.Boolean)),
     }),
     (x) => {
       if (x.onlyContainsAttributeCerts)
@@ -1815,12 +1784,8 @@ const ExtPolicyMappingsChecked = /* @__PURE__ */ (() =>
 const ExtPolicyConstraints = /* @__PURE__ */ (() =>
   P.validate(
     ASN1.sequence({
-      requireExplicitPolicy: ASN1.optional(
-        ASN1.implicit(0, ASN1.Integer)
-      ),
-      inhibitPolicyMapping: ASN1.optional(
-        ASN1.implicit(1, ASN1.Integer)
-      ),
+      requireExplicitPolicy: ASN1.optional(ASN1.implicit(0, ASN1.Integer)),
+      inhibitPolicyMapping: ASN1.optional(ASN1.implicit(1, ASN1.Integer)),
     }),
     (x) => {
       // RFC 5280 section 4.2.1.11: conforming CAs MUST NOT emit empty PolicyConstraints.
@@ -3023,9 +2988,7 @@ const cmsAttrs = (
   }
   attrs.push({
     oid: 'attrMessageDigest',
-    values: [
-      ASN1.OctetString.encode(msgDigest || hash(data as Uint8Array)) as StrictBytes,
-    ],
+    values: [ASN1.OctetString.encode(msgDigest || hash(data as Uint8Array)) as StrictBytes],
   });
   if (smimeCapabilities && smimeCapabilities.length)
     attrs.push({

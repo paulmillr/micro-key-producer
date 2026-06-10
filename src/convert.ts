@@ -46,8 +46,8 @@ import type { CurvePoint, CurvePointCons, P_F } from '@noble/curves/abstract/cur
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { ed448, x448 } from '@noble/curves/ed448.js';
 import { p256, p384, p521 } from '@noble/curves/nist.js';
-import { equalBytes } from '@noble/curves/utils.js';
-import { type TArg, type TRet } from '@noble/hashes/utils.js';
+import { abool, equalBytes } from '@noble/curves/utils.js';
+import { abytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { base64urlnopad, utils as baseUtils } from '@scure/base';
 import * as P from 'micro-packed';
 import { ASN1 } from './asn1.ts';
@@ -107,6 +107,7 @@ function jwkPointCoder<P extends CurvePoint<any, P>>(
   const FpC = baseUtils.chain(fixCoder(pc.Fp), base64urlnopad);
   return {
     encode: (bytes: TArg<Uint8Array>): JwkAffine => {
+      bytes = abytes(bytes, undefined, 'bytes');
       const { x, y } = pc.fromBytes(bytes as Uint8Array).toAffine();
       return { x: FpC.encode(x), y: FpC.encode(y) };
     },
@@ -123,7 +124,9 @@ function jwkPointCoder<P extends CurvePoint<any, P>>(
 const jwkBytesCoder: P.Coder<Uint8Array, JwkBasic> = {
   // RFC 8037 OKP JWK keys store the public key octet string directly in the
   // base64url-encoded `x` field.
-  encode: (bytes: TArg<Uint8Array>): JwkBasic => ({ x: base64urlnopad.encode(bytes) }),
+  encode: (bytes: TArg<Uint8Array>): JwkBasic => ({
+    x: base64urlnopad.encode(abytes(bytes, undefined, 'bytes')),
+  }),
   decode: (key: JwkBasic): TRet<Uint8Array> => base64urlnopad.decode(key.x) as TRet<Uint8Array>,
 };
 
@@ -176,6 +179,7 @@ function jwkConverter(
   });
   const secretKey: JWKConverter['secretKey'] = deepFreeze({
     encode: (bytes: TArg<Uint8Array>) => {
+      abytes(bytes, undefined, 'bytes');
       const sec = bytes as Uint8Array;
       const pub = curve.getPublicKey(sec);
       return {
@@ -489,8 +493,7 @@ const rsaOtherPrimes = (version: bigint, other?: RSAOtherPrimeInfo[]) => {
   // RFC 8017 Appendix A.1.2 defines Version as two-prime(0) or multi(1):
   // otherPrimeInfos SHALL be omitted for version 0 and present with at
   // least one OtherPrimeInfo for version 1.
-  if (version !== _0n && version !== _1n)
-    throw new Error('RSAPrivateKey: expected version 0 or 1');
+  if (version !== _0n && version !== _1n) throw new Error('RSAPrivateKey: expected version 0 or 1');
   if (version === _0n && other !== undefined)
     throw new Error('RSAPrivateKey: unexpected otherPrimeInfos for version 0');
   if (version === _1n && (!other || !other.length))
@@ -561,7 +564,14 @@ function derConverter(
   // There also encrypted version of PKCS8, not supported in webcrypto, not supported by us (yet?)
   const secretKey: P.Coder<Uint8Array, Uint8Array> = {
     encode: (key: TArg<Uint8Array>, opts: DEROpts = {}): TRet<Uint8Array> => {
+      abytes(key, undefined, 'key');
       const raw = key as Uint8Array;
+      if (!P.utils.isPlainObject(opts))
+        throw new TypeError('"opts" expected object, got type=' + typeof opts);
+      if (opts.noPublicKey !== undefined)
+        opts.noPublicKey = abool(opts.noPublicKey, 'opts.noPublicKey');
+      if (opts.compressed !== undefined)
+        opts.compressed = abool(opts.compressed, 'opts.compressed');
       if ('isValidSecretKey' in curve.utils) {
         if (!curve.utils.isValidSecretKey(raw)) throw new Error('wrong secret key');
       }

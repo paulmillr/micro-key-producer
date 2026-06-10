@@ -12,7 +12,7 @@ import {
   numberToVarBytesBE,
 } from '@noble/curves/utils.js';
 import { type TArg, type TRet } from '@scure/base';
-import { deepFreeze } from './utils.ts';
+import { astring, deepFreeze } from './utils.ts';
 
 const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
@@ -146,6 +146,7 @@ deepFreeze(utils);
  * ```
  */
 export function checkPassword(pwd: string): boolean {
+  pwd = astring(pwd, 'pwd');
   // The README minimum is 8 password characters; string iteration counts code
   // points instead of UTF-16 surrogate halves.
   if (Array.from(pwd).length < 8) return false;

@@ -4,17 +4,20 @@
  * @module
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { abool } from '@noble/curves/utils.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256, sha512 } from '@noble/hashes/sha2.js';
 import {
   abytes,
+  anumber,
   bytesToHex,
   concatBytes,
   createView,
   type TRet,
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
+import { astring } from './utils.ts';
 
 // treeshake: standalone constants should not keep the derivation helpers in tiny entry bundles.
 /** SLIP-0010 master secret label for ed25519 keys. */
@@ -28,9 +31,10 @@ const ZERO = /* @__PURE__ */ (() => Uint8Array.of(0))();
 
 // BIP-0032 ser32(i) writes child numbers and parent fingerprints as unsigned
 // 32-bit big-endian bytes.
-const toU32 = (n: number) => {
+const toU32 = (n: number, title = 'number') => {
+  anumber(n, title);
   if (!Number.isSafeInteger(n) || n < 0 || n > 2 ** 32 - 1) {
-    throw new Error(`Invalid number=${n}. Should be from 0 to 2 ** 32 - 1`);
+    throw new RangeError(`"${title}" expected integer in range 0..2**32-1, got ${n}`);
   }
   const buf = new Uint8Array(4);
   createView(buf).setUint32(0, n, false);
@@ -52,12 +56,18 @@ interface HDKeyOpt {
  * @param opt - Internal {@link HDKeyOpt} constructor options for derived keys:
  * depth, child index, parent fingerprint, chain code, and private key.
  * @example
- * Start from a master seed, then derive the hardened child path you need.
+ * Start from a master seed, derive the hardened child path you need, then
+ * recreate the child from stored private key material and chain code.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
  * import { HDKey } from 'micro-key-producer/slip10.js';
  * const seed = randomBytes(32);
- * HDKey.fromMasterSeed(seed).derive("m/0'").fingerprintHex;
+ * const child = HDKey.fromMasterSeed(seed).derive("m/0'");
+ * const restored = new HDKey({
+ *   privateKey: child.privateKey,
+ *   chainCode: child.chainCode,
+ * });
+ * restored.fingerprintHex;
  * ```
  */
 export class HDKey {
@@ -93,7 +103,7 @@ export class HDKey {
   }
 
   static fromMasterSeed(seed: Uint8Array): HDKey {
-    seed = abytes(seed);
+    seed = abytes(seed, undefined, 'seed');
     if (8 * seed.length < 128 || 8 * seed.length > 512) {
       throw new Error(
         `HDKey: wrong seed length=${seed.length}. Should be between 128 and 512 bits; 256 bits is advised)`
@@ -117,8 +127,8 @@ export class HDKey {
   constructor(opt: HDKeyOpt) {
     if (!opt || typeof opt !== 'object')
       throw new Error('HDKey.constructor must not be called directly');
-    abytes(opt.privateKey, 32);
-    abytes(opt.chainCode, 32);
+    abytes(opt.privateKey, 32, 'privateKey');
+    abytes(opt.chainCode, 32, 'chainCode');
     this.depth = opt.depth || 0;
     this.index = opt.index || 0;
     this.parentFingerprint = opt.parentFingerprint || 0;
@@ -131,6 +141,8 @@ export class HDKey {
   }
 
   derive(path: string, forceHardened = false): HDKey {
+    path = astring(path, 'path');
+    forceHardened = abool(forceHardened, 'forceHardened');
     if (!/^[mM]'?/.test(path)) throw new Error('Path must start with "m" or "M"');
     if (/^[mM]'?$/.test(path)) return this;
     const parts = path.replace(/^[mM]'?\//, '').split('/');
@@ -150,10 +162,11 @@ export class HDKey {
   }
 
   deriveChild(index: number): HDKey {
+    const indexBytes = toU32(index, 'index');
     if (index < HARDENED_OFFSET)
       throw new Error(`Non-hardened child derivation not possible for Ed25519 (index=${index})`);
     // Hardened child: 0x00 || ser256(kpar) || ser32(index)
-    const data = concatBytes(ZERO, this.privateKey, toU32(index));
+    const data = concatBytes(ZERO, this.privateKey, indexBytes);
     const I = hmac(sha512, this.chainCode, data);
     // SLIP-0010 ed25519 uses IL directly as the child private key; there is no
     // scalar-add / invalid-child retry path here.
@@ -167,13 +180,15 @@ export class HDKey {
   }
 
   sign(message: Uint8Array): Uint8Array {
+    message = abytes(message, undefined, 'message');
     // RFC 8032 signs with the current 32-byte private key bytes directly; the
     // public key is derived internally from that seed material.
     return ed25519.sign(message, this.privateKey);
   }
 
   verify(message: Uint8Array, signature: Uint8Array): boolean {
-    signature = abytes(signature, 64);
+    message = abytes(message, undefined, 'message');
+    signature = abytes(signature, 64, 'signature');
     // RFC 8032 verification consumes the bare 32-byte public key, not the
     // SLIP-0010-prefixed 0x00 || ENC(A) form.
     return ed25519.verify(signature, message, this.publicKeyRaw);

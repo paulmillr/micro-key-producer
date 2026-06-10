@@ -4,8 +4,9 @@
  * @module
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
+import { abytes, concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { base32, hex, utils } from '@scure/base';
+import { astring } from './utils.ts';
 
 // Keep raw lowercase base36 digits without a multibase prefix; IPNS callers add
 // and remove the canonical leading `k` themselves.
@@ -30,6 +31,7 @@ const base36 = utils.chain(
  * ```
  */
 export function formatPublicKey(pubBytes: TArg<Uint8Array>): string {
+  pubBytes = abytes(pubBytes, undefined, 'pubBytes');
   // Re-encode already-validated libp2p-key bytes into canonical `ipns://k...`;
   // malformed byte strings still stringify here and are later rejected by `parseAddress()`.
   return `ipns://k${base36.encode(pubBytes)}`;
@@ -52,6 +54,7 @@ export function formatPublicKey(pubBytes: TArg<Uint8Array>): string {
  * ```
  */
 export function parseAddress(address: string): TRet<Uint8Array> {
+  address = astring(address, 'address');
   address = address.toLowerCase();
   if (address.startsWith('ipns://')) address = address.slice(7);
   let hexKey;
@@ -109,7 +112,7 @@ export type IpnsKeys = {
  */
 export function getKeys(seed: TArg<Uint8Array>): IpnsKeys {
   //? privKey "seed" should be checked for <ed25519.curve.n?
-  if (seed.length !== 32) throw new TypeError('Seed must be 32 bytes in length');
+  seed = abytes(seed, 32, 'seed');
   // RFC 8032 derives the Ed25519 public key from the 32-byte private-key
   // string; reuse the wrapped public bytes across the IPNS address forms and
   // ENS contenthash.
