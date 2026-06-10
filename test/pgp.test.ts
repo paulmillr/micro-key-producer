@@ -13,6 +13,7 @@ import { deepStrictEqual, rejects, throws } from 'node:assert';
 import { oid } from '../src/asn1.ts';
 import * as pgp from '../src/pgp.ts';
 import { base64armor } from '../src/utils.ts';
+import { deepClone } from './utils.ts';
 
 type SecretKey = Parameters<typeof pgp.decodeSecretKey>[1];
 type SignaturePacket = Extract<pgp.Packet, { TAG: 'signature' }>['data'];
@@ -965,7 +966,7 @@ describe('pgp', () => {
         data: { enc: 'aes256', aead: 'GCM', S2K, iv: nonce, secret: encrypted },
       },
     };
-    const tampered = structuredClone(locked);
+    const tampered = deepClone(locked);
     tampered.type.data.secret[0] ^= 1;
     deepStrictEqual(pgp.decodeSecretKey('secret', locked), bytesToBigInt(secret));
     deepStrictEqual(pgp.decodeSecretKey('secret', locked, 'secretKey'), bytesToBigInt(secret));
@@ -1653,7 +1654,7 @@ describe('pgp', () => {
   should('usage-255 encrypted secret-key checksum', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
-    const before = structuredClone(secretKey);
+    const before = deepClone(secretKey);
     const { enc, S2K, iv } = secretKey.type.data;
     const keyLen = { aes128: 16, aes192: 24, aes256: 32 }[enc as 'aes128' | 'aes192' | 'aes256'];
     const kek = deriveKey(S2K.data.hash, keyLen, utf8.decode(PWD), S2K.data.salt, S2K.data.count);
@@ -1669,7 +1670,7 @@ describe('pgp', () => {
   should('legacy direct-cipher secret-key packets decode but are not generated', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
-    const before = structuredClone(secretKey);
+    const before = deepClone(secretKey);
     const enc = 'aes128';
     const iv = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
     const clear = checksumOpaqueSecret(seed);
@@ -1696,7 +1697,7 @@ describe('pgp', () => {
   should('S2K derives long AES keys from concatenated hashes', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
-    const before = structuredClone(secretKey);
+    const before = deepClone(secretKey);
     const { S2K, iv } = secretKey.type.data;
     const enc = 'aes256';
     const keyLen = 32;
@@ -1713,7 +1714,7 @@ describe('pgp', () => {
   should('S2K decodes every parsed OpenPGP hash implementation', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
-    const before = structuredClone(secretKey);
+    const before = deepClone(secretKey);
     const { iv } = secretKey.type.data;
     const salt = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
     const hashes = ['md5', 'sha224', 'sha384', 'sha3_512'] as const;
@@ -1761,7 +1762,7 @@ describe('pgp', () => {
   should('encrypted secret-key rejects plaintext cipher', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
-    const malformed = structuredClone(secretKey);
+    const malformed = deepClone(secretKey);
     malformed.type.data.enc = 'plaintext';
     throws(() => pgp.decodeSecretKey(PWD, malformed), {
       name: 'Error',
@@ -1775,7 +1776,7 @@ describe('pgp', () => {
       0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
       0x0f,
     ]);
-    const malformed = structuredClone(secretKey);
+    const malformed = deepClone(secretKey);
     malformed.type.data.S2K = { TAG: 'argon2', data: { salt, t: 1, p: 4, encodedM: 21 } };
     throws(() => pgp.Stream.encode([{ TAG: 'secretKey', data: malformed }]));
     const body = concatBytes(

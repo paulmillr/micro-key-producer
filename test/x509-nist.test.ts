@@ -74,7 +74,13 @@ const cmsFromEml = (name: string): Uint8Array => {
     if (b64.length > best.length) best = b64;
   }
   if (!best) throw new Error(`base64 CMS part not found in ${name}`);
-  return base64.decode(best);
+  try {
+    return base64.decode(best);
+  } catch {
+    // Bun and Node report different native base64 decoder text; keep fixture
+    // bucket assertions about the malformed S/MIME part, not engine wording.
+    throw new Error('invalid base64 CMS part');
+  }
 };
 const reachesTrust = (
   chain: ReturnType<typeof CMS.verify>['chain'],
@@ -574,7 +580,7 @@ describe('x509 nist', () => {
           signedData: 71,
           mismatch: [],
           errors: {
-            'eml: Found a character that cannot be part of a valid base64 string.': [
+            'eml: invalid base64 CMS part': [
               'path-discovery/Path Discovery Test Suite/smime/SignedBasicHTTPURIPathDiscoveryOU1EE1.eml',
               'path-discovery/Path Discovery Test Suite/smime/SignedBasicHTTPURIPathDiscoveryOU1EE2.eml',
               'path-discovery/Path Discovery Test Suite/smime/SignedBasicHTTPURIPathDiscoveryOU1EE3.eml',

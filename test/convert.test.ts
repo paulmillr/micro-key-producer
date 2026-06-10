@@ -33,6 +33,14 @@ const P_ECDH_JWKS = {
   p384: { web: web.p384, jwk: convert.p384_jwk_ecdh },
   p521: { web: web.p521, jwk: convert.p521_jwk_ecdh },
 } as const;
+const isDeno = 'deno' in process.versions;
+const denoJwk = <T extends JsonWebKey>(jwk: T): T => {
+  if (!isDeno || typeof jwk.alg !== 'string') return jwk;
+  // Deno disagrees with Node on optional JWK `alg`; compare key material instead.
+  const out = { ...jwk };
+  delete out.alg;
+  return out as T;
+};
 const indexOfBytes = (buf: Uint8Array, needle: Uint8Array) => {
   for (let i = 0; i <= buf.length - needle.length; i++) {
     let match = true;
@@ -399,6 +407,7 @@ describe('convert', () => {
   });
   for (const name in CURVES) {
     if (['ed448', 'x448', 'x25519', 'ed25519'].includes(name) && process.versions.bun) continue;
+    if (['ed448', 'x448', 'p521'].includes(name) && isDeno) continue;
     describe(name, () => {
       const { lib, web, jwk, der } = CURVES[name];
       const other = CURVES[name === 'p256' ? 'p384' : 'p256'];
@@ -414,7 +423,7 @@ describe('convert', () => {
           // Pub
           const jwkKey = await web.utils.convertPublicKey(keys.publicKey, 'raw', 'jwk');
           deepStrictEqual(jwk.publicKey.decode(jwkKey), keys.publicKey);
-          deepStrictEqual(jwk.publicKey.encode(keys.publicKey), jwkKey);
+          deepStrictEqual(denoJwk(jwk.publicKey.encode(keys.publicKey)), denoJwk(jwkKey));
           deepStrictEqual(
             jwk.publicKey.decode(jwk.publicKey.encode(keys.publicKey)),
             keys.publicKey
@@ -422,7 +431,7 @@ describe('convert', () => {
           // Sec
           const jwkSecKey = await web.utils.convertSecretKey(keys.secretKey, 'raw', 'jwk');
           deepStrictEqual(jwk.secretKey.decode(jwkSecKey), keys.secretKey);
-          deepStrictEqual(jwk.secretKey.encode(keys.secretKey), jwkSecKey);
+          deepStrictEqual(denoJwk(jwk.secretKey.encode(keys.secretKey)), denoJwk(jwkSecKey));
           deepStrictEqual(
             jwk.secretKey.decode(jwk.secretKey.encode(keys.secretKey)),
             keys.secretKey
@@ -442,8 +451,8 @@ describe('convert', () => {
             formatSec: 'jwk',
             formatPub: 'jwk',
           });
-          deepStrictEqual(jwk.secretKey.encode(jwk.secretKey.decode(sec)), sec);
-          deepStrictEqual(jwk.publicKey.encode(jwk.publicKey.decode(pub)), pub);
+          deepStrictEqual(denoJwk(jwk.secretKey.encode(jwk.secretKey.decode(sec))), denoJwk(sec));
+          deepStrictEqual(denoJwk(jwk.publicKey.encode(jwk.publicKey.decode(pub))), denoJwk(pub));
           if (name === 'ed25519' || name === 'ed448') {
             const pubNoAlg = { ...pub };
             const secNoAlg = { ...sec };
@@ -532,12 +541,15 @@ describe('convert', () => {
   }
   should('P-curve ECDH JWK accepts ECDH-ES alg metadata', async () => {
     for (const name in P_ECDH_JWKS) {
+      if (name === 'p521' && isDeno) continue;
       const { web, jwk } = P_ECDH_JWKS[name as keyof typeof P_ECDH_JWKS];
       const sec = await web.utils.randomSecretKey('jwk');
       const pub = await web.getPublicKey(sec, { formatSec: 'jwk', formatPub: 'jwk' });
+      const baseSec = denoJwk(sec);
+      const basePub = denoJwk(pub);
       for (const alg of ['ECDH-ES', 'ECDH-ES+A128KW', 'ECDH-ES+A192KW', 'ECDH-ES+A256KW']) {
-        deepStrictEqual(jwk.publicKey.decode({ ...pub, alg }), jwk.publicKey.decode(pub));
-        deepStrictEqual(jwk.secretKey.decode({ ...sec, alg }), jwk.secretKey.decode(sec));
+        deepStrictEqual(jwk.publicKey.decode({ ...basePub, alg }), jwk.publicKey.decode(basePub));
+        deepStrictEqual(jwk.secretKey.decode({ ...baseSec, alg }), jwk.secretKey.decode(baseSec));
       }
     }
   });

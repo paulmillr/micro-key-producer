@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { ASN1, BER, DER, oid, oidName } from '../src/asn1.ts';
 import { PKCS8 } from '../src/convert.ts';
 import { CERTUtils, CMS, X509, __TEST, pemBlocks } from '../src/x509.ts';
+import { deepClone } from './utils.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -594,7 +595,7 @@ describe('x509', () => {
   should('enforces RFC 5280 GeneralNames SIZE constraint on bare reuse sites', () => {
     const base = X509.decode(certDersFromVector('openssl/fake-gp.pem')[0]);
     const certificateIssuer = (rest: Uint8Array) => {
-      const cert = structuredClone(base);
+      const cert = deepClone(base);
       cert.tbs.extensions = { list: [{ oid: 'certificateIssuer', rest }] };
       return X509.extensions(cert)[0];
     };
@@ -1821,7 +1822,7 @@ describe('x509', () => {
       )
     );
     const aki = (rest: Uint8Array) => {
-      const decoded = structuredClone(cert);
+      const decoded = deepClone(cert);
       decoded.tbs.extensions.list.push({ oid: 'authorityKeyIdentifier', rest });
       const all = X509.extensions(decoded).filter((e) => e.oid === 'authorityKeyIdentifier');
       return all[all.length - 1];
@@ -2015,7 +2016,7 @@ describe('x509', () => {
       cat(Uint8Array.of(tag), DER.length.encode(body.length), body);
     const seq = (body: Uint8Array): Uint8Array => tlv(0x30, body);
     const policies = (userNotice: Uint8Array, qualifierOid = '1.3.6.1.5.5.7.2.2') => {
-      const decoded = structuredClone(cert);
+      const decoded = deepClone(cert);
       decoded.tbs.extensions.list.push({
         oid: 'certificatePolicies',
         rest: ASN1.OctetString.encode(
@@ -2413,7 +2414,7 @@ describe('x509', () => {
   should('enforces RFC 5280 cRLIssuer distinguished-name constraint', () => {
     const base = X509.decode(certDersFromVector('openssl/p384-root.pem')[0]);
     const crldp = (body: Uint8Array) => {
-      const cert = structuredClone(base);
+      const cert = deepClone(base);
       if (!cert.tbs.extensions) throw new Error('cert/extensions not found');
       cert.tbs.extensions.list.push({
         oid: 'crlDistributionPoints',
@@ -2466,7 +2467,7 @@ describe('x509', () => {
   should('enforces RFC 5280 nameRelativeToCRLIssuer non-empty RDN constraint', () => {
     const base = X509.decode(certDersFromVector('openssl/p384-root.pem')[0]);
     const crldp = (body: Uint8Array) => {
-      const cert = structuredClone(base);
+      const cert = deepClone(base);
       if (!cert.tbs.extensions) throw new Error('cert/extensions not found');
       cert.tbs.extensions.list.push({
         oid: 'crlDistributionPoints',
@@ -2507,7 +2508,7 @@ describe('x509', () => {
   should('enforces RFC 5280 issuingDistributionPoint profile constraints', () => {
     const base = X509.decode(certDersFromVector('openssl/p384-root.pem')[0]);
     const idp = (body: Uint8Array) => {
-      const cert = structuredClone(base);
+      const cert = deepClone(base);
       if (!cert.tbs.extensions) throw new Error('cert/extensions not found');
       cert.tbs.extensions.list.push({
         oid: 'issuingDistributionPoint',
@@ -3220,7 +3221,7 @@ describe('x509', () => {
         i.TAG === 'certificate' && equalBytes(CERTUtils.Name.encode(i.data.tbs.subject), issuerName)
     );
     if (!issuerCert || issuerCert.TAG !== 'certificate') throw new Error('issuer cert not found');
-    const badIssuer = structuredClone(issuerCert);
+    const badIssuer = deepClone(issuerCert);
     const pk = badIssuer.data.tbs.spki.publicKey;
     if (!pk.length) throw new Error('issuer public key missing');
     pk[pk.length - 1] ^= 1;
@@ -3252,7 +3253,7 @@ describe('x509', () => {
         i.TAG === 'certificate' && equalBytes(CERTUtils.Name.encode(i.data.tbs.subject), issuerName)
     );
     if (!issuerCert || issuerCert.TAG !== 'certificate') throw new Error('issuer cert not found');
-    const variantIssuer = structuredClone(issuerCert);
+    const variantIssuer = deepClone(issuerCert);
     const sig = variantIssuer.data.sig;
     if (!sig.length) throw new Error('issuer signature missing');
     sig[sig.length - 1] ^= 1;
