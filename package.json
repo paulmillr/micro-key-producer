@@ -20,15 +20,15 @@
     "micro-packed": "^0.9.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.5.2",
+    "@paulmillr/jsbt": "0.6.0",
     "@types/node": "25.3.0",
     "prettier": "3.6.2",
     "typescript": "6.0.2"
   },
   "scripts": {
     "build": "tsc",
-    "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
-    "check": "npx --no @paulmillr/jsbt check package.json",
+    "bundle": "npx --no @paulmillr/jsbt bundle",
+    "check": "npx --no @paulmillr/jsbt check",
     "format": "prettier --write bin 'src/**/*.{js,ts}' 'test/*.ts'",
     "test": "node --experimental-strip-types --no-warnings test/index.ts",
     "test:bun": "bun test/index.ts",
