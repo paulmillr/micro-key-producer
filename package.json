@@ -7,10 +7,12 @@
     "*.d.ts",
     "*.map",
     "bin/gpgkp.js",
+    "bin/aesscr.js",
     "src"
   ],
   "bin": {
-    "gpgkp": "bin/gpgkp.js"
+    "gpgkp": "bin/gpgkp.js",
+    "aesscr": "bin/aesscr.js"
   },
   "dependencies": {
     "@noble/ciphers": "^2.2.0",
@@ -29,6 +31,7 @@
     "build": "tsc",
     "bundle": "npx --no @paulmillr/jsbt bundle",
     "check": "npx --no @paulmillr/jsbt check",
+    "benchmark": "node benchmark/index.ts",
     "format": "prettier --write bin 'src/**/*.{js,ts}' 'test/*.ts'",
     "test": "node --experimental-strip-types --no-warnings test/index.ts",
     "test:bun": "bun test/index.ts",
@@ -37,6 +40,7 @@
     "test:openssl": "node --experimental-strip-types --no-warnings test/x509-openssl.test.ts",
     "test:ssh": "node --experimental-strip-types --no-warnings test/ssh-openssh.test.ts",
     "test:gpgkp": "node test/pgp-cli.test.ts",
+    "test:aesscr": "node --experimental-strip-types --no-warnings test/aesscr-cli.test.ts",
     "test:gpgkp2": "node test/pgp-keygen.test.ts"
   },
   "exports": {
