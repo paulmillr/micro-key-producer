@@ -3,13 +3,13 @@ import { ed448, x448 } from '@noble/curves/ed448.js';
 import { p256, p384, p521 } from '@noble/curves/nist.js';
 import * as web from '@noble/curves/webcrypto.js';
 import { concatBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { ASN1, BER, DER } from '../src/asn1.ts';
-import { PKCS8, PKCS8SecretKey, RSAPrivateKey, SPKI } from '../src/convert.ts';
 import * as convert from '../src/convert.ts';
+import { PKCS8, PKCS8SecretKey, RSAPrivateKey, SPKI } from '../src/convert.ts';
 import { base64armor } from '../src/utils.ts';
 import { DER_VECTORS } from './convert-vectors.ts';
 
@@ -55,7 +55,7 @@ const indexOfBytes = (buf: Uint8Array, needle: Uint8Array) => {
 };
 
 describe('convert', () => {
-  should('base64armor validators', () => {
+  it('base64armor validators', () => {
     throws(() => base64armor(1 as never, 64, P.bytes(null)), TypeError);
     throws(() => base64armor('', 64, P.bytes(null)), RangeError);
     throws(() => base64armor('MESSAGE', '64' as never, P.bytes(null)), TypeError);
@@ -63,7 +63,7 @@ describe('convert', () => {
     throws(() => base64armor('MESSAGE', 64, 1 as never), TypeError);
     throws(() => base64armor('MESSAGE', 64, P.bytes(null), 1 as never), TypeError);
   });
-  should('strict DER conversion rejects unknown EC namedCurve', () => {
+  it('strict DER conversion rejects unknown EC namedCurve', () => {
     const bad = SPKI.encode({
       algorithm: {
         info: { TAG: 'EC', data: { TAG: 'namedCurve', data: '1.3.6.1.4.1.8301.3.1.2.9.0.33' } },
@@ -72,7 +72,7 @@ describe('convert', () => {
     });
     throws(() => convert.p256_der.publicKey.decode(bad));
   });
-  should('ASN.1', () => {
+  it('ASN.1', () => {
     deepStrictEqual(DER.length.encode(0x7f), Uint8Array.from([0x7f]));
     deepStrictEqual(DER.length.encode(0x80), Uint8Array.from([0x81, 0x80]));
     deepStrictEqual(DER.length.encode(0x1234), Uint8Array.from([0x82, 0x12, 0x34]));
@@ -413,7 +413,7 @@ describe('convert', () => {
       const other = CURVES[name === 'p256' ? 'p384' : 'p256'];
 
       if (jwk) {
-        should('jwk', async () => {
+        it('jwk', async () => {
           const keys = lib.keygen();
           const pubUnc = lib.getPublicKey(keys.secretKey, false);
           deepStrictEqual(
@@ -483,7 +483,7 @@ describe('convert', () => {
         });
       }
       if (der) {
-        should('DER', async () => {
+        it('DER', async () => {
           const keys = lib.keygen();
           const pubUnc = lib.getPublicKey(keys.secretKey, false);
           deepStrictEqual(
@@ -539,7 +539,7 @@ describe('convert', () => {
       }
     });
   }
-  should('P-curve ECDH JWK accepts ECDH-ES alg metadata', async () => {
+  it('P-curve ECDH JWK accepts ECDH-ES alg metadata', async () => {
     for (const name in P_ECDH_JWKS) {
       if (name === 'p521' && isDeno) continue;
       const { web, jwk } = P_ECDH_JWKS[name as keyof typeof P_ECDH_JWKS];
@@ -555,4 +555,4 @@ describe('convert', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

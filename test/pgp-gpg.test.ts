@@ -1,12 +1,12 @@
 import { cfb } from '@noble/ciphers/aes.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { numberToBytesBE } from '@noble/curves/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { md5 } from '@noble/hashes/legacy.js';
 import { concatBytes } from '@noble/hashes/utils.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { base64, hex, utf8 } from '@scure/base';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { deepStrictEqual, throws } from 'node:assert';
+import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -158,11 +158,11 @@ const GPG_AGENT = RUN_AGENT
     : { ok: false as const, reason: GPG.reason }
   : { ok: false as const, reason: 'pass --agent to run private-key/passphrase GnuPG checks' };
 const shouldAgent = (message: string, test: () => void) => {
-  if (GPG_AGENT.ok) should(message, test);
-  else should.skip(`${message} (requires gpg-agent: ${GPG_AGENT.reason})`, () => {});
+  if (GPG_AGENT.ok) it(message, test);
+  else it.skip(`${message} (requires gpg-agent: ${GPG_AGENT.reason})`, () => {});
 };
 
-if (!GPG.ok) should.skip(`pgp gpg requires GnuPG: ${GPG.reason}`, () => {});
+if (!GPG.ok) it.skip(`pgp gpg requires GnuPG: ${GPG.reason}`, () => {});
 else
   describe('pgp gpg', () => {
     shouldAgent('decodes GnuPG-generated one-pass signature packet', () => {
@@ -250,7 +250,7 @@ else
         tag: 'encryptedProtectedData',
       });
     });
-    should('GnuPG verifies locally generated detached signatures', () => {
+    it('GnuPG verifies locally generated detached signatures', () => {
       const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', undefined, 0);
       tmp((dir) => {
         const pub = path.join(dir, 'pub.asc');
@@ -274,7 +274,7 @@ else
         );
       });
     });
-    should('GnuPG verifies locally generated canonical text detached signatures', () => {
+    it('GnuPG verifies locally generated canonical text detached signatures', () => {
       const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', undefined, 0);
       tmp((dir) => {
         const pub = path.join(dir, 'pub.asc');
@@ -846,7 +846,7 @@ else
         );
       });
     });
-    should('GnuPG and local armor handling agree on headers and strict CRC24', () => {
+    it('GnuPG and local armor handling agree on headers and strict CRC24', () => {
       const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', undefined, 0);
       const msgBytes = utf8.decode('hello');
       const signature = pgp.signDetached(seed, msgBytes, keys.fingerprint, 0);
@@ -908,4 +908,4 @@ else
     });
   });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

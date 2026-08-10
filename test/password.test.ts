@@ -1,11 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual as eql, throws } from 'node:assert';
 import * as pwd from '../src/password.ts';
 
 describe('password', () => {
-  should('Set utils', () => {
+  it('Set utils', () => {
     const a = new Set([1, 2, 3, 4]);
     const b = new Set([2, 3, 4, 5]);
     const c = new Set([3, 4, 5, 6]);
@@ -24,7 +24,7 @@ describe('password', () => {
     eql(pwd.utils.DATE.y, 365 * pwd.utils.DATE.d);
     eql(pwd.utils.formatDuration(2 * 365 * pwd.utils.DATE.d), '2y');
   });
-  should('Mask utils', () => {
+  it('Mask utils', () => {
     eql(pwd.mask('11').cardinality, 100n);
     eql(pwd.mask('aa').cardinality, 26n * 26n);
     eql(pwd.mask('aaaa-aaaa').cardinality, 26n ** 8n);
@@ -61,7 +61,7 @@ describe('password', () => {
     eql(pwd.mask('Sss-sss-ssc1').entropy, 62);
     eql(pwd.mask('Cvccvc-cvccvc-cvccv1').entropy, 66);
   });
-  should('checkPassword', () => {
+  it('checkPassword', () => {
     eql(pwd.checkPassword('aa'), false);
     eql(pwd.checkPassword('aaaaaaaa'), false);
     eql(pwd.checkPassword('Aaaaaaaa'), false);
@@ -69,7 +69,7 @@ describe('password', () => {
     eql(pwd.checkPassword('Aaaaaa3!'), true);
     eql(pwd.checkPassword('Aa1!\u{1f604}\u{1f604}'), false);
   });
-  should('Mask generator is reversible', () => {
+  it('Mask generator is reversible', () => {
     const entropy = sha256(utf8ToBytes('hello world'));
     // Inverse works
     for (const m of [
@@ -89,7 +89,7 @@ describe('password', () => {
     eql('mavysa', pwd.mask('cvcvcv').apply(entropy).password);
     eql('Mav-muq-xad', pwd.mask('Cvc-cvc-cvc').apply(entropy).password);
   });
-  should('Secure mask', () => {
+  it('Secure mask', () => {
     // Basic sanity check that masks looks like safari secure password
     const vectors = [
       'kudpoh-6zyvis-nozsyB',
@@ -118,7 +118,7 @@ describe('password', () => {
     eql(pwd.secureMask.inverse(pwd.secureMask.apply(sparse)), sparse);
     throws(() => pwd.secureMask.apply(Uint8Array.of(1)), /expected Uint8Array of length 32/);
   });
-  should('Estimates', () => {
+  it('Estimates', () => {
     // Manually  sanity checked via zxcvbn && recalc
     eql(pwd.mask('1').estimate().costs, {
       luks: 3.117676864901788e-8,
@@ -174,4 +174,4 @@ describe('password', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

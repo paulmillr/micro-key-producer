@@ -1,8 +1,8 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { concatBytes } from '@noble/hashes/utils.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { base64, hex } from '@scure/base';
-import { execFileSync, spawnSync } from 'node:child_process';
 import { deepStrictEqual, throws } from 'node:assert';
+import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -160,7 +160,7 @@ const sshKeygenPublic = (pubKey: Uint8Array) =>
   });
 
 describe('ssh openssh', () => {
-  should('OpenSSH accepts locally generated private and public keys', () => {
+  it('OpenSSH accepts locally generated private and public keys', () => {
     const keys = ssh.getKeys(seed, 'user@pc', check);
     tmp((dir) => {
       const key = path.join(dir, 'id_ed25519');
@@ -183,7 +183,7 @@ describe('ssh openssh', () => {
       );
     });
   });
-  should('decodes OpenSSH-generated ed25519 private keys', () => {
+  it('decodes OpenSSH-generated ed25519 private keys', () => {
     tmp((dir) => {
       const key = path.join(dir, 'id_ed25519');
       sshKeygen(dir, ['-q', '-t', 'ed25519', '-N', '', '-C', 'openssh@example.com', '-f', key]);
@@ -209,7 +209,7 @@ describe('ssh openssh', () => {
       );
     });
   });
-  should('decodes OpenSSH-generated UTF-8 private-key comments', () => {
+  it('decodes OpenSSH-generated UTF-8 private-key comments', () => {
     tmp((dir) => {
       const key = path.join(dir, 'id_ed25519');
       const comment = 'openssh-\u00e9@example.com';
@@ -228,7 +228,7 @@ describe('ssh openssh', () => {
       );
     });
   });
-  should('OpenSSH encrypted private keys stay explicitly unsupported locally', () => {
+  it('OpenSSH encrypted private keys stay explicitly unsupported locally', () => {
     tmp((dir) => {
       const key = path.join(dir, 'id_ed25519');
       sshKeygen(dir, ['-q', '-t', 'ed25519', '-N', 'passphrase', '-C', 'encrypted', '-f', key]);
@@ -240,7 +240,7 @@ describe('ssh openssh', () => {
       throws(() => ssh.PrivateExport.decode(fs.readFileSync(key, 'utf8')));
     });
   });
-  should('OpenSSH and local decoder reject multi-key private envelopes', () => {
+  it('OpenSSH and local decoder reject multi-key private envelopes', () => {
     const keys = ssh.getKeys(seed, 'user@pc', check);
     const multi = duplicatePrivateEnvelope(keys.privateKey);
     throws(() => ssh.PrivateExport.decode(multi));
@@ -250,7 +250,7 @@ describe('ssh openssh', () => {
       stderr: 'Load key "<key>": error in libcrypto\r\n',
     });
   });
-  should('OpenSSH and local decoder reject mismatched outer private-envelope public key', () => {
+  it('OpenSSH and local decoder reject mismatched outer private-envelope public key', () => {
     const keys = ssh.getKeys(seed, 'user@pc', check);
     const mismatch = mutateOuterPublicKey(keys.privateKey, (pubKey) => {
       pubKey[0] ^= 1;
@@ -262,7 +262,7 @@ describe('ssh openssh', () => {
       stderr: 'Load key "<key>": error in libcrypto\r\n',
     });
   });
-  should('compares malformed private block handling with OpenSSH', () => {
+  it('compares malformed private block handling with OpenSSH', () => {
     const keys = ssh.getKeys(seed, 'user@pc', check);
     const cases = {
       mismatchedCheck: mutatePrivateBlock(keys.privateKey, (block) => {
@@ -325,7 +325,7 @@ describe('ssh openssh', () => {
       },
     });
   });
-  should('OpenSSH and local decoder reject non-32-byte public-key blobs', () => {
+  it('OpenSSH and local decoder reject non-32-byte public-key blobs', () => {
     const cases = {
       short: seed.slice(0, 31),
       long: concatBytes(seed, Uint8Array.of(0)),
@@ -351,7 +351,7 @@ describe('ssh openssh', () => {
       },
     });
   });
-  should('OpenSSH truncates one-line public-key comments at CR and LF', () => {
+  it('OpenSSH truncates one-line public-key comments at CR and LF', () => {
     const keys = ssh.getKeys(seed, 'user@pc', check);
     const [type, blob] = keys.publicKey.split(' ');
     tmp((dir) => {
@@ -374,4 +374,4 @@ describe('ssh openssh', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

@@ -1,4 +1,4 @@
-import { should } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
 import * as pwd from '../src/password.ts';
@@ -44,17 +44,17 @@ function verifyEntropy(res) {
 
 // Very slow, but verifies that password generation is reasonable and there is no significant deviations in
 // probability of each symbol in alphabet
-should('Entropy sanity check', () => {
+it('Entropy sanity check', () => {
   const mask = pwd.mask('AaVvCc1@nl*');
   const res = genPasswords(mask);
   verifyLengths(mask, res);
   verifyEntropy(res);
 });
-should('Entropy sanity check for Cvccvc-cvccvc-cvccv1', () => {
+it('Entropy sanity check for Cvccvc-cvccvc-cvccv1', () => {
   const mask = pwd.mask('Cvccvc-cvccvc-cvccv1');
   const res = genPasswords(mask);
   verifyLengths(mask, res);
   verifyEntropy(res);
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

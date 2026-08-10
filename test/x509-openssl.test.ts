@@ -1,7 +1,7 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
+import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import * as P from 'micro-packed';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -381,7 +381,7 @@ const fixtures = genOpenSSLFixtures();
 const FIXTURE_TIME = Date.now();
 
 describe('x509 openssl', () => {
-  should('openssl accepts generated p256 and p384 signatures and returns original content', () => {
+  it('openssl accepts generated p256 and p384 signatures and returns original content', () => {
     const root = fixtures.root;
     const base = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const alt =
@@ -405,20 +405,20 @@ describe('x509 openssl', () => {
       deepStrictEqual(out256, expected);
     }
   });
-  should('openssl rejects generated signature with wrong CA', () => {
+  it('openssl rejects generated signature with wrong CA', () => {
     const tpl = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const root = fixtures.root;
     const wrong = fixtures.wrong;
     const p384 = CMS.sign(tpl, fixtures.p384.cert, fixtures.p384.key, root);
     throws(() => cmsOpenSSL({ mode: 'verify', cmsDer: p384, caPem: wrong }));
   });
-  should('openssl rejects generated signature without CAfile', () => {
+  it('openssl rejects generated signature without CAfile', () => {
     const tpl = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const root = fixtures.root;
     const p384 = CMS.sign(tpl, fixtures.p384.cert, fixtures.p384.key, root);
     throws(() => cmsOpenSSL({ mode: 'verify', cmsDer: p384 }));
   });
-  should('accepts OpenSSL CMS signed by a CA cert when keyUsage permits message signing', () => {
+  it('accepts OpenSSL CMS signed by a CA cert when keyUsage permits message signing', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const signed = cmsOpenSSL({
       mode: 'sign',
@@ -438,7 +438,7 @@ describe('x509 openssl', () => {
       checkSignatures: true,
     });
   });
-  should('detach verify attach works for existing ecdsa mobileconfig', () => {
+  it('detach verify attach works for existing ecdsa mobileconfig', () => {
     const src = read(EDNS_JIYA);
     const detached = CMS.detach(src);
     const detachedOut = cmsOpenSSL({
@@ -457,7 +457,7 @@ describe('x509 openssl', () => {
       time: 1773000000000,
     });
   });
-  should('openssl detached and local detached both use absent eContent', () => {
+  it('openssl detached and local detached both use absent eContent', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const cert = fixtures.p256.cert;
     const key = fixtures.p256.key;
@@ -488,7 +488,7 @@ describe('x509 openssl', () => {
       content
     );
   });
-  should('openssl ecdsa signing is non-deterministic byte-wise (detached and attached)', () => {
+  it('openssl ecdsa signing is non-deterministic byte-wise (detached and attached)', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const cert = fixtures.p256.cert;
     const key = fixtures.p256.key;
@@ -528,35 +528,32 @@ describe('x509 openssl', () => {
     deepStrictEqual(bytesEq(d1, d2), false);
     deepStrictEqual(bytesEq(a1, a2), false);
   });
-  should(
-    'openssl nonce-type:1 matches local signature bytes with signedAttrs when createdTs is aligned',
-    () => {
-      const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
-      const cert = fixtures.p256.cert;
-      const key = fixtures.p256.key;
-      const chain = fixtures.root;
-      const openssl = cmsOpenSSL({
-        mode: 'sign',
-        content,
-        certPem: cert,
-        keyPem: key,
-        chainPem: chain,
-        detached: false,
-        deterministic: true,
-      });
-      const parsed = CMS.signed(openssl);
-      const signingTimeAttr = (parsed.signerInfos[0].signedAttrs || []).find(
-        (a) => a.oid === 'attrSigningTime'
-      );
-      if (!signingTimeAttr) throw new Error('openssl signedAttrs missing signingTime');
-      const createdTs = parseSigningTime(signingTimeAttr.values[0]);
-      const local = CMS.sign(content, cert, key, chain, { createdTs, extraEntropy: false });
-      const sigOssl = CMS.signed(openssl).signerInfos[0].signature;
-      const sigLocal = CMS.signed(local).signerInfos[0].signature;
-      deepStrictEqual(sigLocal, sigOssl);
-    }
-  );
-  should('byte-for-byte parity: signedAttrs signatures for all supported EC curves', () => {
+  it('openssl nonce-type:1 matches local signature bytes with signedAttrs when createdTs is aligned', () => {
+    const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
+    const cert = fixtures.p256.cert;
+    const key = fixtures.p256.key;
+    const chain = fixtures.root;
+    const openssl = cmsOpenSSL({
+      mode: 'sign',
+      content,
+      certPem: cert,
+      keyPem: key,
+      chainPem: chain,
+      detached: false,
+      deterministic: true,
+    });
+    const parsed = CMS.signed(openssl);
+    const signingTimeAttr = (parsed.signerInfos[0].signedAttrs || []).find(
+      (a) => a.oid === 'attrSigningTime'
+    );
+    if (!signingTimeAttr) throw new Error('openssl signedAttrs missing signingTime');
+    const createdTs = parseSigningTime(signingTimeAttr.values[0]);
+    const local = CMS.sign(content, cert, key, chain, { createdTs, extraEntropy: false });
+    const sigOssl = CMS.signed(openssl).signerInfos[0].signature;
+    const sigLocal = CMS.signed(local).signerInfos[0].signature;
+    deepStrictEqual(sigLocal, sigOssl);
+  });
+  it('byte-for-byte parity: signedAttrs signatures for all supported EC curves', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const cases = [
       { cert: fixtures.p256.cert, key: fixtures.p256.key, chain: fixtures.root, md: 'sha256' },
@@ -592,36 +589,33 @@ describe('x509 openssl', () => {
       CMS.verify(local, { checkSignatures: true, time: createdTs, chain: [c.chain] });
     }
   });
-  should(
-    'byte-for-byte parity: Ed25519 signatures with signedAttrs when createdTs is aligned',
-    () => {
-      const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
-      const c = { cert: fixtures.ed25519.cert, key: fixtures.ed25519.key, chain: fixtures.edRoot };
-      const openssl = cmsOpenSSL({
-        mode: 'sign',
-        content,
-        certPem: c.cert,
-        keyPem: c.key,
-        chainPem: c.chain,
-        detached: false,
-        md: 'sha512',
-      });
-      const parsed = CMS.signed(openssl);
-      const signingTimeAttr = (parsed.signerInfos[0].signedAttrs || []).find(
-        (a) => a.oid === 'attrSigningTime'
-      );
-      if (!signingTimeAttr) throw new Error('openssl signedAttrs missing signingTime');
-      const createdTs = parseSigningTime(signingTimeAttr.values[0]);
-      const local = CMS.sign(content, c.cert, c.key, c.chain, { createdTs });
-      deepStrictEqual(
-        CMS.signed(local).signerInfos[0].signature,
-        CMS.signed(openssl).signerInfos[0].signature
-      );
-      deepStrictEqual(cmsOpenSSL({ mode: 'verify', cmsDer: local, caPem: c.chain }), content);
-      CMS.verify(local, { checkSignatures: true, time: createdTs, chain: [c.chain] });
-    }
-  );
-  should('documents OpenSSL Ed448 CMS digest mismatch with RFC 8419 signedAttrs', () => {
+  it('byte-for-byte parity: Ed25519 signatures with signedAttrs when createdTs is aligned', () => {
+    const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
+    const c = { cert: fixtures.ed25519.cert, key: fixtures.ed25519.key, chain: fixtures.edRoot };
+    const openssl = cmsOpenSSL({
+      mode: 'sign',
+      content,
+      certPem: c.cert,
+      keyPem: c.key,
+      chainPem: c.chain,
+      detached: false,
+      md: 'sha512',
+    });
+    const parsed = CMS.signed(openssl);
+    const signingTimeAttr = (parsed.signerInfos[0].signedAttrs || []).find(
+      (a) => a.oid === 'attrSigningTime'
+    );
+    if (!signingTimeAttr) throw new Error('openssl signedAttrs missing signingTime');
+    const createdTs = parseSigningTime(signingTimeAttr.values[0]);
+    const local = CMS.sign(content, c.cert, c.key, c.chain, { createdTs });
+    deepStrictEqual(
+      CMS.signed(local).signerInfos[0].signature,
+      CMS.signed(openssl).signerInfos[0].signature
+    );
+    deepStrictEqual(cmsOpenSSL({ mode: 'verify', cmsDer: local, caPem: c.chain }), content);
+    CMS.verify(local, { checkSignatures: true, time: createdTs, chain: [c.chain] });
+  });
+  it('documents OpenSSL Ed448 CMS digest mismatch with RFC 8419 signedAttrs', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const c = { cert: fixtures.ed448.cert, key: fixtures.ed448.key, chain: fixtures.ed448Root };
     // RFC 8419 section 3.1 requires Ed448 signedAttrs to use id-shake256-len
@@ -671,7 +665,7 @@ describe('x509 openssl', () => {
       /unknown digest algorithm|unsupported/
     );
   });
-  should('openssl and local signer are equivalent by verification for same inputs', () => {
+  it('openssl and local signer are equivalent by verification for same inputs', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const cert = fixtures.p256.cert;
@@ -707,7 +701,7 @@ describe('x509 openssl', () => {
       chain: [root],
     });
   });
-  should('local parser verifies OpenSSL SHA-224 CMS with S/MIME capabilities', () => {
+  it('local parser verifies OpenSSL SHA-224 CMS with S/MIME capabilities', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const openssl = cmsOpenSSL({
@@ -757,7 +751,7 @@ describe('x509 openssl', () => {
       }
     );
   });
-  should('local verifier accepts OpenSSL id-data CMS without signedAttrs', () => {
+  it('local verifier accepts OpenSSL id-data CMS without signedAttrs', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const openssl = cmsOpenSSL({
@@ -795,7 +789,7 @@ describe('x509 openssl', () => {
       }
     );
   });
-  should('local verifier accepts OpenSSL CMS signedAttrs without signingTime', () => {
+  it('local verifier accepts OpenSSL CMS signedAttrs without signingTime', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const openssl = cmsOpenSSL({
@@ -831,7 +825,7 @@ describe('x509 openssl', () => {
       }
     );
   });
-  should('local verifier accepts OpenSSL streaming BER CMS when BER is opted in', () => {
+  it('local verifier accepts OpenSSL streaming BER CMS when BER is opted in', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const openssl = cmsOpenSSL({
@@ -861,50 +855,44 @@ describe('x509 openssl', () => {
       }
     );
   });
-  should(
-    'local verifier accepts OpenSSL CMS when signer certificate is supplied externally',
-    () => {
-      const root = fixtures.root;
-      const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
-      const openssl = cmsOpenSSL({
-        mode: 'sign',
-        content,
-        certPem: fixtures.p256.cert,
-        keyPem: fixtures.p256.key,
-        chainPem: root,
-        detached: false,
-        deterministic: true,
-        md: 'sha256',
-        nocerts: true,
-      });
-      const parsed = CMS.signed(openssl);
-      const valid = CMS.verify(openssl, {
-        checkSignatures: true,
-        time: FIXTURE_TIME,
-        chain: [fixtures.p256.cert, root],
-      });
-      deepStrictEqual(
-        {
-          certificateCount: parsed.certificates?.length,
-          signerSubject: valid.signer.tbs.subject,
-          chainLen: valid.chain.length,
-        },
-        {
-          certificateCount: 1,
-          signerSubject: CMS.verify(
-            CMS.sign(content, fixtures.p256.cert, fixtures.p256.key, root),
-            {
-              checkSignatures: true,
-              time: FIXTURE_TIME,
-              chain: [root],
-            }
-          ).signer.tbs.subject,
-          chainLen: 2,
-        }
-      );
-    }
-  );
-  should('local verifier accepts OpenSSL subjectKeyIdentifier SignerIdentifier', () => {
+  it('local verifier accepts OpenSSL CMS when signer certificate is supplied externally', () => {
+    const root = fixtures.root;
+    const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
+    const openssl = cmsOpenSSL({
+      mode: 'sign',
+      content,
+      certPem: fixtures.p256.cert,
+      keyPem: fixtures.p256.key,
+      chainPem: root,
+      detached: false,
+      deterministic: true,
+      md: 'sha256',
+      nocerts: true,
+    });
+    const parsed = CMS.signed(openssl);
+    const valid = CMS.verify(openssl, {
+      checkSignatures: true,
+      time: FIXTURE_TIME,
+      chain: [fixtures.p256.cert, root],
+    });
+    deepStrictEqual(
+      {
+        certificateCount: parsed.certificates?.length,
+        signerSubject: valid.signer.tbs.subject,
+        chainLen: valid.chain.length,
+      },
+      {
+        certificateCount: 1,
+        signerSubject: CMS.verify(CMS.sign(content, fixtures.p256.cert, fixtures.p256.key, root), {
+          checkSignatures: true,
+          time: FIXTURE_TIME,
+          chain: [root],
+        }).signer.tbs.subject,
+        chainLen: 2,
+      }
+    );
+  });
+  it('local verifier accepts OpenSSL subjectKeyIdentifier SignerIdentifier', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const openssl = cmsOpenSSL({
@@ -949,7 +937,7 @@ describe('x509 openssl', () => {
       }
     );
   });
-  should('local verifier accepts OpenSSL CAdES signingCertificateV2 signed attribute', () => {
+  it('local verifier accepts OpenSSL CAdES signingCertificateV2 signed attribute', () => {
     const root = fixtures.root;
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const openssl = cmsOpenSSL({
@@ -982,7 +970,7 @@ describe('x509 openssl', () => {
       }
     );
   });
-  should('string input maps to OpenSSL text mode (no -binary), Uint8Array maps to -binary', () => {
+  it('string input maps to OpenSSL text mode (no -binary), Uint8Array maps to -binary', () => {
     const cert = fixtures.p256.cert;
     const key = fixtures.p256.key;
     const chain = fixtures.root;
@@ -1045,21 +1033,18 @@ describe('x509 openssl', () => {
       true
     );
   });
-  should(
-    'mobileconfig parity: openssl verifies with system trust; local verifies structure without external chain',
-    () => {
-      const der = read(EDNS_JIYA);
-      deepStrictEqual(
-        cmsOpenSSL({ mode: 'verify', cmsDer: der, attime: EDNS_JIYA_VALID_AT }).length > 0,
-        true
-      );
-      CMS.verify(der, { checkSignatures: false, time: 1773000000000 });
-    }
-  );
+  it('mobileconfig parity: openssl verifies with system trust; local verifies structure without external chain', () => {
+    const der = read(EDNS_JIYA);
+    deepStrictEqual(
+      cmsOpenSSL({ mode: 'verify', cmsDer: der, attime: EDNS_JIYA_VALID_AT }).length > 0,
+      true
+    );
+    CMS.verify(der, { checkSignatures: false, time: 1773000000000 });
+  });
 });
 
 describe('x509 openssl explicit params', () => {
-  should('runtime-generated supported keys interop when EC keys use explicit params', () => {
+  it('runtime-generated supported keys interop when EC keys use explicit params', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const cases = [
       {
@@ -1143,4 +1128,4 @@ describe('x509 openssl explicit params', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

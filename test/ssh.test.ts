@@ -1,5 +1,5 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { concatBytes } from '@noble/hashes/utils.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as ssh from '../src/ssh.ts';
@@ -53,16 +53,16 @@ const authPayload = (overrides: Partial<typeof authData> = {}) => {
   );
 };
 describe('ssh', () => {
-  should('pack & unpack ssh privkeys should be the same', () => {
+  it('pack & unpack ssh privkeys should be the same', () => {
     deepStrictEqual(realKey, ssh.PrivateExport.encode(ssh.PrivateExport.decode(realKey)));
   });
-  should('PrivateExport rejects multi-key OpenSSH private input objects', () => {
+  it('PrivateExport rejects multi-key OpenSSH private input objects', () => {
     const decoded = ssh.PrivateExport.decode(realKey);
     throws(() =>
       ssh.PrivateExport.encode({ ...decoded, keys: [decoded.keys[0]!, decoded.keys[0]!] })
     );
   });
-  should('PrivateKey rejects malformed OpenSSH private block values', () => {
+  it('PrivateKey rejects malformed OpenSSH private block values', () => {
     const mismatchedCheck = ssh.PrivateExport.decode(realKey);
     mismatchedCheck.keys[0]!.privKey.check2 = Uint8Array.from(
       mismatchedCheck.keys[0]!.privKey.check2
@@ -90,7 +90,7 @@ describe('ssh', () => {
     wrongSeed.keys[0]!.privKey.privKey[0] ^= 1;
     throws(() => ssh.PrivateExport.encode(wrongSeed));
   });
-  should('PublicKey rejects non-32-byte ssh-ed25519 blobs', () => {
+  it('PublicKey rejects non-32-byte ssh-ed25519 blobs', () => {
     const short = EXPECTED.publicKeyBytes.slice(0, 31);
     const long = concatBytes(EXPECTED.publicKeyBytes, Uint8Array.of(0));
     deepStrictEqual(
@@ -106,18 +106,18 @@ describe('ssh', () => {
         )
       );
   });
-  should('return correct key from seed', () => {
+  it('return correct key from seed', () => {
     const priv = hex.decode('71e722b077c007d4ae263287878a0bff1816c99f93cf8dcddd995bccefd1d7a3');
     const comment = 'user@pc';
     const checkBytes = hex.decode('c346f14a');
     deepStrictEqual(ssh.getKeys(priv, comment, checkBytes), EXPECTED);
   });
-  should('formatPublicKey rejects comments that would split one-line OpenSSH records', () => {
+  it('formatPublicKey rejects comments that would split one-line OpenSSH records', () => {
     deepStrictEqual(ssh.formatPublicKey(EXPECTED.publicKeyBytes, 'user@pc'), EXPECTED.publicKey);
     throws(() => ssh.formatPublicKey(EXPECTED.publicKeyBytes, 'user\nother'));
     throws(() => ssh.formatPublicKey(EXPECTED.publicKeyBytes, 'user\rother'));
   });
-  should('AuthData enforces RFC 4252 publickey auth fields', () => {
+  it('AuthData enforces RFC 4252 publickey auth fields', () => {
     const valid = authPayload();
     deepStrictEqual(ssh.AuthData.encode(authData), valid);
     deepStrictEqual(ssh.AuthData.decode(valid), {
@@ -137,4 +137,4 @@ describe('ssh', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

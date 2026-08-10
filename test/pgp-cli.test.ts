@@ -7,7 +7,7 @@
 - Run using password `123456789`: `npm run test:gpgkp -- --agent`
 */
 
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import { execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -109,7 +109,7 @@ async function pgpInt() {
   fs.mkdirSync(PATH);
   describe('PGP Integrations', () => {
     const KEYS_TO_DELETE: string[] = [];
-    should('Import (password)', () => {
+    it('Import (password)', () => {
       const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
       const keys = pgp.getKeys(seed, FULL_NAME1, PGP_PASSWORD, CREATED_AT);
       const privateFile = join(PATH, 'privatePass.key');
@@ -119,7 +119,7 @@ async function pgpInt() {
       KEYS_TO_DELETE.push(keys.keyId);
       run(`gpg --no-options --no-autostart --import ${privateFile}`, { stdio: 'inherit' });
     });
-    should('Import (no password)', () => {
+    it('Import (no password)', () => {
       const seed = hex.decode('39f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
       const keys = pgp.getKeys(seed, FULL_NAME2, undefined, CREATED_AT);
       console.log('ADD', keys.keyId);
@@ -130,20 +130,20 @@ async function pgpInt() {
       run(`gpg --no-options --no-autostart --import ${privateFile}`, { stdio: 'inherit' });
     });
     describe('micro-gpg-signer', () => {
-      should('password', () => {
+      it('password', () => {
         const repo = join(PATH, 'test-password');
         gitRepo(repo);
         gitSign(repo, '21B287CDD55ACB9F', NAME1, EMAIL1);
         gitCommit(repo, { GPGKP_KEY: join(PATH, 'privatePass.key') });
       });
-      should('no password', () => {
+      it('no password', () => {
         const repo = join(PATH, 'test-no-password');
         gitRepo(repo);
         gitSign(repo, '8061EFFF72C8FD15', NAME2, EMAIL2);
         gitCommit(repo, { GPGKP_KEY: join(PATH, 'privateNopass.key') });
       });
     });
-    should('Delete keys', () => {
+    it('Delete keys', () => {
       for (const k of KEYS_TO_DELETE) {
         gpgDeleteKey(k);
       }
@@ -152,10 +152,7 @@ async function pgpInt() {
 }
 
 if (!RUN_AGENT)
-  should.skip(
-    'PGP integrations require gpg-agent: pass --agent to run this integration test',
-    () => {}
-  );
+  it.skip('PGP integrations require gpg-agent: pass --agent to run this integration test', () => {});
 else {
   launchAgent();
   pgpInt();

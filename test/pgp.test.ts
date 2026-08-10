@@ -6,7 +6,7 @@ import { md5, ripemd160, sha1 } from '@noble/hashes/legacy.js';
 import { sha224, sha256, sha384, sha512 } from '@noble/hashes/sha2.js';
 import { sha3_256, sha3_512 } from '@noble/hashes/sha3.js';
 import { concatBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { base64, hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
@@ -542,7 +542,7 @@ const packetOverview = (packet) => {
 };
 
 describe('pgp', () => {
-  should('OID', () => {
+  it('OID', () => {
     deepStrictEqual(hex.encode(oid.encode('1.2.840.10045.3.1.7')), '2a8648ce3d030107');
     deepStrictEqual(oid.decode(oid.encode('1.2.840.10045.3.1.7')), '1.2.840.10045.3.1.7');
     deepStrictEqual(hex.encode(oid.encode('1.3.132.0.34')), '2b81040022');
@@ -559,7 +559,7 @@ describe('pgp', () => {
     throws(() => oid.decode(Uint8Array.of(0x80, 0x2a)));
     throws(() => oid.decode(Uint8Array.of(0x2a, 0x80, 0x00)));
   });
-  should('MPI canonical boundaries', () => {
+  it('MPI canonical boundaries', () => {
     deepStrictEqual(pgp.mpi.encode(0n), Uint8Array.of(0, 0));
     deepStrictEqual(pgp.mpi.decode(Uint8Array.of(0, 0)), 0n);
     deepStrictEqual(pgp.mpi.encode(1n), Uint8Array.of(0, 1, 1));
@@ -582,7 +582,7 @@ describe('pgp', () => {
     throws(() => pgp.mpi.decode(Uint8Array.of(0, 2, 1)));
     throws(() => pgp.mpi.decode(Uint8Array.of(0, 1, 0x81)));
   });
-  should('One-Pass Signature packet', () => {
+  it('One-Pass Signature packet', () => {
     const raw = hex.decode('900d030008161a9b09743c2e0b5e01');
     const packet = [
       {
@@ -601,7 +601,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.Stream.encode(packet), raw);
     throws(() => pgp.Stream.decode(Uint8Array.of(0x90, 0x00)));
   });
-  should('PacketHead supports legacy and OpenPGP format headers', () => {
+  it('PacketHead supports legacy and OpenPGP format headers', () => {
     const { PacketHead } = pgp.__TESTS;
     deepStrictEqual(PacketHead.decode(Uint8Array.of(0x90)), {
       magic: undefined,
@@ -625,20 +625,20 @@ describe('pgp', () => {
     );
     deepStrictEqual(PacketHead.encode({ tag: 'userAttribute', lenType: 0 }), Uint8Array.of(0xd1));
   });
-  should('Stream decodes OpenPGP-format packet headers', () => {
+  it('Stream decodes OpenPGP-format packet headers', () => {
     const raw = hex.decode('cd0561203c613e');
     const packet = [{ TAG: 'userId', data: 'a <a>', newFormat: true }];
     deepStrictEqual(pgp.Stream.decode(raw), packet);
     deepStrictEqual(pgp.Stream.encode(packet), raw);
   });
-  should('User ID packets require well-formed UTF-8', () => {
+  it('User ID packets require well-formed UTF-8', () => {
     deepStrictEqual(pgp.Stream.decode(Uint8Array.of(0xcd, 3, 0xe2, 0x82, 0xac)), [
       { TAG: 'userId', data: '€', newFormat: true },
     ]);
     throws(() => pgp.Stream.decode(Uint8Array.of(0xcd, 1, 0xff)));
     throws(() => pgp.Stream.encode([{ TAG: 'userId', data: '\uD800', newFormat: true }]));
   });
-  should('PacketLen', () => {
+  it('PacketLen', () => {
     deepStrictEqual(pgp.PacketLen.encode(100), new Uint8Array([0x64]));
     deepStrictEqual(pgp.PacketLen.encode(1723), new Uint8Array([0xc5, 0xfb]));
     deepStrictEqual(pgp.PacketLen.encode(8383), new Uint8Array([0xdf, 0xff]));
@@ -649,7 +649,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xdf, 0xff])), 8383);
     deepStrictEqual(pgp.PacketLen.decode(new Uint8Array([0xff, 0x00, 0x01, 0x86, 0xa0])), 100000);
   });
-  should('Stream decodes and preserves RFC 9580 partial body lengths', () => {
+  it('Stream decodes and preserves RFC 9580 partial body lengths', () => {
     const literal = Uint8Array.from({ length: 99994 }, (_, i) => 0x41 + (i % 26));
     const body = concatBytes(Uint8Array.of(0x62, 0, 0, 0, 0, 0), literal);
     const raw = partialPacket(0xcb, body, [32768, 2, 1, 65536]);
@@ -685,7 +685,7 @@ describe('pgp', () => {
       /data packets/
     );
   });
-  should('RFC 9580 Appendix A.1 version 4 Ed25519Legacy key vector', () => {
+  it('RFC 9580 Appendix A.1 version 4 Ed25519Legacy key vector', () => {
     const publicKey = ed25519.getPublicKey(RFC9580_A1_SECRET);
     deepStrictEqual(
       hex.encode(publicKey),
@@ -727,7 +727,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.pubArmor.decode(RFC9580_A1_PUBLIC_KEY), packets);
     deepStrictEqual(pgp.Stream.encode(packets), raw);
   });
-  should('RFC 9580 Appendix A.2 version 4 Ed25519Legacy signature vector', () => {
+  it('RFC 9580 Appendix A.2 version 4 Ed25519Legacy signature vector', () => {
     const publicKey = ed25519.getPublicKey(RFC9580_A1_SECRET);
     const raw = armorRaw(RFC9580_A2_SIGNATURE);
     const packets = pgp.sigArmor.decode(RFC9580_A2_SIGNATURE);
@@ -761,7 +761,7 @@ describe('pgp', () => {
       true
     );
   });
-  should('RFC 9580 Appendix A.3 version 6 certificate vector parses and round-trips', () => {
+  it('RFC 9580 Appendix A.3 version 6 certificate vector parses and round-trips', () => {
     const raw = armorRaw(RFC9580_A3_PUBLIC_KEY);
     const packets = pgp.pubArmor.decode(RFC9580_A3_PUBLIC_KEY);
     deepStrictEqual(pgp.Stream.encode(packets), raw);
@@ -842,7 +842,7 @@ describe('pgp', () => {
       }
     );
   });
-  should('RFC 9580 Appendix A.4-A.5 version 6 secret-key vectors parse and round-trip', () => {
+  it('RFC 9580 Appendix A.4-A.5 version 6 secret-key vectors parse and round-trip', () => {
     const unlockedRaw = armorRaw(RFC9580_A4_PRIVATE_KEY);
     const unlocked = pgp.privArmor.decode(RFC9580_A4_PRIVATE_KEY);
     deepStrictEqual(pgp.Stream.encode(unlocked), unlockedRaw);
@@ -940,14 +940,14 @@ describe('pgp', () => {
       ]
     );
   });
-  should('RFC 9580 Appendix A.5 locked secret-key decrypt reaches AEAD boundary', () => {
+  it('RFC 9580 Appendix A.5 locked secret-key decrypt reaches AEAD boundary', () => {
     const locked = pgp.privArmor.decode(RFC9580_A5_LOCKED_PRIVATE_KEY);
     throws(
       () => pgp.decodeSecretKey('correct horse battery staple', locked[0].data),
       /OCB not implemented in noble-ciphers, available in awasm\/noble/
     );
   });
-  should('v6 AEAD secret-key decrypt supports Argon2 plus GCM', () => {
+  it('v6 AEAD secret-key decrypt supports Argon2 plus GCM', () => {
     const [packet] = pgp.privArmor.decode(RFC9580_A4_PRIVATE_KEY);
     const plain = packet.data;
     const secret = plain.type.data.secret;
@@ -973,7 +973,7 @@ describe('pgp', () => {
     throws(() => pgp.decodeSecretKey('secret', locked, 'secretSubkey'), /invalid ghash tag/);
     throws(() => pgp.decodeSecretKey('secret', tampered), /invalid ghash tag/);
   });
-  should('v6 CFB secret-key packets use usage 254 with parameter lengths', () => {
+  it('v6 CFB secret-key packets use usage 254 with parameter lengths', () => {
     const [packet] = pgp.privArmor.decode(RFC9580_A4_PRIVATE_KEY);
     const plain = packet.data as {
       pub: PubKeyPacket;
@@ -1005,7 +1005,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.Stream.encode(packets), raw);
     deepStrictEqual(pgp.decodeSecretKey('secret', locked), bytesToBigInt(plain.type.data.secret));
   });
-  should('v6 secret-key decrypt rejects weak S2K hashes', () => {
+  it('v6 secret-key decrypt rejects weak S2K hashes', () => {
     const [packet] = pgp.privArmor.decode(RFC9580_A4_PRIVATE_KEY);
     const plain = packet.data as {
       pub: PubKeyPacket;
@@ -1051,7 +1051,7 @@ describe('pgp', () => {
     throws(() => pgp.decodeSecretKey('secret', cfb), /weak S2K hash/);
     throws(() => pgp.decodeSecretKey('secret', aead, 'secretKey'), /weak S2K hash/);
   });
-  should('RFC 9580 Appendix A.6-A.7 version 6 signed-message vectors parse and verify', () => {
+  it('RFC 9580 Appendix A.6-A.7 version 6 signed-message vectors parse and verify', () => {
     const signature = cleartextSignature(RFC9580_A6_CLEARTEXT);
     const sigRaw = armorRaw(signature);
     const sigPackets = pgp.sigArmor.decode(signature);
@@ -1116,7 +1116,7 @@ describe('pgp', () => {
       true
     );
   });
-  should('RFC 9580 Appendix A.8-A.11 v6 AEAD message packet vectors parse and round-trip', () => {
+  it('RFC 9580 Appendix A.8-A.11 v6 AEAD message packet vectors parse and round-trip', () => {
     const parsed = [
       ['A.8', RFC9580_A8_MESSAGE],
       ['A.9', RFC9580_A9_MESSAGE],
@@ -1193,7 +1193,7 @@ describe('pgp', () => {
       },
     ]);
   });
-  should('RFC 9580 Appendix A.8 v6 X25519 PKESK unwrap reaches OCB boundary', () => {
+  it('RFC 9580 Appendix A.8 v6 X25519 PKESK unwrap reaches OCB boundary', () => {
     const [pkesk, seipd] = pgp.Stream.decode(armorRaw(RFC9580_A8_MESSAGE));
     const secretPackets = pgp.privArmor.decode(RFC9580_A4_PRIVATE_KEY);
     const secretSubkey = secretPackets[2].data;
@@ -1204,7 +1204,7 @@ describe('pgp', () => {
       /OCB not implemented in noble-ciphers, available in awasm\/noble/
     );
   });
-  should('RFC 9580 Appendix A.11 v6 AEAD-GCM message vector decrypts', () => {
+  it('RFC 9580 Appendix A.11 v6 AEAD-GCM message vector decrypts', () => {
     const [skesk, seipd] = pgp.Stream.decode(armorRaw(RFC9580_A11_MESSAGE));
     const sessionKey = pgp.__TESTS.decryptV6SKESK(utf8.decode('password'), skesk.data);
     const decrypted = pgp.__TESTS.decryptV2SEIPD(sessionKey, seipd.data);
@@ -1230,7 +1230,7 @@ describe('pgp', () => {
       }
     );
   });
-  should('RFC 9580 Appendix A.9-A.10 unsupported AEAD modes fail at decrypt boundary', () => {
+  it('RFC 9580 Appendix A.9-A.10 unsupported AEAD modes fail at decrypt boundary', () => {
     const [eax] = pgp.Stream.decode(armorRaw(RFC9580_A9_MESSAGE));
     const [ocb] = pgp.Stream.decode(armorRaw(RFC9580_A10_MESSAGE));
     throws(
@@ -1242,7 +1242,7 @@ describe('pgp', () => {
       /OCB not implemented in noble-ciphers, available in awasm\/noble/
     );
   });
-  should('RFC 4880 §6.6 armor headers are skipped before base64 decode', () => {
+  it('RFC 4880 §6.6 armor headers are skipped before base64 decode', () => {
     const messageArmor = base64armor('PGP MESSAGE', 64, P.bytes(null), (data) => {
       const sum = crc24(data);
       return Uint8Array.of(sum >> 16, (sum >> 8) & 0xff, sum & 0xff);
@@ -1252,7 +1252,7 @@ describe('pgp', () => {
       'c838013b6d96c411efecef17ecefe3ca0004ce8979ea250a897995f979a90ad9a9a9050a890ac5a9c945a940c1a2fcd2bc14858cd4a2547b2e00'
     );
   });
-  should('Signature subpacket lengths use the full two-octet range', () => {
+  it('Signature subpacket lengths use the full two-octet range', () => {
     const { SignatureSubpacketLen } = pgp.__TESTS;
     deepStrictEqual(SignatureSubpacketLen.decode(Uint8Array.of(0xe0, 0x00)), 8384);
     deepStrictEqual(SignatureSubpacketLen.encode(8384), Uint8Array.of(0xe0, 0x00));
@@ -1280,7 +1280,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.Stream.encode(decoded), raw);
     throws(() => pgp.PacketLen.decode(Uint8Array.of(0xe0, 0x00)));
   });
-  should('Signature subpacket critical bit is separate from type id', () => {
+  it('Signature subpacket critical bit is separate from type id', () => {
     const createdAt = Uint8Array.of(5, 2, 0, 0, 0, 0);
     const criticalKeyFlags = Uint8Array.of(2, 0x9b, 0x03);
     const body = concatBytes(
@@ -1314,7 +1314,7 @@ describe('pgp', () => {
     ]);
     deepStrictEqual(pgp.Stream.encode(decoded), raw);
   });
-  should('Signature fingerprint subpacket version matches signature version', () => {
+  it('Signature fingerprint subpacket version matches signature version', () => {
     const v4Fingerprint = '00'.repeat(20);
     const v6Fingerprint = '00'.repeat(32);
     const badV6 = {
@@ -1351,7 +1351,7 @@ describe('pgp', () => {
       )
     );
   });
-  should('v6 Ed25519 signatures reject sub-256-bit digests', () => {
+  it('v6 Ed25519 signatures reject sub-256-bit digests', () => {
     const seed = new Uint8Array(32);
     const head = {
       version: 6,
@@ -1373,7 +1373,7 @@ describe('pgp', () => {
       )
     );
   });
-  should('PGP', () => {
+  it('PGP', () => {
     const edPriv = hex.decode('6c18b9d6dc5d18a933c704c56ed8165a0651b27856ce3345f52f2921666dcef1');
     const cvPriv = hex.decode('58cf48afad21cbf3e2d904387df28a1385c8a1b790f28e04ca7eb721fd6c0d6b');
     const edSalt = hex.decode('31b33a4b50c662f4');
@@ -1411,7 +1411,7 @@ describe('pgp', () => {
   });
   const NAME_EMAIL = 'a <a>';
   const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
-  should('AEAD preference subpacket enum', () => {
+  it('AEAD preference subpacket enum', () => {
     const { publicKey } = pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
     const pub = pgp.pubArmor.decode(mutateAEADPreference(publicKey, 3));
     const sig = pub.find((p) => p.TAG === 'signature');
@@ -1419,7 +1419,7 @@ describe('pgp', () => {
     deepStrictEqual(prefs, ['GCM', 'EAX']);
     throws(() => pgp.pubArmor.decode(mutateAEADPreference(publicKey, 0)));
   });
-  should('signature subpacket supports final AEAD ciphersuites and legacy AEAD algorithms', () => {
+  it('signature subpacket supports final AEAD ciphersuites and legacy AEAD algorithms', () => {
     const { publicKey } = pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
     const packets = pgp.pubArmor.decode(publicKey);
     const sig = packets.find((p) => p.TAG === 'signature');
@@ -1445,7 +1445,7 @@ describe('pgp', () => {
     throws(() => pgp.pubArmor.decode(mutateAEADPreferenceSubpacket(publicKey, 37)));
     throws(() => pgp.pubArmor.decode(mutateAEADPreferenceSubpacket(publicKey, 38)));
   });
-  should('S2K parses RFC 9580 Argon2 specifiers', () => {
+  it('S2K parses RFC 9580 Argon2 specifiers', () => {
     const { S2K, S2KEnum } = pgp.__TESTS;
     const salt = Uint8Array.from([
       0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
@@ -1463,7 +1463,7 @@ describe('pgp', () => {
     throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x01, 0x04, 0x04])));
     throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x01, 0x04, 0x20])));
   });
-  should('RFC 9580 Appendix A.12 Argon2 message vectors parse and round-trip', () => {
+  it('RFC 9580 Appendix A.12 Argon2 message vectors parse and round-trip', () => {
     // The appendix vectors use encoded_m=21, i.e. 2 GiB of Argon2 memory.
     // Keep the normal suite bounded to OpenPGP packet/S2K vector bytes and
     // leave Argon2 primitive vectors to noble-hashes.
@@ -1535,7 +1535,7 @@ describe('pgp', () => {
       },
     ]);
   });
-  should('symmetric preference subpacket enum includes Camellia', () => {
+  it('symmetric preference subpacket enum includes Camellia', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const camelliaPrefs = {
       TAG: 'preferredEncryptionAlgorithms',
@@ -1549,7 +1549,7 @@ describe('pgp', () => {
     const prefs = sig.data.head.hashed.find((s) => s.TAG === 'preferredEncryptionAlgorithms')?.data;
     deepStrictEqual(prefs, ['camellia256', 'aes192', 'aes128', 'tripledes']);
   });
-  should('Signature subpacket supports Signers User ID', () => {
+  it('Signature subpacket supports Signers User ID', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const data = 'Generated <generated@example.com>';
     const subpacket = { TAG: 'signersUserID' as const, data };
@@ -1557,7 +1557,7 @@ describe('pgp', () => {
     deepStrictEqual(SignatureSubpacket.decode(encoded), subpacket);
     deepStrictEqual(SignatureSubpacket.encode(subpacket), encoded);
   });
-  should('Signature subpacket supports expiration time fields', () => {
+  it('Signature subpacket supports expiration time fields', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const data = 86400;
     const cases = [
@@ -1571,7 +1571,7 @@ describe('pgp', () => {
       deepStrictEqual(SignatureSubpacket.encode(subpacket), encoded);
     }
   });
-  should('Signature subpacket supports notation and URI fields', () => {
+  it('Signature subpacket supports notation and URI fields', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const name = utf8.decode('test@example.com');
     const value = utf8.decode('value');
@@ -1610,7 +1610,7 @@ describe('pgp', () => {
       deepStrictEqual(SignatureSubpacket.encode(subpacket), encoded);
     }
   });
-  should('Signature subpacket supports reason for revocation', () => {
+  it('Signature subpacket supports reason for revocation', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const reason = 'retired';
     const subpacket = { TAG: 'reasonForRevocation' as const, data: { code: 3, reason } };
@@ -1621,7 +1621,7 @@ describe('pgp', () => {
     deepStrictEqual(SignatureSubpacket.decode(encoded), subpacket);
     deepStrictEqual(SignatureSubpacket.encode(subpacket), encoded);
   });
-  should('Signature subpacket supports exportable certification', () => {
+  it('Signature subpacket supports exportable certification', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const nonExportable = { TAG: 'exportableCertification' as const, data: false, critical: true };
     const exportable = { TAG: 'exportableCertification' as const, data: true };
@@ -1630,7 +1630,7 @@ describe('pgp', () => {
     deepStrictEqual(SignatureSubpacket.decode(Uint8Array.of(2, 4, 1)), exportable);
     deepStrictEqual(SignatureSubpacket.encode(exportable), Uint8Array.of(2, 4, 1));
   });
-  should('Signature subpacket supports deprecated revocation-key fields', () => {
+  it('Signature subpacket supports deprecated revocation-key fields', () => {
     const { SignatureSubpacket } = pgp.__TESTS;
     const fingerprint = '05a9d616acfe6b2044ec28851dc754629725245b';
     const revocationKey = {
@@ -1651,7 +1651,7 @@ describe('pgp', () => {
     deepStrictEqual(SignatureSubpacket.decode(Uint8Array.of(2, 7, 0)), revocable);
     deepStrictEqual(SignatureSubpacket.encode(revocable), Uint8Array.of(2, 7, 0));
   });
-  should('usage-255 encrypted secret-key checksum', () => {
+  it('usage-255 encrypted secret-key checksum', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const before = deepClone(secretKey);
@@ -1667,7 +1667,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.decodeSecretKey(PWD, packet), bytesToBigInt(seed));
     deepStrictEqual(secretKey, before);
   });
-  should('legacy direct-cipher secret-key packets decode but are not generated', () => {
+  it('legacy direct-cipher secret-key packets decode but are not generated', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const before = deepClone(secretKey);
@@ -1694,7 +1694,7 @@ describe('pgp', () => {
     );
     deepStrictEqual(secretKey, before);
   });
-  should('S2K derives long AES keys from concatenated hashes', () => {
+  it('S2K derives long AES keys from concatenated hashes', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const before = deepClone(secretKey);
@@ -1711,7 +1711,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.decodeSecretKey(PWD, packet), bytesToBigInt(seed));
     deepStrictEqual(secretKey, before);
   });
-  should('S2K decodes every parsed OpenPGP hash implementation', () => {
+  it('S2K decodes every parsed OpenPGP hash implementation', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const before = deepClone(secretKey);
@@ -1737,7 +1737,7 @@ describe('pgp', () => {
     ]);
     deepStrictEqual(secretKey, before);
   });
-  should('encrypted secret-key IV length follows cipher block size', () => {
+  it('encrypted secret-key IV length follows cipher block size', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const salt = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1759,7 +1759,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.Stream.decode(raw), packet);
     deepStrictEqual(pgp.Stream.encode(packet), raw);
   });
-  should('encrypted secret-key rejects plaintext cipher', () => {
+  it('encrypted secret-key rejects plaintext cipher', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const malformed = deepClone(secretKey);
@@ -1769,7 +1769,7 @@ describe('pgp', () => {
       message: 'PGP.secretKey: unknown encryption mode=plaintext',
     });
   });
-  should('encrypted secret-key rejects Argon2 S2K outside AEAD usage', () => {
+  it('encrypted secret-key rejects Argon2 S2K outside AEAD usage', () => {
     const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
     const secretKey = secretKeyPacket(packets);
     const salt = Uint8Array.from([
@@ -1788,7 +1788,7 @@ describe('pgp', () => {
     const raw = concatBytes(Uint8Array.of(0xc5), pgp.PacketLen.encode(body.length), body);
     throws(() => pgp.Stream.decode(raw));
   });
-  should('PGP Keys', () => {
+  it('PGP Keys', () => {
     const { publicKey: pub } = pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
     deepStrictEqual(
       pub,
@@ -1836,7 +1836,7 @@ jPfr1XwC
     );
     // Cannot verify priv here since it has dynamic IV and stuff
   });
-  should('Detached', () => {
+  it('Detached', () => {
     const pubKey = ed25519.getPublicKey(seed);
     const NAME = 'John Doe';
     const EMAIL = 'example@example.com';
@@ -2052,7 +2052,7 @@ jPfr1XwC
     throws(() => pgp.sigArmor.encode(malformed), /Signature Creation Time/);
   });
   describe('parsePrivateKey', () => {
-    should('basic', async () => {
+    it('basic', async () => {
       const NAME = 'John Doe';
       const EMAIL = 'example@example.com';
       const FULL_NAME = `${NAME} <${EMAIL}>`;
@@ -2063,7 +2063,7 @@ jPfr1XwC
       deepStrictEqual(parsed.created, 0);
       deepStrictEqual(parsed.privateKey, seed);
     });
-    should('password protected', async () => {
+    it('password protected', async () => {
       const NAME = 'John Doe';
       const EMAIL = 'example@example.com';
       const FULL_NAME = `${NAME} <${EMAIL}>`;
@@ -2078,4 +2078,4 @@ jPfr1XwC
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

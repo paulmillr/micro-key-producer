@@ -1,10 +1,10 @@
 import { hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual as eql, throws } from 'node:assert';
 import * as otp from '../src/otp.ts';
 
 describe('otp', () => {
-  should('OTP url parser', () => {
+  it('OTP url parser', () => {
     const INVALID = [
       'http://hello.com',
       'otpauth://totp',
@@ -62,7 +62,7 @@ describe('otp', () => {
     };
     eql(otp.parse(otp.buildURL(intervalOpts)), intervalOpts);
   });
-  should('OTP', () => {
+  it('OTP', () => {
     const opts1 = otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
     const opts2 = otp.parse('PW4YAYYZVDE5RK2AOLKUATNZIKAFQLZO');
     eql(otp.hotp(opts1, 0n), '549419');
@@ -133,4 +133,4 @@ describe('otp', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

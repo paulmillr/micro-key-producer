@@ -1,5 +1,5 @@
 import { randomBytes } from '@noble/hashes/utils.js';
-import { should } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -53,9 +53,9 @@ function exec(command, opt = {}) {
 }
 
 if (!RUN_AGENT)
-  should.skip('basic requires gpg-agent: pass --agent to run this integration test', () => {});
+  it.skip('basic requires gpg-agent: pass --agent to run this integration test', () => {});
 else
-  should('basic', () => {
+  it('basic', () => {
     // Deterministic via scrypt
     const seed = randomBytes();
     let { publicKey, privateKey, keyId } = getKeys(seed, 'user', 'password');
@@ -92,4 +92,4 @@ else
     }
   });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

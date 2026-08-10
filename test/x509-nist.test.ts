@@ -1,5 +1,5 @@
 import { equalBytes } from '@noble/curves/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { base64 } from '@scure/base';
 import { deepStrictEqual } from 'node:assert';
 import * as fs from 'node:fs';
@@ -444,7 +444,7 @@ const PKITS_UNSUPPORTED_REVOCATION: Record<string, string> = {
 };
 
 describe('x509 nist', () => {
-  should('imported fixture counts match the extracted NIST PDF manifest', () => {
+  it('imported fixture counts match the extracted NIST PDF manifest', () => {
     // PKITS.pdf section 4 has 224 validation tests; section 6.2.2 has 224 S/MIME messages.
     // PathDiscoveryTestSuite.pdf section 4 has 39 path discovery tests; section 5.3.2 maps to 75 messages.
     deepStrictEqual(
@@ -484,7 +484,7 @@ describe('x509 nist', () => {
       }
     );
   });
-  should('DER certificate fixtures decode and roundtrip in current support buckets', () => {
+  it('DER certificate fixtures decode and roundtrip in current support buckets', () => {
     const decoded: Record<string, number> = {};
     const errors: Record<string, number> = {};
     const mismatch: string[] = [];
@@ -515,7 +515,7 @@ describe('x509 nist', () => {
       }
     );
   });
-  should('S/MIME fixtures decode and roundtrip in current support buckets', () => {
+  it('S/MIME fixtures decode and roundtrip in current support buckets', () => {
     const check = (names: string[]) => {
       const errors: Record<string, string[]> = {};
       const mismatch: string[] = [];
@@ -591,7 +591,7 @@ describe('x509 nist', () => {
       }
     );
   });
-  should('certificate fixture extensions decode in current support buckets', () => {
+  it('certificate fixture extensions decode in current support buckets', () => {
     const decoded: Record<string, number> = {};
     const decodeErrors: Record<string, string[]> = {};
     const extensionErrors: Record<string, string[]> = {};
@@ -640,7 +640,7 @@ describe('x509 nist', () => {
       }
     );
   });
-  should('PKITS 4.3 name chaining cases reach the trust anchor when NIST says valid', () => {
+  it('PKITS 4.3 name chaining cases reach the trust anchor when NIST says valid', () => {
     const trust = read(path.join(PKITS, 'certs', 'TrustAnchorRootCertificate.crt'));
     const result = PKITS_CASES.filter((test) => test.section.startsWith('4.3.')).map((test) =>
       nistResult(test, trust)
@@ -654,7 +654,7 @@ describe('x509 nist', () => {
       }))
     );
   });
-  should('selected PKITS path validation cases match NIST expected results', () => {
+  it('selected PKITS path validation cases match NIST expected results', () => {
     const trust = read(path.join(PKITS, 'certs', 'TrustAnchorRootCertificate.crt'));
     const result = PKITS_CASES.map((test) => nistResult(test, trust));
     // CRL/revocation processing is intentionally out of scope for this offline CMS verifier.
@@ -725,4 +725,4 @@ describe('x509 nist', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

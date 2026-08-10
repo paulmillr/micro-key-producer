@@ -1,11 +1,11 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as ipns from '../src/ipns.ts';
 
 describe('ipns', () => {
-  should('basic', () => {
+  it('basic', () => {
     const seed = hex.decode('0681d6420abb1ba47acd5c03c8e5ee84185a2673576b262e234e50c46d86f597');
     const pub = hex.decode('12c8299ec2c51dffbbcb4f9fccadcee1424cb237e9b30d3cd72d47c18103689d');
     const addr = 'ipns://k51qzi5uqu5dgnfwbc46une4upw1vc9hxznymyeykmg6rev1513yrnbyrwmmql';
@@ -24,11 +24,11 @@ describe('ipns', () => {
     const parsed = ipns.parseAddress(addr);
     deepStrictEqual(ipns.formatPublicKey(parsed), addr);
   });
-  should('parseAddress rejects invalid wrapped Ed25519 public keys', () => {
+  it('parseAddress rejects invalid wrapped Ed25519 public keys', () => {
     const invalid = 'ff'.repeat(32);
     throws(() => ed25519.Point.fromHex(invalid));
     throws(() => ipns.parseAddress(`ipns://f0172002408011220${invalid}`));
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

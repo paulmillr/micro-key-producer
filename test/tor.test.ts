@@ -1,4 +1,4 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as tor from '../src/tor.ts';
@@ -10,7 +10,7 @@ const shortAddr = 'aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaenjiay=.onio
 const longAddr = 'aeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqcaibaeaqdbgpam======.onion';
 
 describe('tor', () => {
-  should('basic', () => {
+  it('basic', () => {
     deepStrictEqual(tor.getKeys(seed), {
       publicKey: addr,
       publicKeyBytes: pub,
@@ -20,7 +20,7 @@ describe('tor', () => {
     const parsed = tor.parseAddress(addr);
     deepStrictEqual(tor.formatPublicKey(parsed), addr);
   });
-  should('reject malformed Tor v3 public key payload lengths', () => {
+  it('reject malformed Tor v3 public key payload lengths', () => {
     const bytes = pub.slice();
     deepStrictEqual(tor.formatPublicKey(bytes), addr);
     deepStrictEqual(bytes, pub);
@@ -31,4 +31,4 @@ describe('tor', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);
