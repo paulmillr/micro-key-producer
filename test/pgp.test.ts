@@ -970,8 +970,11 @@ describe('pgp', () => {
     tampered.type.data.secret[0] ^= 1;
     deepStrictEqual(pgp.decodeSecretKey('secret', locked), bytesToBigInt(secret));
     deepStrictEqual(pgp.decodeSecretKey('secret', locked, 'secretKey'), bytesToBigInt(secret));
-    throws(() => pgp.decodeSecretKey('secret', locked, 'secretSubkey'), /invalid ghash tag/);
-    throws(() => pgp.decodeSecretKey('secret', tampered), /invalid ghash tag/);
+    throws(() => pgp.decodeSecretKey('secret', locked, 'secretSubkey'), /invalid tag/);
+    throws(() => pgp.decodeSecretKey('secret', tampered), /invalid tag/);
+    const excessiveMemory = deepClone(locked);
+    excessiveMemory.type.data.S2K.data.encodedM = 22;
+    throws(() => pgp.decodeSecretKey('secret', excessiveMemory), /encoded_m must be 3\.\.21/);
   });
   it('v6 CFB secret-key packets use usage 254 with parameter lengths', () => {
     const [packet] = pgp.privArmor.decode(RFC9580_A4_PRIVATE_KEY);
@@ -1376,10 +1379,10 @@ describe('pgp', () => {
   it('PGP', () => {
     const edPriv = hex.decode('6c18b9d6dc5d18a933c704c56ed8165a0651b27856ce3345f52f2921666dcef1');
     const cvPriv = hex.decode('58cf48afad21cbf3e2d904387df28a1385c8a1b790f28e04ca7eb721fd6c0d6b');
-    const edSalt = hex.decode('31b33a4b50c662f4');
-    const edIV = hex.decode('821984c2c70cd60f0fbf650b6e666ead');
-    const cvSalt = hex.decode('050c1f3e46bfcc8d');
-    const cvIV = hex.decode('ab54be47dc65e8ac478aa2d1ec7b0c7c');
+    const edSalt = hex.decode('31b33a4b50c662f431b33a4b50c662f4');
+    const edIV = hex.decode('821984c2c70cd60f0fbf650b');
+    const cvSalt = hex.decode('050c1f3e46bfcc8d050c1f3e46bfcc8d');
+    const cvIV = hex.decode('ab54be47dc65e8ac478aa2d1');
     const pubKey = pgp.formatPublic(edPriv, cvPriv, USER, CREATED);
     const privKey = pgp.formatPrivate(
       edPriv,
@@ -1394,12 +1397,61 @@ describe('pgp', () => {
     );
     deepStrictEqual(pgp.pubArmor.decode(pubKey), pgp.pubArmor.decode(PUB), 'publicKey (stream)');
     deepStrictEqual(pubKey, PUB, 'publicKey (armor)');
-    deepStrictEqual(
-      pgp.privArmor.decode(privKey),
-      pgp.privArmor.decode(PRIV),
-      'privateKey (stream)'
+    const privatePackets = pgp.privArmor.decode(privKey);
+    const protectedKeys = privatePackets.filter(
+      (packet) => packet.TAG === 'secretKey' || packet.TAG === 'secretSubkey'
     );
-    deepStrictEqual(privKey, PRIV, 'privateKey (armor)');
+    deepStrictEqual(
+      protectedKeys.map((packet) => {
+        const { enc, aead, S2K, iv } = packet.data.type.data;
+        return {
+          protection: packet.data.type.TAG,
+          enc,
+          aead,
+          s2k: S2K.TAG,
+          t: S2K.data.t,
+          p: S2K.data.p,
+          encodedM: S2K.data.encodedM,
+          saltLen: S2K.data.salt.length,
+          nonceLen: iv.length,
+        };
+      }),
+      [
+        {
+          protection: 'aead',
+          enc: 'aes256',
+          aead: 'GCM',
+          s2k: 'argon2',
+          t: 3,
+          p: 4,
+          encodedM: 16,
+          saltLen: 16,
+          nonceLen: 12,
+        },
+        {
+          protection: 'aead',
+          enc: 'aes256',
+          aead: 'GCM',
+          s2k: 'argon2',
+          t: 3,
+          p: 4,
+          encodedM: 16,
+          saltLen: 16,
+          nonceLen: 12,
+        },
+      ]
+    );
+    deepStrictEqual(pgp.privArmor.decode(pgp.privArmor.encode(privatePackets)), privatePackets);
+    deepStrictEqual(
+      pgp.decodeSecretKey(PWD, protectedKeys[0].data, 'secretKey'),
+      bytesToBigInt(edPriv)
+    );
+    deepStrictEqual(
+      pgp.decodeSecretKey(PWD, protectedKeys[1].data, 'secretSubkey'),
+      bytesToBigInt(P.U256BE.encode(P.U256LE.decode(cvPriv)))
+    );
+    // Retain legacy SHA-1 S2K decoding for existing keys even though newly
+    // generated password-protected keys no longer use that envelope.
     deepStrictEqual(
       pgp.decodeSecretKey(PWD, pgp.privArmor.decode(PRIV)[0].data),
       48893474592257195969419733099033914136114698516948265455201948185088704237297n
@@ -1411,6 +1463,18 @@ describe('pgp', () => {
   });
   const NAME_EMAIL = 'a <a>';
   const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
+  const legacySecretKey = (): SecretKey => {
+    const plain = secretKeyPacket(
+      pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, undefined, 0).privateKey)
+    );
+    const salt = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
+    const iv = Uint8Array.from({ length: 16 }, (_, i) => 0x80 + i);
+    const S2K = { TAG: 'iterated' as const, data: { hash: 'sha1', salt, count: 96 } };
+    const kek = deriveKey('sha1', 16, utf8.decode(PWD), salt, 96);
+    const keyBytes = pgp.opaquempi.encode(seed);
+    const secret = aesCfb(kek, iv, concatBytes(keyBytes, sha1(keyBytes)));
+    return { pub: plain.pub, type: { TAG: 'encrypted', data: { enc: 'aes128', S2K, iv, secret } } };
+  };
   it('AEAD preference subpacket enum', () => {
     const { publicKey } = pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
     const pub = pgp.pubArmor.decode(mutateAEADPreference(publicKey, 3));
@@ -1461,6 +1525,7 @@ describe('pgp', () => {
     throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x00, 0x04, 0x15])));
     throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x01, 0x00, 0x15])));
     throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x01, 0x04, 0x04])));
+    throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x01, 0x04, 0x16])));
     throws(() => S2K.decode(Uint8Array.from([0x04, ...salt, 0x01, 0x04, 0x20])));
   });
   it('RFC 9580 Appendix A.12 Argon2 message vectors parse and round-trip', () => {
@@ -1652,8 +1717,7 @@ describe('pgp', () => {
     deepStrictEqual(SignatureSubpacket.encode(revocable), Uint8Array.of(2, 7, 0));
   });
   it('usage-255 encrypted secret-key checksum', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const before = deepClone(secretKey);
     const { enc, S2K, iv } = secretKey.type.data;
     const keyLen = { aes128: 16, aes192: 24, aes256: 32 }[enc as 'aes128' | 'aes192' | 'aes256'];
@@ -1668,8 +1732,7 @@ describe('pgp', () => {
     deepStrictEqual(secretKey, before);
   });
   it('legacy direct-cipher secret-key packets decode but are not generated', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const before = deepClone(secretKey);
     const enc = 'aes128';
     const iv = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
@@ -1690,13 +1753,12 @@ describe('pgp', () => {
         .decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey)
         .filter((p) => p.TAG === 'secretKey' || p.TAG === 'secretSubkey')
         .map((p) => p.data.type.TAG),
-      ['encrypted', 'encrypted']
+      ['aead', 'aead']
     );
     deepStrictEqual(secretKey, before);
   });
   it('S2K derives long AES keys from concatenated hashes', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const before = deepClone(secretKey);
     const { S2K, iv } = secretKey.type.data;
     const enc = 'aes256';
@@ -1712,8 +1774,7 @@ describe('pgp', () => {
     deepStrictEqual(secretKey, before);
   });
   it('S2K decodes every parsed OpenPGP hash implementation', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const before = deepClone(secretKey);
     const { iv } = secretKey.type.data;
     const salt = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -1738,8 +1799,7 @@ describe('pgp', () => {
     deepStrictEqual(secretKey, before);
   });
   it('encrypted secret-key IV length follows cipher block size', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const salt = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
     const iv = Uint8Array.from([9, 10, 11, 12, 13, 14, 15, 16]);
     const secret = Uint8Array.from([17, 18, 19, 20, 21, 22, 23, 24]);
@@ -1760,8 +1820,7 @@ describe('pgp', () => {
     deepStrictEqual(pgp.Stream.encode(packet), raw);
   });
   it('encrypted secret-key rejects plaintext cipher', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const malformed = deepClone(secretKey);
     malformed.type.data.enc = 'plaintext';
     throws(() => pgp.decodeSecretKey(PWD, malformed), {
@@ -1770,8 +1829,7 @@ describe('pgp', () => {
     });
   });
   it('encrypted secret-key rejects Argon2 S2K outside AEAD usage', () => {
-    const packets = pgp.privArmor.decode(pgp.getKeys(seed, NAME_EMAIL, PWD, 0).privateKey);
-    const secretKey = secretKeyPacket(packets);
+    const secretKey = legacySecretKey();
     const salt = Uint8Array.from([
       0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
       0x0f,

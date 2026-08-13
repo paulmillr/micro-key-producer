@@ -786,7 +786,7 @@ else
     });
     shouldAgent('GnuPG accepts legacy direct-cipher secret-key packets', () => {
       const password = 'password';
-      const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', password, 0);
+      const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', undefined, 0);
       const direct = (() => {
         const packets = pgp.privArmor.decode(keys.privateKey);
         const secretKey = secretKeyPacket(packets);
@@ -808,7 +808,7 @@ else
         direct
           .filter((p) => p.TAG === 'secretKey' || p.TAG === 'secretSubkey')
           .map((p) => p.data.type.TAG),
-        ['encryptedDirect', 'encrypted']
+        ['encryptedDirect', 'plain']
       );
       tmp((dir) => {
         const key = path.join(dir, 'key.asc');

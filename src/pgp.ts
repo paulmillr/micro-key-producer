@@ -5,7 +5,8 @@
  * 1. Generated private and public keys would have different representation, however, **their
  * fingerprints would be the same**. This is because AES encryption is used to hide the keys, and
  * AES requires different IV / salt.
- * 2. The function is slow (400ms on Apple M4), because it uses S2K to derive keys.
+ * 2. Password-protected private keys use a memory-hard Argon2id S2K, so key
+ * generation intentionally takes noticeable time and memory.
  * 3. "warning: lower 3 bits of the secret key are not cleared" happens even for keys generated with
  * GnuPG 2.3.6, because check looks at item as Opaque MPI, when it is just MPI: see
  * [bugtracker URL](https://dev.gnupg.org/rGdbfb7f809b89cfe05bdacafdb91a2d485b9fe2e0).
@@ -325,6 +326,27 @@ const AeadWithIVLen = /* @__PURE__ */ P.apply(AEADEnum, {
   decode: (from) => from.aead,
 });
 
+const ARGON2_DEFAULT_T = 3;
+const ARGON2_DEFAULT_P = 4;
+const ARGON2_DEFAULT_ENCODED_M = 16;
+const ARGON2_MAX_ENCODED_M = 21;
+type Argon2S2KType = { salt: Bytes; t: number; p: number; encodedM: number };
+const validateArgon2S2K = (s2k: Argon2S2KType) => {
+  // RFC 9580 permits encoded_m through 31. Cap accepted packets at 21
+  // (2 GiB) so an untrusted packet cannot request a larger Argon2 workspace.
+  if (!isBytes(s2k.salt) || s2k.salt.length !== 16)
+    throw new Error('PGP.S2K: Argon2 salt must be 16 bytes');
+  if (!Number.isSafeInteger(s2k.t) || s2k.t < 1 || s2k.t > 255)
+    throw new Error('PGP.S2K: Argon2 passes must be 1..255');
+  if (!Number.isSafeInteger(s2k.p) || s2k.p < 1 || s2k.p > 255)
+    throw new Error('PGP.S2K: Argon2 parallelism must be 1..255');
+  if (!Number.isSafeInteger(s2k.encodedM))
+    throw new Error('PGP.S2K: Argon2 encoded_m must be an integer');
+  const min = 3 + Math.ceil(Math.log2(s2k.p));
+  if (s2k.encodedM < min || s2k.encodedM > ARGON2_MAX_ENCODED_M)
+    throw new Error(`PGP.S2K: Argon2 encoded_m must be ${min}..${ARGON2_MAX_ENCODED_M}`);
+  return s2k;
+};
 const Argon2S2K = /* @__PURE__ */ P.validate(
   /* @__PURE__ */ P.struct({
     salt: /* @__PURE__ */ P.bytes(16),
@@ -332,16 +354,7 @@ const Argon2S2K = /* @__PURE__ */ P.validate(
     p: P.U8,
     encodedM: P.U8,
   }),
-  (s2k) => {
-    // RFC 9580 §3.7.1.4: Argon2 S2K is 16-byte salt, nonzero t/p, and
-    // encoded_m in 3+ceil(log2(p))..31, with Argon2id v=0x13 for the KDF.
-    if (!s2k.t) throw new Error('PGP.S2K: Argon2 passes must be nonzero');
-    if (!s2k.p) throw new Error('PGP.S2K: Argon2 parallelism must be nonzero');
-    const min = 3 + Math.ceil(Math.log2(s2k.p));
-    if (s2k.encodedM < min || s2k.encodedM > 31)
-      throw new Error(`PGP.S2K: Argon2 encoded_m must be ${min}..31`);
-    return s2k;
-  }
+  validateArgon2S2K
 );
 type S2KType =
   | { TAG: 'simple'; data: { hash: string } }
@@ -382,24 +395,29 @@ const V4SymmetricKeyEncryptedSessionKeyPacketBody = /* @__PURE__ */ P.validate(
     return packet;
   }
 );
-type V6AEADParamsType = { enc: string; aead: string; S2K: S2KType; iv: Bytes };
-const V6AEADParams: P.CoderType<V6AEADParamsType> = /* @__PURE__ */ P.apply(
-  /* @__PURE__ */ P.struct({
-    enc: EncryptionEnum,
-    aead: AeadWithIVLen,
-    S2K: /* @__PURE__ */ P.prefix(P.U8, S2K),
-    iv: /* @__PURE__ */ P.bytes('aead/ivLen'),
-  }),
-  {
-    encode: (raw) => ({ enc: raw.enc, aead: raw.aead.aead, S2K: raw.S2K, iv: raw.iv }),
-    decode: (from) => ({
-      enc: from.enc,
-      aead: { aead: from.aead, ivLen: aeadNonceLen(from.aead) },
-      S2K: from.S2K,
-      iv: from.iv,
+type AEADParamsType = { enc: string; aead: string; S2K: S2KType; iv: Bytes };
+const AEADParams = (S2KCoder: P.CoderType<S2KType>): P.CoderType<AEADParamsType> =>
+  /* @__PURE__ */ P.apply(
+    /* @__PURE__ */ P.struct({
+      enc: EncryptionEnum,
+      aead: AeadWithIVLen,
+      S2K: S2KCoder,
+      iv: /* @__PURE__ */ P.bytes('aead/ivLen'),
     }),
-  }
-);
+    {
+      encode: (raw) => ({ enc: raw.enc, aead: raw.aead.aead, S2K: raw.S2K, iv: raw.iv }),
+      decode: (from) => ({
+        enc: from.enc,
+        aead: { aead: from.aead, ivLen: aeadNonceLen(from.aead) },
+        S2K: from.S2K,
+        iv: from.iv,
+      }),
+    }
+  );
+// RFC 9580 §5.5.3: v4 usage 253 writes the S2K directly, while v6 adds
+// a one-octet S2K length inside the encrypted-parameter count.
+const V4AEADParams = /* @__PURE__ */ AEADParams(S2K);
+const V6AEADParams = /* @__PURE__ */ AEADParams(/* @__PURE__ */ P.prefix(P.U8, S2K));
 type V4SymmetricKeyEncryptedSessionKeyPacketType = {
   version?: undefined;
   enc: string;
@@ -701,7 +719,7 @@ type SecretKeyProtectionType =
   | { TAG: 'encrypted'; data: P.UnwrapCoder<typeof EncryptedSecretKey> }
   | { TAG: 'encrypted2'; data: P.UnwrapCoder<typeof EncryptedSecretKey> }
   | { TAG: 'encryptedDirect'; data: { enc: string; iv: Bytes; secret: Bytes } };
-type V4SecretKeyProtectionType = Exclude<SecretKeyProtectionType, { TAG: 'aead' }>;
+type V4SecretKeyProtectionType = SecretKeyProtectionType;
 type V6SecretKeyProtectionType =
   | Extract<SecretKeyProtectionType, { TAG: 'plain' }>
   | Extract<SecretKeyProtectionType, { TAG: 'aead' }>
@@ -723,6 +741,7 @@ type DirectSecretKeyTag = (typeof DirectSecretKeyTags)[number];
 type DirectSecretKeyBodyType = { iv: Bytes; secret: Bytes };
 type SecretKeyProtectionRawType =
   | { TAG: 'plain'; data: P.UnwrapCoder<typeof PlainSecretKey> }
+  | { TAG: 'aead'; data: { params: AEADParamsType; secret: Bytes } }
   | { TAG: 'encrypted'; data: P.UnwrapCoder<typeof EncryptedSecretKey> }
   | { TAG: 'encrypted2'; data: P.UnwrapCoder<typeof EncryptedSecretKey> }
   | { TAG: DirectSecretKeyTag; data: DirectSecretKeyBodyType };
@@ -747,11 +766,19 @@ const SecretKeyProtection: P.CoderType<V4SecretKeyProtectionType> = /* @__PURE__
         camellia128: 11,
         camellia192: 12,
         camellia256: 13,
+        aead: 253,
         encrypted: 254,
         encrypted2: 255,
       }),
       {
         plain: PlainSecretKey,
+        // RFC 9580 §3.7.2.1 / §5.5.3 permits usage 253 for v4 and v6
+        // secret-key packets. Unlike v6, v4 has no enclosing parameter count
+        // or S2K-specifier length octet.
+        aead: /* @__PURE__ */ P.struct({
+          params: V4AEADParams,
+          secret: /* @__PURE__ */ P.bytes(null),
+        }),
         encrypted: EncryptedSecretKey,
         encrypted2: EncryptedSecretKey,
         idea: DirectSecretKeyBody('idea'),
@@ -769,6 +796,8 @@ const SecretKeyProtection: P.CoderType<V4SecretKeyProtectionType> = /* @__PURE__
     ),
     {
       encode: (from) => {
+        if (from.TAG === 'aead')
+          return { TAG: 'aead', data: { ...from.data.params, secret: from.data.secret } };
         if (from.TAG === 'plain' || from.TAG === 'encrypted' || from.TAG === 'encrypted2')
           return from;
         // RFC 4880 §5.5.3 and RFC 9580 §3.7.2.1: any other known symmetric
@@ -777,6 +806,10 @@ const SecretKeyProtection: P.CoderType<V4SecretKeyProtectionType> = /* @__PURE__
         return { TAG: 'encryptedDirect', data: { enc: from.TAG, ...from.data } };
       },
       decode: (value) => {
+        if (value.TAG === 'aead') {
+          const { enc, aead, S2K, iv, secret } = value.data;
+          return { TAG: 'aead', data: { params: { enc, aead, S2K, iv }, secret } };
+        }
         if (value.TAG !== 'encryptedDirect') return value;
         // RFC 9580 §3.7.2.1 marks direct cipher-id usage as LegacyCFB:
         // readable for v4-and-earlier keys, but Generate? No. This encoder only
@@ -793,7 +826,7 @@ const SecretKeyProtection: P.CoderType<V4SecretKeyProtectionType> = /* @__PURE__
 })();
 type V6SecretKeyProtectionRawType =
   | { TAG: 'plain'; data: P.UnwrapCoder<typeof PlainSecretKey> }
-  | { TAG: 'aead'; data: { params: V6AEADParamsType; secret: Bytes } }
+  | { TAG: 'aead'; data: { params: AEADParamsType; secret: Bytes } }
   | { TAG: 'encrypted'; data: { params: EncryptedSecretKeyParamsType; secret: Bytes } };
 const V6SecretKeyUsage = /* @__PURE__ */ P.map(P.U8, { plain: 0, aead: 253, encrypted: 254 });
 const V6SecretKeyProtectionRaw: P.CoderType<V6SecretKeyProtectionRawType> = /* @__PURE__ */ P.tag(
@@ -1537,7 +1570,7 @@ function deriveKey(
 function deriveS2KKey(S2K: TArg<S2KType>, len: number, password: TArg<Bytes>): TRet<Bytes> {
   const s2kRaw = S2K as S2KType;
   if (s2kRaw.TAG === 'argon2') {
-    const { salt, t, p, encodedM } = s2kRaw.data;
+    const { salt, t, p, encodedM } = validateArgon2S2K(s2kRaw.data);
     // RFC 9580 §3.7.1.4 invokes Argon2id with passphrase P, salt S,
     // t/p, memory m=2^encoded_m KiB, version 0x13, and output length T.
     return argon2id(password, salt, {
@@ -2238,7 +2271,7 @@ const checkV6S2KHash = (key: SecretKeyType, s2k_: TArg<S2KType>) => {
  * Decrypts the secret scalar from a PGP secret-key packet.
  * @param password - Secret-key passphrase.
  * @param key - Parsed secret-key packet.
- * @param packetTag - Optional outer packet tag for v6 AEAD secret keys.
+ * @param packetTag - Optional outer packet tag for AEAD secret keys.
  * @returns Secret scalar as a bigint.
  * @throws If the packet uses unsupported encryption or fails checksum validation. {@link Error}
  * @example
@@ -2278,7 +2311,6 @@ export function decodeSecretKey(
     return secretChecksumCoder.decode(secret, secret.type.data.secret);
   }
   if (secret.type.TAG === 'aead') {
-    if (secret.pub.version !== 6) throw new Error('PGP.secretKey: AEAD requires a v6 key packet');
     const data = secret.type.data;
     const keyLen = EncryptionKeySize[data.enc];
     if (keyLen === undefined) throw new Error(`PGP.secretKey: unknown encryption mode=${data.enc}`);
@@ -2297,7 +2329,7 @@ export function decodeSecretKey(
         // RFC 9580 §5.5.3 derives the AEAD KEK with HKDF-SHA256 over
         // `packet type || version || cipher || AEAD`, while AEAD AAD is the
         // packet-prefix octet plus the encoded public-key packet fields.
-        const info = packetInfo(tag, 6, data.enc, data.aead);
+        const info = packetInfo(tag, secret.pub.version === 6 ? 6 : 4, data.enc, data.aead);
         const kek = hkdf(sha256, derived, undefined, info, keyLen);
         const aad = concatBytes(
           Uint8Array.of(0xc0 | packetTagId(tag)),
@@ -2356,18 +2388,16 @@ export function decodeSecretKey(
 }
 
 function createPrivKey(
+  packetTag: SecretKeyPacketTag,
   pub: TArg<PubKeyPacketType>,
   key: TArg<Bytes>,
   password?: string,
   salt?: TArg<Bytes>,
-  iv?: TArg<Bytes>,
-  // RFC 9580 §9.5 says MUST NOT generate SHA-1 as an S2K KDF, but GnuPG
-  // 2.4.7 still does for v4 secret keys; keep it to avoid fingerprinting.
-  hash = 'sha1',
-  count = 240,
-  enc = 'aes128'
+  iv?: TArg<Bytes>
 ): SecretKeyType {
   const pubKey = pub as PubKeyPacketType;
+  const enc = 'aes256';
+  const aead = 'GCM';
   const keyLen = EncryptionKeySize[enc];
   if (keyLen === undefined) throw new Error(`PGP.secretKey: unknown encryption mode=${enc}`);
   // Export key without password. RFC 9580 §11.3.1 allows fixed-length EC
@@ -2378,15 +2408,38 @@ function createPrivKey(
       pub: pubKey,
       type: { TAG: 'plain', data: { secret: secretChecksumCoder.encode(key) } },
     };
-  // RFC 4880 §3.7.1.3 / RFC 9580 §3.7.1.3: iterated-and-salted S2K carries an 8-octet salt.
-  if (!isBytes(salt)) throw new Error('PGP.secretKey: no salt');
-  if (!isBytes(iv)) throw new Error('PGP.secretKey: no iv');
-  const encKey = deriveKey(hash, keyLen, utf8.decode(password), salt, count);
-  const keyBytes = opaquempi.encode(key);
-  const secretClear = concatBytes(keyBytes, sha1(keyBytes));
-  const secret = Encryption[enc].encrypt(secretClear, encKey, iv);
-  const S2K = { TAG: 'iterated', data: { hash, salt, count } } as const;
-  return { pub: pubKey, type: { TAG: 'encrypted', data: { enc, S2K, iv, secret } } };
+  if (!isBytes(salt) || salt.length !== 16)
+    throw new Error('PGP.secretKey: Argon2 salt must be 16 bytes');
+  if (!isBytes(iv) || iv.length !== aeadNonceLen(aead))
+    throw new Error(`PGP.secretKey: ${aead} nonce must be ${aeadNonceLen(aead)} bytes`);
+  const S2K = {
+    TAG: 'argon2',
+    data: {
+      salt,
+      t: ARGON2_DEFAULT_T,
+      p: ARGON2_DEFAULT_P,
+      encodedM: ARGON2_DEFAULT_ENCODED_M,
+    },
+  } as const;
+  const derived = deriveS2KKey(S2K, keyLen, utf8.decode(password));
+  const version = pubKey.version === 6 ? 6 : 4;
+  const info = packetInfo(packetTag, version, enc, aead);
+  const kek = hkdf(sha256, derived, undefined, info, keyLen);
+  const aad = concatBytes(
+    Uint8Array.of(0xc0 | packetTagId(packetTag)),
+    PubKeyPacketCoder.encode(pubKey)
+  );
+  const secretKey: SecretKeyType = {
+    pub: pubKey,
+    type: { TAG: 'plain', data: { secret: Uint8Array.of() } },
+  };
+  // Usage 253 encrypts only the algorithm-specific secret-key octets. It has
+  // no legacy checksum or SHA-1 trailer because GCM authenticates the payload.
+  const secretClear = secretPayload(secretKey).encode(bytesToNumberBE(key));
+  const secret = gcm(kek, iv, aad).encrypt(secretClear);
+  derived.fill(0);
+  kek.fill(0);
+  return { pub: pubKey, type: { TAG: 'aead', data: { enc, aead, S2K, iv, secret } } };
 }
 
 /**
@@ -2583,10 +2636,10 @@ export function formatPublic(
  * @param user - OpenPGP user ID string.
  * @param password - Optional secret-key passphrase.
  * @param createdAt - Key creation time as UNIX timestamp in seconds.
- * @param edSalt - Salt for the signing secret-key S2K envelope.
- * @param edIV - IV for the signing secret-key S2K envelope.
- * @param cvSalt - Salt for the encryption subkey S2K envelope.
- * @param cvIV - IV for the encryption subkey S2K envelope.
+ * @param edSalt - 16-byte Argon2 salt for the signing secret-key envelope.
+ * @param edIV - 12-byte AES-GCM nonce for the signing secret-key envelope.
+ * @param cvSalt - 16-byte Argon2 salt for the encryption subkey envelope.
+ * @param cvIV - 12-byte AES-GCM nonce for the encryption subkey envelope.
  * @returns ASCII-armored private key block.
  * @throws If the supplied key material, timestamp, or secret-key envelope parameters are invalid. {@link Error}
  * @example
@@ -2606,27 +2659,27 @@ export function formatPrivate(
   user: string,
   password?: string,
   createdAt = 0,
-  edSalt: TArg<Uint8Array> = randomBytes(8),
-  edIV: TArg<Uint8Array> = randomBytes(16),
-  cvSalt: TArg<Uint8Array> = randomBytes(8),
-  cvIV: TArg<Uint8Array> = randomBytes(16)
+  edSalt: TArg<Uint8Array> = randomBytes(16),
+  edIV: TArg<Uint8Array> = randomBytes(12),
+  cvSalt: TArg<Uint8Array> = randomBytes(16),
+  cvIV: TArg<Uint8Array> = randomBytes(12)
 ): string {
   edPriv = abytes(edPriv, 32, 'edPriv');
   cvPriv = abytes(cvPriv, 32, 'cvPriv');
   user = astring(user, 'user');
   if (password !== undefined) password = astring(password, 'password');
   validateDate(createdAt, 'createdAt');
-  edSalt = abytes(edSalt, 8, 'edSalt');
-  edIV = abytes(edIV, 16, 'edIV');
-  cvSalt = abytes(cvSalt, 8, 'cvSalt');
-  cvIV = abytes(cvIV, 16, 'cvIV');
+  edSalt = abytes(edSalt, 16, 'edSalt');
+  edIV = abytes(edIV, 12, 'edIV');
+  cvSalt = abytes(cvSalt, 16, 'cvSalt');
+  cvIV = abytes(cvIV, 12, 'cvIV');
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
-  const edSecret = createPrivKey(edPubPacket, edPriv, password, edSalt, edIV);
+  const edSecret = createPrivKey('secretKey', edPubPacket, edPriv, password, edSalt, edIV);
   // Keep this wrapper as the fixed v4 transferable-secret-key packet sequence;
   // local normalization converts the Curve25519 secret from native little-endian
   // bytes to the fixed-width big-endian MPI input that `createPrivKey()` expects.
   const cvPrivLE = P.U256BE.encode(P.U256LE.decode(cvPriv));
-  const cvSecret = createPrivKey(cvPubPacket, cvPrivLE, password, cvSalt, cvIV);
+  const cvSecret = createPrivKey('secretSubkey', cvPubPacket, cvPrivLE, password, cvSalt, cvIV);
   return privArmor.encode([
     { TAG: 'secretKey', data: edSecret },
     { TAG: 'userId', data: user },
