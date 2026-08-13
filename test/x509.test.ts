@@ -1138,7 +1138,7 @@ describe('x509', () => {
       ci.ber = undefined;
       return CMS.encode(ci);
     })();
-    deepStrictEqual(CMS.verify(withoutAttrs).signedAttrs, false);
+    deepStrictEqual(CMS.verify(withoutAttrs, { allowUntrusted: true }).signedAttrs, false);
   });
   it('CMS.sign encodes digest/signature AlgorithmIdentifier params as absent (RFC 5652 sections 10.1.1/10.1.2)', () => {
     const tpl = getEdnsJiyaTpl();
@@ -3052,10 +3052,22 @@ describe('x509', () => {
     const okOpts = { time: CERT_CREATED, chain: [root] as string[] };
     const v = CMS.verify(signed, okOpts);
     deepStrictEqual(typeof v.signer.tbs, 'object');
+    throws(
+      () => CMS.verify(signed, { ...okOpts, allowUntrusted: 'yes' as never }),
+      /allowUntrusted expected boolean/
+    );
     CMS.verify(signed, { ...okOpts, checkSignatures: true });
-    // Best-effort mode for environments without system trust roots: verify signatures and
-    // return chain, while leaving trust-anchor policy to the caller.
-    CMS.verify(signed, { time: okOpts.time, checkSignatures: true });
+    throws(
+      () => CMS.verify(signed, { time: okOpts.time, checkSignatures: true }),
+      /requires a trust anchor.*allowUntrusted:true/
+    );
+    const untrusted = CMS.verify(signed, {
+      time: okOpts.time,
+      checkSignatures: true,
+      allowUntrusted: true,
+    });
+    deepStrictEqual(untrusted.trusted, false);
+    deepStrictEqual(v.trusted, true);
     const parsed = CMS.signed(signed);
     const sig = parsed.signerInfos[0].signature;
     if (!sig) throw new Error('missing signer signature');
@@ -3063,8 +3075,15 @@ describe('x509', () => {
     if (at < 0) throw new Error('signature bytes not found in cms payload');
     const tampered = new Uint8Array(signed);
     tampered[at + sig.length - 1] ^= 0x01;
-    CMS.verify(tampered, { ...okOpts, checkSignatures: false });
+    deepStrictEqual(CMS.verify(tampered, { ...okOpts, checkSignatures: false }).trusted, false);
     throws(() => CMS.verify(tampered, { ...okOpts, checkSignatures: true }));
+    throws(() =>
+      CMS.verify(tampered, {
+        time: okOpts.time,
+        checkSignatures: true,
+        allowUntrusted: true,
+      })
+    );
   });
   it('requires chain to terminate at supplied trust anchors (RFC 5280 section 6)', () => {
     const tpl = getEdnsJiyaTpl();
@@ -3074,6 +3093,15 @@ describe('x509', () => {
     throws(
       () => CMS.verify(signed, { time: CERT_CREATED, chain: [wrongRoot], checkSignatures: true }),
       /certificate chain does not terminate at a supplied trust anchor/
+    );
+    deepStrictEqual(
+      CMS.verify(signed, {
+        time: CERT_CREATED,
+        chain: [wrongRoot],
+        checkSignatures: true,
+        allowUntrusted: true,
+      }).trusted,
+      false
     );
     const rootDer = certDersFromVector('openssl/p384-root.pem')[0];
     const forgedRoot = CERTUtils.Certificate.decode(rootDer);
@@ -3085,7 +3113,10 @@ describe('x509', () => {
         CMS.verify(signed, { time: CERT_CREATED, chain: [forgedRootDer], checkSignatures: true }),
       /certificate chain does not terminate at a supplied trust anchor/
     );
-    CMS.verify(signed, { time: CERT_CREATED, chain: [root], checkSignatures: true });
+    deepStrictEqual(
+      CMS.verify(signed, { time: CERT_CREATED, chain: [root], checkSignatures: true }).trusted,
+      true
+    );
   });
   it('verifies certificate signatures along the chain (RFC 5280 section 6.1.3)', () => {
     const tpl = getEdnsJiyaTpl();
@@ -3254,8 +3285,10 @@ describe('x509', () => {
       time: CERT_CREATED,
       chain: [],
       checkSignatures: true,
+      allowUntrusted: true,
     });
     deepStrictEqual(out.chain.length, 2);
+    deepStrictEqual(out.trusted, false);
   });
   it('verify rejects detached/attached content mismatch via messageDigest attr (RFC 5652 section 5.4)', () => {
     const tpl = getEdnsJiyaTpl();
@@ -3289,7 +3322,12 @@ describe('x509', () => {
     ci.content = __TEST.CMSSignedData.encode(sd);
     ci.ber = undefined;
     throws(
-      () => CMS.verify(CMS.encode(ci), { time: CERT_CREATED, checkSignatures: true }),
+      () =>
+        CMS.verify(CMS.encode(ci), {
+          time: CERT_CREATED,
+          checkSignatures: true,
+          allowUntrusted: true,
+        }),
       /CMS signature invalid/
     );
   });

@@ -48,10 +48,10 @@ import { ed448, x448 } from '@noble/curves/ed448.js';
 import { p256, p384, p521 } from '@noble/curves/nist.js';
 import { abool, equalBytes } from '@noble/curves/utils.js';
 import { abytes, type TArg, type TRet } from '@noble/hashes/utils.js';
-import { base64urlnopad, utils as baseUtils } from '@scure/base';
+import { base64urlnopad } from '@scure/base';
 import * as P from 'micro-packed';
 import { ASN1 } from './asn1.ts';
-import { deepFreeze } from './utils.ts';
+import { chainCoders, deepFreeze } from './utils.ts';
 
 const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
@@ -104,7 +104,7 @@ function jwkPointCoder<P extends CurvePoint<any, P>>(
 ): TRet<P.Coder<Uint8Array, JwkAffine>> {
   // RFC 7518 EC JWK fields encode full-width SEC 1 affine coordinates with
   // base64url, so preserve fixed field-element widths here.
-  const FpC = baseUtils.chain(fixCoder(pc.Fp), base64urlnopad);
+  const FpC = chainCoders(fixCoder(pc.Fp), base64urlnopad);
   return {
     encode: (bytes: TArg<Uint8Array>): JwkAffine => {
       bytes = abytes(bytes, undefined, 'bytes');
@@ -121,14 +121,15 @@ function jwkPointCoder<P extends CurvePoint<any, P>>(
   } as unknown as TRet<P.Coder<Uint8Array, JwkAffine>>;
 }
 
-const jwkBytesCoder: P.Coder<Uint8Array, JwkBasic> = {
-  // RFC 8037 OKP JWK keys store the public key octet string directly in the
-  // base64url-encoded `x` field.
+const jwkBytesCoder = (publicKeyLength: number): P.Coder<Uint8Array, JwkBasic> => ({
+  // RFC 8037 OKP JWK keys store one fixed-width public-key octet string in
+  // the base64url-encoded `x` field.
   encode: (bytes: TArg<Uint8Array>): JwkBasic => ({
-    x: base64urlnopad.encode(abytes(bytes, undefined, 'bytes')),
+    x: base64urlnopad.encode(abytes(bytes, publicKeyLength, 'public key')),
   }),
-  decode: (key: JwkBasic): TRet<Uint8Array> => base64urlnopad.decode(key.x) as TRet<Uint8Array>,
-};
+  decode: (key: JwkBasic): TRet<Uint8Array> =>
+    abytes(base64urlnopad.decode(key.x), publicKeyLength, 'public key') as TRet<Uint8Array>,
+});
 
 type Curve = typeof p256 | typeof ed25519 | typeof x25519;
 type KeyUsage = 'deriveBits' | 'deriveKey' | 'sign' | 'verify';
@@ -174,7 +175,10 @@ function jwkConverter(
     },
     decode: (key: JsonWebKey): TRet<Uint8Array> => {
       checkKey(key);
-      return coder.decode(key as JwkAffine) as TRet<Uint8Array>;
+      const raw = coder.decode(key as JwkAffine) as Uint8Array;
+      if ('isValidPublicKey' in curve.utils && !curve.utils.isValidPublicKey(raw))
+        throw new Error('wrong public key');
+      return raw as TRet<Uint8Array>;
     },
   });
   const secretKey: JWKConverter['secretKey'] = deepFreeze({
@@ -534,6 +538,7 @@ function derConverter(
     return params.data;
   }
   const expectedCurve = info.TAG === 'EC' ? checkParams(info.data) : undefined;
+  const publicKeyLength = info.TAG === 'EC' ? undefined : curve.lengths.publicKey;
   function checkAlgo(keyInfo: KeyInfo) {
     // Each exported converter is fixed to one algorithm family, and EC
     // converters also pin one namedCurve OID for both SPKI and PKCS#8.
@@ -544,7 +549,7 @@ function derConverter(
   }
   const publicKey: P.Coder<Uint8Array, Uint8Array> = {
     encode: (key: TArg<Uint8Array>): TRet<Uint8Array> => {
-      const raw = key as Uint8Array;
+      const raw = abytes(key, publicKeyLength, 'public key');
       if ('isValidPublicKey' in curve.utils) {
         if (!curve.utils.isValidPublicKey(raw)) throw new Error('wrong public key');
       }
@@ -554,7 +559,7 @@ function derConverter(
     decode: (key: TArg<Uint8Array>): TRet<Uint8Array> => {
       const decoded = SPKI.decode(key);
       checkAlgo(decoded.algorithm.info);
-      const publicKey = decoded.publicKey;
+      const publicKey = abytes(decoded.publicKey, publicKeyLength, 'public key');
       if ('isValidPublicKey' in curve.utils) {
         if (!curve.utils.isValidPublicKey(publicKey)) throw new Error('wrong public key');
       }
@@ -780,7 +785,7 @@ export const p521_der: TRet<DERConverter> = /* @__PURE__ */ (() =>
  */
 export const ed25519_jwk: TRet<JWKConverter> = /* @__PURE__ */ jwkConverter(
   ed25519,
-  jwkBytesCoder,
+  jwkBytesCoder(32),
   // RFC 8037 §3.1 uses `alg="EdDSA"` for Ed25519 JOSE signatures, but
   // WebCrypto exports `alg="Ed25519"`; keep the WebCrypto form for byte-for-byte round-trips.
   { kty: 'OKP', crv: 'Ed25519', alg: 'Ed25519' },
@@ -814,7 +819,7 @@ export const ed25519_der: TRet<DERConverter> = /* @__PURE__ */ derConverter(ed25
  */
 export const ed448_jwk: TRet<JWKConverter> = /* @__PURE__ */ jwkConverter(
   ed448,
-  jwkBytesCoder,
+  jwkBytesCoder(57),
   // RFC 8037 §3.1 uses `alg="EdDSA"` for Ed448 JOSE signatures, but
   // WebCrypto exports `alg="Ed448"`; keep the WebCrypto form for byte-for-byte round-trips.
   { kty: 'OKP', crv: 'Ed448', alg: 'Ed448' },
@@ -848,7 +853,7 @@ export const ed448_der: TRet<DERConverter> = /* @__PURE__ */ derConverter(ed448,
  */
 export const x25519_jwk: TRet<JWKConverter> = /* @__PURE__ */ jwkConverter(
   x25519,
-  jwkBytesCoder,
+  jwkBytesCoder(32),
   // RFC 8037 uses X25519 with the ECDH-ES algorithm family, while WebCrypto
   // exports omit `alg`; keep it unset for byte-for-byte round-trips.
   { kty: 'OKP', crv: 'X25519' },
@@ -882,7 +887,7 @@ export const x25519_der: TRet<DERConverter> = /* @__PURE__ */ derConverter(x2551
  */
 export const x448_jwk: TRet<JWKConverter> = /* @__PURE__ */ jwkConverter(
   x448,
-  jwkBytesCoder,
+  jwkBytesCoder(56),
   // RFC 8037 uses X448 with the ECDH-ES algorithm family, while WebCrypto
   // exports omit `alg`; keep it unset for byte-for-byte round-trips.
   { kty: 'OKP', crv: 'X448' },

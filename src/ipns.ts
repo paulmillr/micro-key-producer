@@ -5,17 +5,10 @@
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { abytes, concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
-import { base32, hex, utils } from '@scure/base';
-import { astring } from './utils.ts';
-
+import { base32, hex } from '@scure/base';
 // Keep raw lowercase base36 digits without a multibase prefix; IPNS callers add
 // and remove the canonical leading `k` themselves.
-const base36 = utils.chain(
-  utils.radix(36),
-  utils.alphabet('0123456789abcdefghijklmnopqrstuvwxyz'),
-  utils.padding(0),
-  utils.join('')
-);
+import { astring, base36 } from './utils.ts';
 
 /**
  * Formats an IPNS public key into the canonical `ipns://k...` form.

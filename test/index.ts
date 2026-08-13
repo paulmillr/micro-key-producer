@@ -8,6 +8,7 @@ import './pgp.test.ts';
 import './slip10/index.test.mjs';
 import './ssh.test.ts';
 import './tor.test.ts';
+import './utils.test.ts';
 import './x509-nist.test.ts';
 import './x509.test.ts';
 

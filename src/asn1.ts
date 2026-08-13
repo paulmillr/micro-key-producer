@@ -327,6 +327,24 @@ type ASN1AnyValue =
   | { TAG: 'octet'; data: Uint8Array }
   | { TAG: 'raw'; data: TLVNode };
 type ASN1SetOpts = { ber?: boolean };
+// ASN.1 trees may be attacker-controlled at public decode and encode boundaries. Keep
+// every schema-less recursive traversal below the JavaScript stack limit and
+// cap wide trees before array/spread operations can exhaust process resources.
+const ASN1_MAX_DEPTH = 64;
+const ASN1_MAX_NODES = 10_000;
+type ASN1Budget = { nodes: number };
+const asn1Budget = (): ASN1Budget => ({ nodes: 0 });
+const takeASN1Budget = (budget: ASN1Budget, depth: number): void => {
+  if (depth > ASN1_MAX_DEPTH)
+    throw new Error(`ASN.1 nesting depth exceeds limit ${ASN1_MAX_DEPTH}`);
+  budget.nodes += 1;
+  if (budget.nodes > ASN1_MAX_NODES)
+    throw new Error(`ASN.1 node count exceeds limit ${ASN1_MAX_NODES}`);
+};
+const checkASN1Children = (budget: ASN1Budget, count: number): void => {
+  if (count > ASN1_MAX_NODES - budget.nodes)
+    throw new Error(`ASN.1 node count exceeds limit ${ASN1_MAX_NODES}`);
+};
 const _ASN1 = /* @__PURE__ */ (() => {
   // All tags are not mandatory. Nevertheless, still included to see if something decoded wrong
   const tagPrimitive = /* @__PURE__ */ P.map(P.bits(5), {
@@ -797,47 +815,56 @@ const _ASN1 = /* @__PURE__ */ (() => {
       throw new Error('not supported');
     },
   });
+  const tlvNodeFromBytes = (raw: Uint8Array, budget: ASN1Budget, depth: number): TLVNode => {
+    takeASN1Budget(budget, depth);
+    const tag = raw[0];
+    let pos = 1;
+    let tagHex: string | undefined;
+    if ((tag & 0x1f) === 0x1f) {
+      while (true) {
+        if (pos >= raw.length) throw new Error('TLVNode high-tag-number truncated');
+        const b = raw[pos++];
+        if (!(b & 0x80)) break;
+      }
+      tagHex = bytesToHex(raw.subarray(0, pos));
+    }
+    const len = DERLength.decode(raw.subarray(pos), { allowUnreadBytes: true });
+    const valueAt = pos + DERLength.encode(len).length;
+    if (valueAt + len !== raw.length) throw new Error('TLVNode raw length mismatch');
+    const value = raw.subarray(valueAt);
+    const base: Pick<TLVNode, 'tag' | 'tagHex'> = tagHex ? { tag, tagHex } : { tag };
+    if (tag & 0x20) {
+      const items: TLVNode[] = [];
+      let at = 0;
+      while (at < value.length) {
+        // RFC 5280 §4.1 defines X.509 DER as tag/length/value. Reuse the
+        // generic one-TLV reader here so constructed raw nodes preserve
+        // high-tag-number identifier octets instead of treating them as length bytes.
+        const child = Any.decode(value.subarray(at), { allowUnreadBytes: true });
+        items.push(tlvNodeFromBytes(child, budget, depth + 1));
+        at += child.length;
+      }
+      return { ...base, children: items };
+    }
+    return { ...base, valueHex: bytesToHex(value) };
+  };
+  const tlvNodeToBytes = (
+    n: TArg<TLVNode>,
+    budget: ASN1Budget,
+    depth: number
+  ): TRet<Uint8Array> => {
+    takeASN1Budget(budget, depth);
+    if (n.children) checkASN1Children(budget, n.children.length);
+    const value = n.children
+      ? concatBytes(...n.children.map((i) => tlvNodeToBytes(i, budget, depth + 1)))
+      : hexToBytes(n.valueHex || '');
+    const tag = n.tagHex ? hexToBytes(n.tagHex) : Uint8Array.of(n.tag);
+    if (tag[0] !== n.tag) throw new Error('TLVNode tagHex/tag mismatch');
+    return concatBytes(tag, DERLength.encode(value.length), value) as TRet<Uint8Array>;
+  };
   const TLVNode = /* @__PURE__ */ P.apply(Any, {
-    encode(raw): TLVNode {
-      const tag = raw[0];
-      let pos = 1;
-      let tagHex: string | undefined;
-      if ((tag & 0x1f) === 0x1f) {
-        while (true) {
-          if (pos >= raw.length) throw new Error('TLVNode high-tag-number truncated');
-          const b = raw[pos++];
-          if (!(b & 0x80)) break;
-        }
-        tagHex = bytesToHex(raw.subarray(0, pos));
-      }
-      const len = DERLength.decode(raw.subarray(pos), { allowUnreadBytes: true });
-      const valueAt = pos + DERLength.encode(len).length;
-      if (valueAt + len !== raw.length) throw new Error('TLVNode raw length mismatch');
-      const value = raw.subarray(valueAt);
-      const base: Pick<TLVNode, 'tag' | 'tagHex'> = tagHex ? { tag, tagHex } : { tag };
-      if (tag & 0x20) {
-        const items: TLVNode[] = [];
-        let at = 0;
-        while (at < value.length) {
-          // RFC 5280 §4.1 defines X.509 DER as tag/length/value. Reuse the
-          // generic one-TLV reader here so constructed raw nodes preserve
-          // high-tag-number identifier octets instead of treating them as length bytes.
-          const child = Any.decode(value.subarray(at), { allowUnreadBytes: true });
-          items.push(TLVNode.decode(child));
-          at += child.length;
-        }
-        return { ...base, children: items };
-      }
-      return { ...base, valueHex: bytesToHex(value) };
-    },
-    decode(n: TArg<TLVNode>): TRet<Uint8Array> {
-      const value = n.children
-        ? concatBytes(...n.children.map((i) => TLVNode.encode(i)))
-        : hexToBytes(n.valueHex || '');
-      const tag = n.tagHex ? hexToBytes(n.tagHex) : Uint8Array.of(n.tag);
-      if (tag[0] !== n.tag) throw new Error('TLVNode tagHex/tag mismatch');
-      return concatBytes(tag, DERLength.encode(value.length), value) as TRet<Uint8Array>;
-    },
+    encode: (raw): TLVNode => tlvNodeFromBytes(raw, asn1Budget(), 1),
+    decode: (n: TArg<TLVNode>): TRet<Uint8Array> => tlvNodeToBytes(n, asn1Budget(), 1),
   }) satisfies P.CoderType<TLVNode>;
   const toTLV = <T>(coder: P.CoderType<T>, value: T): TLVNode =>
     TLVNode.decode(coder.encode(value));
@@ -1072,7 +1099,14 @@ const berRaw = (n: unknown): TRet<BerRawNode> => n as TRet<BerRawNode>;
 // BER metadata to re-emit indefinite/constructed forms while also exposing
 // a DER-normalized byte view for the higher-level converters.
 const _BER = {
-  parse: (src: TArg<Uint8Array>, pos: number, allowBER: boolean): TRet<BerRawNode> => {
+  parse: (
+    src: TArg<Uint8Array>,
+    pos: number,
+    allowBER: boolean,
+    budget: ASN1Budget,
+    depth: number
+  ): TRet<BerRawNode> => {
+    takeASN1Budget(budget, depth);
     const aTag = src[pos++];
     if (aTag === undefined) throw new Error('unexpected end of input');
     const cls = aTag >>> 6;
@@ -1123,7 +1157,7 @@ const _BER = {
           pos += 2;
           break;
         }
-        const n = _BER.parse(src, pos, allowBER);
+        const n = _BER.parse(src, pos, allowBER, budget, depth + 1);
         nodes.push(n);
         pos = n.pos;
       }
@@ -1217,7 +1251,7 @@ const _BER = {
     const nodes: BerRawNode[] = [];
     let at = 0;
     while (at < valueRaw.length) {
-      const n = _BER.parse(valueRaw, at, allowBER);
+      const n = _BER.parse(valueRaw, at, allowBER, budget, depth + 1);
       nodes.push(n);
       at = n.pos;
     }
@@ -1285,16 +1319,21 @@ const _BER = {
     out.push(parts[parts.length - 1]);
     return Uint8Array.from(out) as TRet<Uint8Array>;
   },
-  meta: (n: TArg<BerRawNode>): BerNode => ({
-    len: n.value.length,
-    lenBytes: n.indefinite ? 0 : n.len[0] < 0x80 ? 1 : 1 + (n.len[0] & 0x7f),
-    indefinite: n.indefinite,
-    bitUnused: n.cls === 0 && n.tagNum === 3 && !n.cons && n.value.length ? n.value[0] : undefined,
-    children: n.children?.map(_BER.meta),
-    cls: n.cls,
-    tagNum: n.tagNum,
-    cons: n.cons,
-  }),
+  meta: (n: TArg<BerRawNode>, budget: ASN1Budget, depth: number): BerNode => {
+    takeASN1Budget(budget, depth);
+    if (n.children) checkASN1Children(budget, n.children.length);
+    return {
+      len: n.value.length,
+      lenBytes: n.indefinite ? 0 : n.len[0] < 0x80 ? 1 : 1 + (n.len[0] & 0x7f),
+      indefinite: n.indefinite,
+      bitUnused:
+        n.cls === 0 && n.tagNum === 3 && !n.cons && n.value.length ? n.value[0] : undefined,
+      children: n.children?.map((child) => _BER.meta(child, budget, depth + 1)),
+      cls: n.cls,
+      tagNum: n.tagNum,
+      cons: n.cons,
+    };
+  },
   buildRaw: (cls: number, tagNum: number, value: TArg<Uint8Array>): TRet<BerRawNode> =>
     berRaw({
       tag: _BER.tag(cls, false, tagNum),
@@ -1318,7 +1357,13 @@ const _BER = {
     const width = lenBytes - 1;
     return Uint8Array.from([0x80 | width, ...lenBody(len, width, false)]) as TRet<Uint8Array>;
   },
-  node: (n: TArg<BerRawNode>, meta: BerNode): TRet<Uint8Array> => {
+  node: (
+    n: TArg<BerRawNode>,
+    meta: BerNode,
+    budget: ASN1Budget,
+    depth: number
+  ): TRet<Uint8Array> => {
+    takeASN1Budget(budget, depth);
     if (meta.cls !== n.cls || meta.tagNum !== n.tagNum)
       throw new Error(
         `BER tag mismatch expected cls=${meta.cls} tag=${meta.tagNum}, got cls=${n.cls} tag=${n.tagNum}`
@@ -1330,6 +1375,7 @@ const _BER = {
       return concatBytes(...[tag, _BER.len(v.length, meta.lenBytes), v]) as TRet<Uint8Array>;
     }
     const mm = meta.children || [];
+    checkASN1Children(budget, mm.length);
     let srcChildren: BerRawNode[] | undefined;
     if (n.cons) srcChildren = n.children || [];
     else if (n.cls === 0 && n.tagNum === 4) {
@@ -1366,7 +1412,7 @@ const _BER = {
     }
     if (!srcChildren || srcChildren.length !== mm.length)
       throw new Error('BER child shape mismatch');
-    const body = concatBytes(...srcChildren.map((c, i) => _BER.node(c, mm[i])));
+    const body = concatBytes(...srcChildren.map((c, i) => _BER.node(c, mm[i], budget, depth + 1)));
     if (meta.indefinite)
       return concatBytes(
         ...[tag, Uint8Array.from([0x80]), body, Uint8Array.from([0x00, 0x00])]
@@ -1377,10 +1423,12 @@ const _BER = {
     const allowBER = !!opts.allowBER;
     const nodes: BerNode[] = [];
     const der: Uint8Array[] = [];
+    const parseBudget = asn1Budget();
+    const metaBudget = asn1Budget();
     let pos = 0;
     while (pos < src.length) {
-      const n = _BER.parse(src, pos, allowBER);
-      nodes.push(_BER.meta(n));
+      const n = _BER.parse(src, pos, allowBER, parseBudget, 1);
+      nodes.push(_BER.meta(n, metaBudget, 1));
       der.push(n.der);
       pos = n.pos;
     }
@@ -1388,21 +1436,26 @@ const _BER = {
   },
   encode: (nodes: BerNode[], der: TArg<Uint8Array>): TRet<Uint8Array> => {
     const rawNodes: BerRawNode[] = [];
+    const parseBudget = asn1Budget();
     let pos = 0;
     while (pos < der.length) {
-      const n = _BER.parse(der, pos, false);
+      const n = _BER.parse(der, pos, false, parseBudget, 1);
       rawNodes.push(n);
       pos = n.pos;
     }
     if (rawNodes.length !== nodes.length) throw new Error('BER root node count mismatch');
-    return concatBytes(...rawNodes.map((n, i) => _BER.node(n, nodes[i]))) as TRet<Uint8Array>;
+    const nodeBudget = asn1Budget();
+    return concatBytes(
+      ...rawNodes.map((n, i) => _BER.node(n, nodes[i], nodeBudget, 1))
+    ) as TRet<Uint8Array>;
   },
   normalize: (src: TArg<Uint8Array>, opts: { allowBER?: boolean } = {}): TRet<Uint8Array> => {
     const allowBER = !!opts.allowBER;
     const out: Uint8Array[] = [];
+    const budget = asn1Budget();
     let pos = 0;
     while (pos < src.length) {
-      const n = _BER.parse(src, pos, allowBER);
+      const n = _BER.parse(src, pos, allowBER, budget, 1);
       out.push(n.der);
       pos = n.pos;
     }

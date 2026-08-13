@@ -4,7 +4,7 @@ import { p256, p384, p521 } from '@noble/curves/nist.js';
 import * as web from '@noble/curves/webcrypto.js';
 import { concatBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
-import { hex } from '@scure/base';
+import { base64urlnopad, hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { ASN1, BER, DER } from '../src/asn1.ts';
@@ -71,6 +71,104 @@ describe('convert', () => {
       publicKey: new Uint8Array(65),
     });
     throws(() => convert.p256_der.publicKey.decode(bad));
+  });
+  it('rejects wrong-width and invalid OKP public keys at JWK and DER boundaries', () => {
+    const curves = [
+      {
+        curve: ed25519,
+        jwk: convert.ed25519_jwk,
+        der: convert.ed25519_der,
+        tag: 'Ed25519' as const,
+      },
+      {
+        curve: x25519,
+        jwk: convert.x25519_jwk,
+        der: convert.x25519_der,
+        tag: 'X25519' as const,
+      },
+      { curve: ed448, jwk: convert.ed448_jwk, der: convert.ed448_der, tag: 'Ed448' as const },
+      { curve: x448, jwk: convert.x448_jwk, der: convert.x448_der, tag: 'X448' as const },
+    ];
+    for (const { curve, jwk, der, tag } of curves) {
+      const publicKey = curve.getPublicKey(curve.utils.randomSecretKey());
+      const validJwk = jwk.publicKey.encode(publicKey);
+      for (const width of [publicKey.length - 1, publicKey.length + 1]) {
+        const wrong = new Uint8Array(width);
+        throws(
+          () => jwk.publicKey.decode({ ...validJwk, x: base64urlnopad.encode(wrong) }),
+          /public key/
+        );
+        throws(() => der.publicKey.encode(wrong), /public key/);
+        const spki = SPKI.encode({
+          algorithm: { info: { TAG: tag, data: null } },
+          publicKey: wrong,
+        });
+        throws(() => der.publicKey.decode(spki), /public key/);
+      }
+      deepStrictEqual(jwk.publicKey.decode(validJwk), publicKey);
+      deepStrictEqual(der.publicKey.decode(der.publicKey.encode(publicKey)), publicKey);
+    }
+    for (const { curve, jwk, der, tag } of curves.filter(
+      ({ tag }) => tag === 'Ed25519' || tag === 'Ed448'
+    )) {
+      const publicKey = curve.getPublicKey(curve.utils.randomSecretKey());
+      const invalid = new Uint8Array(publicKey.length).fill(0x7f);
+      const validJwk = jwk.publicKey.encode(publicKey);
+      throws(
+        () => jwk.publicKey.decode({ ...validJwk, x: base64urlnopad.encode(invalid) }),
+        /wrong public key/
+      );
+      const spki = SPKI.encode({
+        algorithm: { info: { TAG: tag, data: null } },
+        publicKey: invalid,
+      });
+      throws(() => der.publicKey.decode(spki), /wrong public key/);
+    }
+  });
+  it('bounds recursive and wide schema-less ASN.1 trees', () => {
+    const nested = (nodes: number): Uint8Array => {
+      let out = Uint8Array.of(0x05, 0x00);
+      for (let i = 1; i < nodes; i++)
+        out = concatBytes(Uint8Array.of(0x30), DER.length.encode(out.length), out);
+      return out;
+    };
+    const atDepthLimit = nested(64);
+    BER.decode(atDepthLimit);
+    ASN1.TLVNode.decode(atDepthLimit);
+    const overDepthLimit = nested(65);
+    throws(() => BER.decode(overDepthLimit), /ASN\.1 nesting depth exceeds limit 64/);
+    throws(() => BER.normalize(overDepthLimit), /ASN\.1 nesting depth exceeds limit 64/);
+    throws(() => ASN1.TLVNode.decode(overDepthLimit), /ASN\.1 nesting depth exceeds limit 64/);
+    const nestedIndefinite = (nodes: number): Uint8Array => {
+      let out = Uint8Array.of(0x05, 0x00);
+      for (let i = 1; i < nodes; i++)
+        out = concatBytes(Uint8Array.of(0x30, 0x80), out, Uint8Array.of(0x00, 0x00));
+      return out;
+    };
+    BER.decode(nestedIndefinite(64), { allowBER: true });
+    throws(
+      () => BER.decode(nestedIndefinite(65), { allowBER: true }),
+      /ASN\.1 nesting depth exceeds limit 64/
+    );
+
+    type RawTree = { tag: number; valueHex?: string; children?: RawTree[] };
+    let deepTree: RawTree = { tag: 0x05, valueHex: '' };
+    for (let i = 1; i < 65; i++) deepTree = { tag: 0x30, children: [deepTree] };
+    throws(() => ASN1.TLVNode.encode(deepTree), /ASN\.1 nesting depth exceeds limit 64/);
+
+    const shallow = BER.decode(Uint8Array.of(0x04, 0x01, 0xaa));
+    let deepMeta = shallow.nodes[0];
+    for (let i = 1; i < 65; i++) deepMeta = { ...deepMeta, cons: true, children: [deepMeta] };
+    throws(() => BER.encode([deepMeta], shallow.der), /ASN\.1 nesting depth exceeds limit 64/);
+
+    const tooManyNodes = new Uint8Array(2 * 10_001);
+    for (let i = 0; i < tooManyNodes.length; i += 2) tooManyNodes[i] = 0x05;
+    throws(() => BER.decode(tooManyNodes), /ASN\.1 node count exceeds limit 10000/);
+    const wideTree = {
+      tag: 0x30,
+      children: Array.from({ length: 10_000 }, () => ({ tag: 0x05, valueHex: '' })),
+    };
+    throws(() => ASN1.TLVNode.encode(wideTree), /ASN\.1 node count exceeds limit 10000/);
   });
   it('ASN.1', () => {
     deepStrictEqual(DER.length.encode(0x7f), Uint8Array.from([0x7f]));

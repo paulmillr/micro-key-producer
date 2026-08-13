@@ -104,9 +104,14 @@ export type CmsVerifyOpts = {
    * When `false`, structure, path, and attribute validation still runs.
    */
   checkSignatures?: boolean;
+  /**
+   * Permit signature verification without a path to a supplied trust anchor.
+   * The result then reports `trusted: false`. Defaults to `false`.
+   */
+  allowUntrusted?: boolean;
   /** Intended verification purpose such as S/MIME or code signing. */
   purpose?: 'any' | 'smime' | 'codeSigning';
-  /** Optional trust anchors or intermediates used for path building. */
+  /** Signer/path certificates; successful normal verification must terminate at one of them. */
   chain?: (string | Uint8Array | Cert)[];
 };
 /** Result of CMS verification. */
@@ -119,6 +124,8 @@ export type CmsVerify = {
   signedAttrs: boolean;
   /** Parsed certificate path from signer toward issuer or root candidates. */
   chain: Cert[];
+  /** Whether the verified path terminates at a certificate supplied in `opts.chain`. */
+  trusted: boolean;
 };
 /** Detached CMS payload and signature pair. */
 export type CmsDetached = {
@@ -2416,7 +2423,9 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
         `${where}: nameConstraints/policyMappings/policyConstraints/inhibitAnyPolicy present but RFC 5280 section 6 processing is not implemented`
       );
   };
-  const { checkSignatures = true } = cfg;
+  const { checkSignatures = true, allowUntrusted = false } = cfg;
+  if (typeof allowUntrusted !== 'boolean')
+    throw new TypeError(`allowUntrusted expected boolean, got ${typeof allowUntrusted}`);
   const { signedData } = cmsSignedData(BER.view(der, cfg).der);
   const certs = cmsCerts(signedData).map((c) => X509.decode(X509C.Certificate.encode(c), cfg));
   const signerInfo = cmsSignerInfo(signedData);
@@ -2567,10 +2576,14 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
     })();
     if (!candidates.length) {
       // RFC 5280 section 6.1 path validation is anchored in trust anchors supplied by relying party.
-      // Without supplied anchors (common in browser/wasm contexts), return best-effort partial chain.
+      // Signature-only verification requires an explicit allowUntrusted opt-in.
       // RFC 5280 sections 3.2 and 6.1.4(l)/(m): self-issued intermediates are processed in
       // the path; issuer==subject terminates only after no separate parent candidate remains.
-      if (!checkSignatures || !chainItems.length || selfIssued) break;
+      if (!checkSignatures || allowUntrusted || selfIssued) break;
+      if (!chainItems.length)
+        throw new Error(
+          'CMS.verify requires a trust anchor in opts.chain; set allowUntrusted:true for signature-only verification'
+        );
       if (chain.length === 1) throw new Error('no issuer found for signer in chain');
       throw new Error(`no issuer found in chain for certificate at depth ${chain.length}`);
     }
@@ -2676,20 +2689,26 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
     chain.push(issuer);
     cur = issuer;
   }
-  if (checkSignatures && chainItems.length) {
-    // RFC 5280 section 6 path validation is anchored in trust anchors supplied by the relying party.
-    const end = chain[chain.length - 1];
-    const endDer = X509C.Certificate.encode(end);
-    const trusted = chainItems.some((a) => equalBytes(X509C.Certificate.encode(a), endDer));
-    // RFC 5280 section 6.1: validated path is rooted at an input trust anchor.
-    if (!trusted)
-      throw new Error('certificate chain does not terminate at a supplied trust anchor');
+  // RFC 5280 section 6 path validation is anchored in trust anchors supplied by the relying party.
+  // Structural-only validation cannot establish trust because certificate signatures were not checked.
+  const end = chain[chain.length - 1];
+  const endDer = X509C.Certificate.encode(end);
+  const trusted =
+    checkSignatures && chainItems.some((a) => equalBytes(X509C.Certificate.encode(a), endDer));
+  // RFC 5280 section 6.1: validated path is rooted at an input trust anchor.
+  if (checkSignatures && !trusted && !allowUntrusted) {
+    if (!chainItems.length)
+      throw new Error(
+        'CMS.verify requires a trust anchor in opts.chain; set allowUntrusted:true for signature-only verification'
+      );
+    throw new Error('certificate chain does not terminate at a supplied trust anchor');
   }
   const out = {
     signatureOid: oidName.decode(oidName.encode(signerInfo.signatureAlg.algorithm)),
     signer: signerCert,
     signedAttrs: !!signerInfo.signedAttrs,
     chain,
+    trusted,
   };
   const key = certSpkiKey(out.signer.tbs.spki);
   const attrs = signerInfo.signedAttrs;

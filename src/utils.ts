@@ -3,7 +3,7 @@
  * Utilities.
  * @module
  */
-import { randomBytes as nobleRandomBytes } from '@noble/hashes/utils.js';
+import { abytes, randomBytes as nobleRandomBytes } from '@noble/hashes/utils.js';
 import { base64, type TArg } from '@scure/base';
 import * as P from 'micro-packed';
 
@@ -64,6 +64,158 @@ export function deepFreeze<T>(obj: T): T {
   }
   return obj;
 }
+/**
+ * Composes two coders: `encode` runs inner then outer, `decode` runs them in reverse.
+ * Replaces `utils.chain` removed from `@scure/base` 2.3.
+ * @param inner - Coder applied first on encode.
+ * @param outer - Coder applied second on encode.
+ * @returns Combined coder.
+ * @example
+ * Chain a fixed-width integer coder with base64url.
+ * ```ts
+ * import { base64urlnopad } from '@scure/base';
+ * import { chainCoders } from 'micro-key-producer/utils.js';
+ * chainCoders(numCoder, base64urlnopad);
+ * ```
+ */
+export function chainCoders<F, M, T>(
+  inner: { encode: (from: F) => M; decode: (to: M) => F },
+  outer: { encode: (from: M) => T; decode: (to: T) => M }
+): { encode: (from: F) => T; decode: (to: T) => F } {
+  return {
+    encode: (from: F): T => outer.encode(inner.encode(from)),
+    decode: (to: T): F => inner.decode(outer.decode(to)),
+  };
+}
+
+// TEMPORARY: vendored from @scure/base (see base-base36.patch), which dropped the
+// `utils.radix`/`alphabet` builders in 2.3 and does not export base36 yet. Delete this
+// and `import { base36 } from '@scure/base'` once a release ships it.
+// -----------
+// Base conversion 256 <-> 36 done on 16-bit limbs, five base36 digits (one divmod by
+// 36**5) per pass, ~10x fewer inner-loop iterations than digit-at-a-time conversion.
+// Exactness: every intermediate is a non-negative integer below 2**53, so float64
+// arithmetic (including Math.floor of the quotients) is exact:
+// - encode: carry * 2**16 + limb < 36**5 * 2**16 < 2**42
+// - decode: limb * 36**5 + carry < 2**16 * 36**5 + 2**26 < 2**42
+// O(n^2) like any positional-base conversion: only for small constant-size inputs.
+const B36_GROUP = 60466176; // 36**5 < 2**26; literal so bundlers can drop it as dead code
+const B36_LETTERS = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+/**
+ * base36: lowercase alphanumeric, big-endian positional (multibase `k` payload,
+ * used by e.g. IPNS/CIDv1). Leading zero bytes map to leading `0` digits.
+ * @example
+ * Encode an IPNS multicodec key payload.
+ * ```ts
+ * import { base36 } from 'micro-key-producer/utils.js';
+ * base36.decode(base36.encode(new Uint8Array([0, 1, 2])));
+ * ```
+ */
+export const base36: {
+  encode: (from: Uint8Array) => string;
+  decode: (to: string) => Uint8Array;
+} = {
+  encode: (from: Uint8Array): string => {
+    abytes(from, undefined, 'base36 bytes');
+    const blen = from.length;
+    if (blen === 0) return '';
+    // Leading zero bytes map 1:1 to leading zero digits (at most blen-1 explicit zeros;
+    // an all-zero value still contributes one digit below).
+    let zeros = 0;
+    while (zeros < blen - 1 && from[zeros] === 0) zeros++;
+    // Pack big-endian 16-bit limbs; odd length makes the top limb a single byte.
+    const nlimbs = Math.ceil(blen / 2);
+    const limbs = new Uint16Array(nlimbs);
+    const odd = blen & 1;
+    if (odd) limbs[0] = from[0]!;
+    for (let i = odd, j = odd; i < blen; i += 2, j++) limbs[j] = (from[i]! << 8) | from[i + 1]!;
+    // Repeated divmod by 36**5; each pass emits one 5-digit group, least significant first.
+    const groups: number[] = [];
+    let pos = 0; // limbs before pos are known zero
+    while (pos < nlimbs) {
+      let carry = 0;
+      for (let i = pos; i < nlimbs; i++) {
+        const cur = carry * 0x10000 + limbs[i]!;
+        const q = Math.floor(cur / B36_GROUP);
+        carry = cur - q * B36_GROUP;
+        limbs[i] = q;
+        if (q === 0 && i === pos) pos++;
+      }
+      groups.push(carry);
+    }
+    // The top group is nonzero unless the whole value is zero, so total significant digit
+    // count is 5 per full group plus the top group's own width.
+    const top = groups.length - 1;
+    let sig = top * 5;
+    for (let v = groups[top]!; ; v = Math.floor(v / 36)) {
+      sig++;
+      if (v < 36) break;
+    }
+    const digits = new Uint8Array(zeros + sig); // leading zero digits are already 0
+    let j = digits.length - 1;
+    for (let g = 0; g < top; g++) {
+      let v = groups[g]!;
+      for (let k = 0; k < 5; k++) {
+        digits[j--] = v % 36;
+        v = Math.floor(v / 36);
+      }
+    }
+    for (let v = groups[top]!; j >= zeros; v = Math.floor(v / 36)) digits[j--] = v % 36;
+    let res = '';
+    for (const d of digits) res += B36_LETTERS[d]!;
+    return res;
+  },
+  decode: (to: string): Uint8Array => {
+    astring(to, 'base36 string');
+    const dlen = to.length;
+    if (dlen === 0) return new Uint8Array(0);
+    if (dlen >= 65536) throw new Error('invalid length');
+    const digits = new Uint8Array(dlen);
+    for (let i = 0; i < dlen; i++) {
+      const d = B36_LETTERS.indexOf(to[i]!);
+      if (d < 0) throw new Error(`invalid base36 character "${to[i]}"`);
+      digits[i] = d;
+    }
+    let zeros = 0;
+    while (zeros < dlen - 1 && digits[zeros] === 0) zeros++;
+    // Multiply-accumulate 16-bit limbs (little-endian, `used` live) group by group, most
+    // significant group first; the first group may be shorter than 5 digits, and its
+    // 36**group factor falls out of the digit fold. 6 bits/digit over-allocates safely.
+    const limbs = new Uint16Array(Math.ceil((dlen * 6) / 16) + 1);
+    let used = 0;
+    let i = 0;
+    let group = dlen % 5 || 5;
+    while (i < dlen) {
+      let gval = 0;
+      let factor = 1;
+      for (const end = i + group; i < end; i++) {
+        gval = gval * 36 + digits[i]!;
+        factor *= 36;
+      }
+      group = 5;
+      let carry = gval;
+      for (let k = 0; k < used; k++) {
+        const cur = limbs[k]! * factor + carry;
+        carry = Math.floor(cur / 0x10000);
+        limbs[k] = cur - carry * 0x10000;
+      }
+      for (; carry > 0; carry = Math.floor(carry / 0x10000)) limbs[used++] = carry % 0x10000;
+    }
+    // used === 0 means the value is zero: it still contributes one byte, like a lone
+    // zero digit does.
+    const valueBytes = used === 0 ? 1 : used * 2 - (limbs[used - 1]! < 256 ? 1 : 0);
+    const res = new Uint8Array(zeros + valueBytes); // leading zero bytes are already 0
+    let j = res.length - 1;
+    for (let k = 0; k < used; k++) {
+      const limb = limbs[k]!;
+      res[j--] = limb & 0xff;
+      if (j >= zeros) res[j--] = limb >> 8;
+    }
+    return res;
+  },
+};
+
 /**
  * Base64-armored values are commonly used in cryptographic applications, such as PGP and SSH.
  * @param name - The name of the armored value.
