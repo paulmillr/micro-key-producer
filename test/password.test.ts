@@ -2,6 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual as eql, throws } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import * as pwd from '../src/password.ts';
 
 describe('password', () => {
@@ -92,16 +93,16 @@ describe('password', () => {
   it('Secure mask', () => {
     // Basic sanity check that masks looks like safari secure password
     const vectors = [
-      'kudpoh-6zyvis-nozsyB',
-      'vicmyn-5xatit-Wuwzol',
-      'fyfdap-2fikUb-huvcyc',
-      'Xejfaw-cobfy0-morvus',
-      'vimpur-donjiB-3nilon',
-      'zucnAl-8holem-mutmeg',
-      'Dytxe8-zocwes-wasbin',
-      '4lyqyJ-jyfvyk-bibmuv',
-      'higqop-nanba7-Vommas',
-      'zuJzig-0maraz-lizpyz',
+      'quvnoh-pyjCuj-zybny2',
+      'Guhhah-daktu3-tabnaz',
+      'gastYw-titqyn-pawqi6',
+      'zopdes-xanqIb-wawqe6',
+      'Wurzip-coxjef-veqmi9',
+      'xaPka6-muqjeg-wahhaz',
+      'bikkad-Moctok-3nyndi',
+      'gEcnym-ryfgys-zawtu9',
+      'qemxow-tohmeq-wOqba4',
+      'gapvav-jaxjur-zosgY7',
     ];
     for (let i = 0; i < 10; i++) {
       const entropy = sha256(utf8ToBytes(`hello world${i}`));
@@ -117,6 +118,80 @@ describe('password', () => {
     sparse[31] = 23;
     eql(pwd.secureMask.inverse(pwd.secureMask.apply(sparse)), sparse);
     throws(() => pwd.secureMask.apply(Uint8Array.of(1)), /expected Uint8Array of length 32/);
+  });
+  it('Secure mask covers all Apple positional variants', () => {
+    const variants = new Set<string>();
+    const byDigit = new Map<number, Set<number>>();
+    for (let i = 0; i < 85; i++) {
+      // Values below 85 select each mask index directly while leaving the inner
+      // character-selection quotient at zero.
+      const entropy = new Uint8Array(32);
+      entropy[31] = i;
+      const res = pwd.secureMask.apply(entropy);
+      const chars = Array.from(res.password);
+      const digit = chars.findIndex((c) => /[0-9]/.test(c));
+      const upper = chars.findIndex((c) => /[A-Z]/.test(c));
+      eql([5, 7, 12, 14, 19].includes(digit), true);
+      eql(chars.filter((c) => /[0-9]/.test(c)).length, 1);
+      eql(chars.filter((c) => /[A-Z]/.test(c)).length, 1);
+      eql(chars.filter((c) => /[a-z]/.test(c)).length, 16);
+      variants.add(`${digit}:${upper}`);
+      if (!byDigit.has(digit)) byDigit.set(digit, new Set());
+      byDigit.get(digit)!.add(upper);
+      eql(pwd.secureMask.inverse(res), entropy);
+    }
+    eql(variants.size, 85);
+    eql(
+      Array.from(byDigit, ([digit, upper]) => [digit, upper.size]),
+      [
+        [5, 17],
+        [12, 17],
+        [7, 17],
+        [19, 17],
+        [14, 17],
+      ]
+    );
+  });
+  it('Legacy secure mask preserves released deterministic outputs', () => {
+    const vectors = [
+      'kudpoh-6zyvis-nozsyB',
+      'vicmyn-5xatit-Wuwzol',
+      'fyfdap-2fikUb-huvcyc',
+      'Xejfaw-cobfy0-morvus',
+      'vimpur-donjiB-3nilon',
+      'zucnAl-8holem-mutmeg',
+      'Dytxe8-zocwes-wasbin',
+      '4lyqyJ-jyfvyk-bibmuv',
+      'higqop-nanba7-Vommas',
+      'zuJzig-0maraz-lizpyz',
+    ];
+    eql(pwd.legacySecureMask.cardinality, 102n * 10n * 20n ** 11n * 6n ** 6n);
+    eql(pwd.legacySecureMask.entropy, 73);
+    for (let i = 0; i < vectors.length; i++) {
+      const entropy = sha256(utf8ToBytes(`hello world${i}`));
+      eql(pwd.legacySecureMask.apply(entropy).password, vectors[i]);
+      eql(pwd.legacySecureMask.inverse(pwd.legacySecureMask.apply(entropy)), entropy);
+    }
+  });
+  it('Secure mask accepts real Apple Passwords output', () => {
+    // Captured from actual iOS/macOS Keychain generation. A quarter of them carry the
+    // uppercase inside the digit group (e.g. 'sapFy4', '5Dinne'), which Apple does allow.
+    const real = readFileSync(new URL('./vectors/password-apple.txt', import.meta.url), 'utf8')
+      .split('\n')
+      .map((i) => i.trim())
+      .filter((i) => i && !i.startsWith('#'));
+    eql(real.length > 60, true);
+    for (const password of real) {
+      const entropy = pwd.secureMask.inverse({ password, entropyLeft: 0n });
+      eql(pwd.secureMask.apply(entropy).password, password);
+    }
+    // Shapes Apple never emits stay rejected.
+    for (const password of [
+      '2babab-nyxmid-Zewnud', // digit as the first password character
+      '4lyqyJ-jyfvyk-bibmuv', // digit-leading group shaped '1cvcvc'
+      'zucnAl-8holem-mutmeg', // contains 'l'
+    ])
+      throws(() => pwd.secureMask.inverse({ password, entropyLeft: 0n }), /Unknown mask/);
   });
   it('Estimates', () => {
     // Manually  sanity checked via zxcvbn && recalc

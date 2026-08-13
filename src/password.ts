@@ -283,7 +283,7 @@ class Mask {
   readonly cardinality: bigint;
   readonly entropy: number;
   readonly length: number;
-  constructor(mask: string) {
+  constructor(mask: string, alphabets: Record<string, Set<string>> = alphabet) {
     mask = mask
       .split('')
       .map((i) => TEMPLATES[i] || i)
@@ -296,7 +296,7 @@ class Mask {
     this.length = this.chars.length;
     // No local RFC/EIP defines password masks; the local API invariant is that
     // compiled masks snapshot alphabets because lengths/cardinality are cached here.
-    this.sets = this.chars.map((i) => new Set(alphabet[i] || [i]));
+    this.sets = this.chars.map((i) => new Set(alphabets[i] || [i]));
     this.lengths = this.sets.map((i) => i.size);
     this.cardinality = this.sets.reduce((acc, i) => acc * BigInt(i.size), _1n);
     this.entropy = cardinalityBits(this.cardinality);
@@ -349,17 +349,54 @@ class Mask {
 export const mask = (mask: string): TRet<Mask> => new Mask(mask) as unknown as TRet<Mask>;
 
 /*
-'Safari Keychain Secure Password'-like password:
-- good because of user-base, no fignerprinting, also passes all requirements and still readable
+Apple Passwords generated-strong-password format:
+- widely used, readable, and designed to be compatible with most services
 - mask: 'cvccvc-cvccvc-cvccvc' (20 chars, 18 non-constant chars)
-- digit inserted in first or last position of group: '1cvccv' or 'cvcvc1'
-- only one non-numeric char is upper-cased
-- uses dashes to bypass special symbol requirement, but still copyable (some other symbols will break select on click)
-- hard to verify entropy in tests :(
+- alphabet: 19 consonants (no 'l', to avoid 1/I/l ambiguity) and 6 vowels 'aeiouy'
+- digit occupies one of 5 positions: either side of a hyphen or the end of the
+  password ('1cvccv' or 'cvccv1' groups) — never the first character
+- exactly one letter is upper-cased; it can be any of the 17 letters, including one
+  inside the digit group (verified against real Keychain output, e.g. 'muzjed-5Dinne-waqnar')
+- two fixed hyphens make the password easier to transcribe, but do not satisfy every
+  service's special-character policy
+- Apple also rejects candidates containing terms from a private on-device blocklist;
+  this format-compatible implementation cannot reproduce that filtering
+- see https://rmondello.com/2024/10/07/apple-passwords-generated-strong-password-format/
 */
+const appleAlphabet: Record<string, Set<string>> = {};
+appleAlphabet['1'] = alphabet['1'];
+appleAlphabet['c'] = new Set('bcdfghjkmnpqrstvwxz');
+appleAlphabet['v'] = new Set('aeiouy');
+for (const v of 'cv')
+  appleAlphabet[v.toUpperCase()] = new Set(
+    Array.from(appleAlphabet[v]).map((i: string) => i.toUpperCase())
+  );
+deepFreeze(appleAlphabet);
+
 const secureMasks: string[] = [];
-// One digit replaces one of the original 18 syllable characters, so only 17 c/v
-// slots remain for uppercase placement.
+// Five digit positions leave 17 letters that can carry the uppercase: 85 variants.
+for (let upper = 0; upper < 17; upper++) {
+  for (let digitPos = 0; digitPos < 3; digitPos++) {
+    for (let digitLeft = 0; digitLeft < 2; digitLeft++) {
+      if (digitPos === 0 && digitLeft) continue; // digit is never the first password char
+      const groups = ['cvccvc', 'cvccvc', 'cvccvc'];
+      groups[digitPos] = digitLeft ? '1cvccv' : 'cvccv1';
+      for (let g = 0, sI = 0; g < 3; g++) {
+        for (let j = 0; j < 6; j++) {
+          if (groups[g][j] === '1') continue; // the digit itself is not a letter
+          if (sI++ !== upper) continue;
+          groups[g] = groups[g].slice(0, j) + groups[g][j].toUpperCase() + groups[g].slice(j + 1);
+        }
+      }
+      secureMasks.push(groups.join('-'));
+    }
+  }
+}
+
+// Preserve the pre-correction secureMask mapping for callers that need to reproduce
+// passwords derived by released versions. Its 102 variants, generic alphabet (including
+// 'l'), digit-leading password, and '1cvcvc' group are intentional compatibility behavior.
+const legacySecureMasks: string[] = [];
 for (let upper = 0; upper < 17; upper++) {
   for (let digitPos = 0; digitPos < 3; digitPos++) {
     for (let digitLeft = 0; digitLeft < 2; digitLeft++) {
@@ -374,13 +411,58 @@ for (let upper = 0; upper < 17; upper++) {
         sI++;
       }
       if (!res) throw new Error('Cannot find uppercase syllable index');
-      secureMasks.push(res);
+      legacySecureMasks.push(res);
     }
   }
 }
 
 /** Public shape of a compiled password mask. */
 export type MaskType = { [K in keyof Mask]: Mask[K] };
+
+const compileSecureMask = (
+  masks: string[],
+  alphabets: Record<string, Set<string>>
+): TRet<MaskType> => {
+  const size = BigInt(masks.length);
+  const concreteMask = (mask: string): Mask => new Mask(mask, alphabets);
+  const cardinality = concreteMask(masks[0]).cardinality * size;
+  const seedLen = 32;
+  return deepFreeze({
+    length: 20,
+    cardinality,
+    entropy: cardinalityBits(cardinality),
+    estimate: () => estimateAttack(cardinality),
+    apply: (entropy: TArg<Uint8Array>): ApplyResult => {
+      // The README API uses a fixed randomBytes(32) seed, so preserve that width
+      // instead of dropping leading zero bytes.
+      entropy = abytes(entropy, seedLen, 'entropy');
+      let entropyLeft = bytesToNumberBE(entropy);
+      // Split the entropy integer into a variant index and quotient so every
+      // concrete mask keeps the same inner cardinality.
+      const idx = Number(entropyLeft % size);
+      return concreteMask(masks[idx]).apply(numberToBytesBE(entropyLeft / size, seedLen));
+    },
+    inverse(res: ApplyResult) {
+      const chars = res.password.split('');
+      const maskStr = chars
+        .map((i) => {
+          const possibleValues = Object.entries(alphabets)
+            .filter(([c, _]) => ['c', 'v', 'C', 'V', '1'].includes(c))
+            .map(([c, v]): [string, Set<string>] => [c, and(v, new Set([i]))])
+            .filter(([_, v]) => v.size > 0);
+          if (possibleValues.length > 1)
+            throw new Error('Too much possible values, cannot detect mask.');
+          return possibleValues.length ? possibleValues[0][0] : i;
+        })
+        .join('');
+      const idx = masks.indexOf(maskStr);
+      if (idx < 0) throw new Error('Unknown mask');
+      const entropy = concreteMask(masks[idx]).inverse(res);
+      const entropyNum = bytesToNumberBE(entropy);
+      return numberToBytesBE(entropyNum * size + BigInt(idx), seedLen);
+    },
+  }) as unknown as TRet<MaskType>;
+};
 
 /**
  * Secure password mask, iOS keychain format.
@@ -394,42 +476,14 @@ export type MaskType = { [K in keyof Mask]: Mask[K] };
  * ```
  */
 export const secureMask: TRet<MaskType> = /* @__PURE__ */ (() => {
-  const size = BigInt(secureMasks.length);
-  const cardinality = mask(secureMasks[0]).cardinality * size;
-  const seedLen = 32;
-  return deepFreeze({
-    length: 20,
-    cardinality,
-    entropy: cardinalityBits(cardinality),
-    estimate: () => estimateAttack(cardinality),
-    apply: (entropy: TArg<Uint8Array>): ApplyResult => {
-      // No local RFC/EIP defines secureMask; the README API uses a fixed
-      // randomBytes(32) seed, so preserve that width instead of dropping leading zero bytes.
-      entropy = abytes(entropy, seedLen, 'entropy');
-      let entropyLeft = bytesToNumberBE(entropy);
-      // Split the entropy integer into {variant index mod 102, quotient} so every
-      // concrete secure mask keeps the same inner cardinality.
-      const idx = Number(entropyLeft % size);
-      return mask(secureMasks[idx]).apply(numberToBytesBE(entropyLeft / size, seedLen));
-    },
-    inverse(res: ApplyResult) {
-      const chars = res.password.split('');
-      const maskStr = chars
-        .map((i) => {
-          const possibleValues = Object.entries(alphabet)
-            .filter(([c, _]) => ['c', 'v', 'C', 'V', '1'].includes(c))
-            .map(([c, v]): [string, Set<string>] => [c, and(v, new Set([i]))])
-            .filter(([_, v]) => v.size > 0);
-          if (possibleValues.length > 1)
-            throw new Error('Too much possible values, cannot detect mask.');
-          return possibleValues.length ? possibleValues[0][0] : i;
-        })
-        .join('');
-      const idx = secureMasks.indexOf(maskStr);
-      if (idx < 0) throw new Error('Unknown mask');
-      const entropy = mask(secureMasks[idx]).inverse(res);
-      const entropyNum = bytesToNumberBE(entropy);
-      return numberToBytesBE(entropyNum * size + BigInt(idx), seedLen);
-    },
-  }) as unknown as TRet<MaskType>;
+  return compileSecureMask(secureMasks, appleAlphabet);
+})();
+
+/**
+ * Historical `secureMask` mapping from versions before the Apple-format correction.
+ * Use only to reproduce or recover passwords that were derived with those versions.
+ * New passwords should use {@link secureMask}.
+ */
+export const legacySecureMask: TRet<MaskType> = /* @__PURE__ */ (() => {
+  return compileSecureMask(legacySecureMasks, alphabet);
 })();

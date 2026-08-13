@@ -204,14 +204,22 @@ console.log(k.privateKey, k.publicKey, k.base16, k.base32, k.base36, k.contentha
 ### password: secure passwords with masks
 
 ```js
-import { mask, secureMask } from 'micro-key-producer/password.js';
+import { legacySecureMask, mask, secureMask } from 'micro-key-producer/password.js';
 import { randomBytes } from '@noble/hashes/utils.js';
 
 const seed = randomBytes(32);
 const pass = secureMask.apply(seed).password;
 // wivfi1-Zykrap-fohcij, will change on each run
-// secureMask is format from iOS keychain, see "Detailed API" section
+// secureMask follows the default Apple Passwords / iOS Keychain structure.
+
+// Only for reproducing passwords derived by versions before the format correction:
+const oldPass = legacySecureMask.apply(seed).password;
 ```
+
+`secureMask` matches the public structure of Apple's generated strong passwords. Apple also
+rejects candidates containing terms from a private on-device blocklist; that unavailable
+filter is intentionally not reproduced here. The default format is compatible with most,
+not all, service-specific password policies.
 
 Supports iOS / macOS Safari Secure Password from Keychain. Optional zxcvbn score for password bruteforce estimation
 
@@ -274,21 +282,21 @@ console.log(secureMask.estimate());
 
 // Output
 // {
-//   score: 'somewhat guessable', // ZXCVBN Score
+//   score: 'very unguessable', // ZXCVBN Score
 //   // Guess times
 //   guesses: {
-//     online_throttling: '1y 115mo', // Throttled online attack
-//     online: '1mo 10d', // Online attack
-//     // Offline attack (salte, slow hash function like bcrypt, scrypt, PBKDF2, argon, etc)
-//     slow: '57min 36sec',
-//     fast: '0 sec' // Offline attack
+//     online_throttling: 'centuries', // Throttled online attack
+//     online: 'centuries', // Online attack
+//     // Offline attack (salted, slow hash function like bcrypt, scrypt, PBKDF2, argon, etc)
+//     slow: 'centuries',
+//     fast: 'centuries' // Offline attack
 //   },
 //   // Estimated attack costs (in $)
 //   costs: {
-//     luks: 1.536122841572242, // LUKS (Linux FDE)
-//     filevault2: 0.2308740987992559, // FileVault 2 (macOS FDE)
-//     macos: 0.03341598798410283, // MaccOS v10.8+ passwords
-//     pbkdf2: 0.011138662661367609 // PBKDF2 (PBKDF2-HMAC-SHA256)
+//     luks: 14402806921619.357, // LUKS (Linux FDE)
+//     filevault2: 2168417309104.8733, // FileVault 2 (macOS FDE)
+//     macos: 321901038920.2976, // MacOS v10.8+ passwords
+//     pbkdf2: 108306331330.90167 // PBKDF2 (PBKDF2-HMAC-SHA256)
 //   }
 // }
 ```
