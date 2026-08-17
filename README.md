@@ -373,28 +373,33 @@ guarded from unauthorized access.
 
 The full API is:
 
+`HARDENED_OFFSET` is a top-level export (`0x80000000`), not a static of `HDKey`:
+
+```ts
+import { HARDENED_OFFSET } from 'micro-key-producer/slip10.js';
+```
+
 ```ts
 declare class HDKey {
-  public static HARDENED_OFFSET: number;
-  public static fromMasterSeed(seed: Uint8Array | string): HDKey;
+  public static fromMasterSeed(seed: Uint8Array): HDKey;
 
   readonly depth: number;
   readonly index: number;
-  readonly chainCode: Uint8Array | null;
+  readonly chainCode: Uint8Array;
   readonly parentFingerprint: number;
   public readonly privateKey: Uint8Array;
 
   get fingerprint(): number;
   get fingerprintHex(): string;
   get parentFingerprintHex(): string;
-  get pubKeyHash(): Uint8Array;
+  get pubHash(): Uint8Array;
   get publicKey(): Uint8Array;
   get publicKeyRaw(): Uint8Array;
 
   derive(path: string, forceHardened?: boolean): HDKey;
   deriveChild(index: number): HDKey;
-  sign(hash: Uint8Array): Uint8Array;
-  verify(hash: Uint8Array, signature: Uint8Array): boolean;
+  sign(message: Uint8Array): Uint8Array;
+  verify(message: Uint8Array, signature: Uint8Array): boolean;
 }
 ```
 
