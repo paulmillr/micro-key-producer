@@ -14,16 +14,16 @@
     "aesscr": "bin/aesscr.js"
   },
   "dependencies": {
-    "@noble/ciphers": "^2.3.0",
-    "@noble/curves": "^2.3.0",
-    "@noble/hashes": "^2.3.0",
-    "@scure/base": "^2.3.0",
-    "micro-packed": "^0.11.0"
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0",
+    "micro-packed": "0.11.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.7.0",
+    "@paulmillr/jsbt": "0.7.1",
     "bismar": "0.1.8",
-    "@types/node": "26.2.0",
+    "@types/node": "26.3.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3"
   },
@@ -32,7 +32,9 @@
     "benchmark:size": "bismar -bsm",
     "build": "tsc",
     "format": "prettier --write bin 'src/**/*.{js,ts}' 'test/*.ts'",
-    "test": "node test/index.ts",
+    "test": "node --no-warnings test/index.ts",
+    "test:bun": "bun test/index.ts",
+    "test:deno": "deno --allow-env --allow-read test/index.ts",
     "test:integration": "node test/integration.ts"
   },
   "exports": {

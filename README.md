@@ -109,6 +109,15 @@ The PGP (GPG) keys conform to
 [RFC 4880](https://datatracker.ietf.org/doc/html/rfc4880) &
 [RFC 6637](https://datatracker.ietf.org/doc/html/rfc6637). Only ed25519 algorithm is currently supported.
 
+Password-protected private keys use a memory-hard Argon2id S2K with AES-256-GCM
+([RFC 9580](https://datatracker.ietf.org/doc/html/rfc9580)) by default, which GnuPG 2.4
+and earlier cannot import. Pass `{ protection: 'legacy' }` as the last argument to emit
+the iterated-SHA-1 + AES-128-CFB envelope those versions understand:
+
+```js
+const compatKey = pgp(seed, email, pass, createdAt, { protection: 'legacy' });
+```
+
 #### gpgkp(1): Sign git commits without gnupg
 
 `gpgkp` binary is installed by the package. You can use it to sign and verify git commits.
@@ -130,6 +139,15 @@ git config --global gpg.program $(which gpgkp)
 ```sh
 git config --global user.name "Alice"
 git config --global user.email "alice@example.com"
+```
+
+Point gpgkp to your armored private key (e.g. generated with `pgp.getKeys()`) via
+environment variable. If the key is password-protected, gpgkp prompts on the terminal
+for each signature:
+
+```sh
+export GPGKP_KEY="$HOME/.config/gpgkp/key.asc"
+export GPGKP_HIDE_PASSWORD=1 # optional: don't echo '*' while typing the password
 ```
 
 ### slip10: bip32-like ed25519 keys
@@ -155,7 +173,6 @@ signing.verify(msgHash, sig);
 SLIP10 (ed25519 BIP32) HDKey implementation has been funded by the Kin Foundation for
 [Kinetic](https://github.com/kin-labs/kinetic).
 
-
 ### convert: key converter for JWK, DER, PKCS, SPKI
 
 ```ts
@@ -168,7 +185,7 @@ console.log(
   p256_der.secretKey.decode(p256_der.secretKey.encode(secretKey)),
   p256_jwk.secretKey.encode(secretKey),
   p256_jwk_ecdh.secretKey.encode(secretKey)
-)
+);
 ```
 
 The module allows to convert between "raw" noble-curves format and WebCrypto formats (JWK, DER, PKCS, SPKI).
@@ -374,27 +391,28 @@ guarded from unauthorized access.
 The full API is:
 
 ```ts
+export const HARDENED_OFFSET: number;
+
 declare class HDKey {
-  public static HARDENED_OFFSET: number;
-  public static fromMasterSeed(seed: Uint8Array | string): HDKey;
+  public static fromMasterSeed(seed: Uint8Array): HDKey;
 
   readonly depth: number;
   readonly index: number;
-  readonly chainCode: Uint8Array | null;
+  readonly chainCode: Uint8Array;
   readonly parentFingerprint: number;
   public readonly privateKey: Uint8Array;
 
   get fingerprint(): number;
   get fingerprintHex(): string;
   get parentFingerprintHex(): string;
-  get pubKeyHash(): Uint8Array;
+  get pubHash(): Uint8Array;
   get publicKey(): Uint8Array;
   get publicKeyRaw(): Uint8Array;
 
   derive(path: string, forceHardened?: boolean): HDKey;
   deriveChild(index: number): HDKey;
-  sign(hash: Uint8Array): Uint8Array;
-  verify(hash: Uint8Array, signature: Uint8Array): boolean;
+  sign(message: Uint8Array): Uint8Array;
+  verify(message: Uint8Array, signature: Uint8Array): boolean;
 }
 ```
 
