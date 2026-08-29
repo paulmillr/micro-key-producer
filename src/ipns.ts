@@ -5,10 +5,10 @@
  */
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { abytes, concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
-import { base32, hex } from '@scure/base';
-// Keep raw lowercase base36 digits without a multibase prefix; IPNS callers add
+// base36 yields raw lowercase digits without a multibase prefix; IPNS callers add
 // and remove the canonical leading `k` themselves.
-import { astring, base36 } from './utils.ts';
+import { base32, base36, hex } from '@scure/base';
+import { astring } from './utils.ts';
 
 function assertStrongEd25519PublicKey(publicKey: Uint8Array): void {
   try {

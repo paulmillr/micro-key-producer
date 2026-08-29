@@ -5,7 +5,8 @@ import { base36 } from '../src/utils.ts';
 
 const hexToArray = (hex: string) => Uint8Array.from(Buffer.from(hex, 'hex'));
 
-// Vendored base36; drop these along with the implementation once @scure/base ships it.
+// base36 is re-exported from @scure/base 2.4.0; these vectors guard the re-export's
+// leading-zero and alphabet behavior that IPNS addresses depend on.
 const VECTORS: [string, string][] = [
   ['', ''],
   ['00', '0'],
@@ -30,32 +31,6 @@ it('base36: vectors', () => {
   for (const [hex, encoded] of VECTORS) {
     eql(base36.encode(hexToArray(hex)), encoded);
     eql(base36.decode(encoded), hexToArray(hex));
-  }
-});
-
-it('base36: parity with bigint reference', () => {
-  const letters = '0123456789abcdefghijklmnopqrstuvwxyz';
-  const refEncode = (bytes: Uint8Array) => {
-    let zeros = 0;
-    while (zeros < bytes.length - 1 && bytes[zeros] === 0) zeros++;
-    let num = 0n;
-    for (const b of bytes) num = (num << 8n) | BigInt(b);
-    let res = '';
-    for (; num > 0n; num /= 36n) res = letters[Number(num % 36n)] + res;
-    if (!res && bytes.length) res = '0';
-    return letters[0].repeat(zeros) + res;
-  };
-  let seed = 0x2f6e2b1;
-  const rand = () => (seed = (seed * 48271) % 0x7fffffff) & 0xff;
-  for (let len = 0; len < 130; len++) {
-    const bytes = new Uint8Array(len).map(() => rand());
-    if (len > 2) {
-      bytes[0] = 0;
-      bytes[1] = 0;
-    }
-    const encoded = base36.encode(bytes);
-    eql(encoded, refEncode(bytes));
-    eql(base36.decode(encoded), bytes);
   }
 });
 
