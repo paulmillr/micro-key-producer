@@ -9,7 +9,7 @@ import { concatBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { base64, hex, utf8 } from '@scure/base';
 import * as P from 'micro-packed';
-import { deepStrictEqual, rejects, throws } from 'node:assert';
+import { deepStrictEqual, notDeepStrictEqual, rejects, throws } from 'node:assert';
 import { oid } from '../src/asn1.ts';
 import * as pgp from '../src/pgp.ts';
 import { base64armor } from '../src/utils.ts';
@@ -460,7 +460,16 @@ const cleartextSignature = (text: string) => {
   if (start < 0) throw new Error('missing cleartext signature block');
   return text.slice(start);
 };
-const rfc9580A3PublicKey = () => pgp.pubArmor.decode(RFC9580_A3_PUBLIC_KEY)[0].data.algo.data.pub;
+const rfc9580A3PublicKeyPacket = (): pgp.PubKeyPacketType => {
+  const packet = pgp.pubArmor.decode(RFC9580_A3_PUBLIC_KEY)[0];
+  if (!packet || packet.TAG !== 'publicKey') throw new Error('RFC 9580 primary key missing');
+  return packet.data;
+};
+const rfc9580A3PublicKey = () => {
+  const packet = rfc9580A3PublicKeyPacket();
+  if (packet.algo.TAG !== 'Ed25519') throw new Error('RFC 9580 Ed25519 key missing');
+  return packet.algo.data.pub;
+};
 const packetOverview = (packet) => {
   const data = packet.data;
   if (packet.TAG === 'publicKey' || packet.TAG === 'publicSubkey')
@@ -757,8 +766,52 @@ describe('pgp', () => {
       },
     ]);
     deepStrictEqual(
-      pgp.verifyDetached(publicKey, RFC9580_A2_SIGNATURE, utf8.decode('OpenPGP')),
+      pgp.verifyDetached(RFC9580_A2_SIGNATURE, utf8.decode('OpenPGP'), publicKey),
       true
+    );
+  });
+  it('rejects universal Ed25519 signature forgeries in v4 and v6', () => {
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const data = new TextEncoder().encode('authorize transfer');
+    const v4Head = {
+      type: 'binary',
+      algo: 'EdDSA',
+      hash: 'sha512',
+      hashed: [{ TAG: 'signatureCreationTime', data: 0 }],
+    };
+    const v4Sig = [bytesToBigInt(identity), 0n];
+    const v4 = pgp.__TESTS.verifyData(v4Head, data, v4Sig, identity);
+    const armor = pgp.sigArmor.encode([
+      {
+        TAG: 'signature',
+        data: { head: v4Head, unhashed: [], hashPrefix: v4.hashPrefix, sig: v4Sig },
+      },
+    ]);
+    deepStrictEqual(v4.verified, false);
+    deepStrictEqual(pgp.verifyDetached(armor, data, identity), false);
+    const noncanonicalIdentity = new Uint8Array(32).fill(0xff);
+    noncanonicalIdentity[0] = 0xee;
+    noncanonicalIdentity[31] = 0x7f;
+    deepStrictEqual(
+      pgp.__TESTS.verifyData(v4Head, data, v4Sig, noncanonicalIdentity).verified,
+      false
+    );
+
+    const [primary, directSig] = pgp.pubArmor.decode(RFC9580_A3_PUBLIC_KEY);
+    if (primary.TAG !== 'publicKey' || directSig.TAG !== 'signature')
+      throw new Error('expected RFC 9580 v6 direct-key signature');
+    const v6Sig = new Uint8Array(64);
+    v6Sig[0] = 1;
+    deepStrictEqual(
+      pgp.__TESTS.verifyData(
+        directSig.data.head,
+        primary.data,
+        v6Sig,
+        identity,
+        directSig.data.salt
+      ).verified,
+      false
     );
   });
   it('RFC 9580 Appendix A.3 version 6 certificate vector parses and round-trips', () => {
@@ -1073,7 +1126,9 @@ describe('pgp', () => {
       },
     ]);
     deepStrictEqual(
-      pgp.verifyDetached(rfc9580A3PublicKey(), signature, RFC9580_A6_TEXT, RFC9580_A3_FINGERPRINT),
+      pgp.verifyDetached(signature, RFC9580_A6_TEXT, rfc9580A3PublicKeyPacket(), {
+        fingerprint: RFC9580_A3_FINGERPRINT,
+      }),
       true
     );
     const raw = armorRaw(RFC9580_A7_INLINE_MESSAGE);
@@ -1111,10 +1166,10 @@ describe('pgp', () => {
     ]);
     deepStrictEqual(
       pgp.verifyDetached(
-        rfc9580A3PublicKey(),
         pgp.sigArmor.encode([packets[2]]),
         utf8.encode(packets[1].data.data),
-        RFC9580_A3_FINGERPRINT
+        rfc9580A3PublicKeyPacket(),
+        { fingerprint: RFC9580_A3_FINGERPRINT }
       ),
       true
     );
@@ -1384,7 +1439,9 @@ describe('pgp', () => {
     const cvSalt = hex.decode('050c1f3e46bfcc8d050c1f3e46bfcc8d');
     const cvIV = hex.decode('ab54be47dc65e8ac478aa2d1');
     const pubKey = pgp.formatPublic(edPriv, cvPriv, USER, CREATED);
-    const privKey = pgp.formatPrivate(
+    // Legacy JavaScript callers may still pass the removed positional envelope
+    // parameters. Extra arguments must be ignored rather than restoring nonce control.
+    const privKey = Reflect.apply(pgp.formatPrivate, undefined, [
       edPriv,
       cvPriv,
       USER,
@@ -1393,14 +1450,20 @@ describe('pgp', () => {
       edSalt,
       edIV,
       cvSalt,
-      cvIV
-    );
+      cvIV,
+    ]);
     deepStrictEqual(pgp.pubArmor.decode(pubKey), pgp.pubArmor.decode(PUB), 'publicKey (stream)');
     deepStrictEqual(pubKey, PUB, 'publicKey (armor)');
     const privatePackets = pgp.privArmor.decode(privKey);
     const protectedKeys = privatePackets.filter(
       (packet) => packet.TAG === 'secretKey' || packet.TAG === 'secretSubkey'
     );
+    const edProtection = protectedKeys[0]!.data.type.data;
+    const cvProtection = protectedKeys[1]!.data.type.data;
+    notDeepStrictEqual(edProtection.S2K.data.salt, edSalt);
+    notDeepStrictEqual(edProtection.iv, edIV);
+    notDeepStrictEqual(cvProtection.S2K.data.salt, cvSalt);
+    notDeepStrictEqual(cvProtection.iv, cvIV);
     deepStrictEqual(
       protectedKeys.map((packet) => {
         const { enc, aead, S2K, iv } = packet.data.type.data;
@@ -1475,6 +1538,50 @@ describe('pgp', () => {
     const secret = aesCfb(kek, iv, concatBytes(keyBytes, sha1(keyBytes)));
     return { pub: plain.pub, type: { TAG: 'encrypted', data: { enc: 'aes128', S2K, iv, secret } } };
   };
+  it('legacy protection emits iterated-S2K CFB envelopes for GnuPG <= 2.4', () => {
+    const argon2 = pgp.getKeys(seed, NAME_EMAIL, PWD, 0, { protection: 'argon2' });
+    const legacy = pgp.getKeys(seed, NAME_EMAIL, PWD, 0, { protection: 'legacy' });
+    deepStrictEqual(legacy.keyId, argon2.keyId);
+    deepStrictEqual(legacy.publicKey, argon2.publicKey);
+    const packets = pgp.privArmor.decode(legacy.privateKey);
+    const protectedKeys = packets.filter(
+      (packet) => packet.TAG === 'secretKey' || packet.TAG === 'secretSubkey'
+    );
+    deepStrictEqual(
+      protectedKeys.map((packet) => {
+        const { enc, S2K, iv } = packet.data.type.data;
+        return {
+          protection: packet.data.type.TAG,
+          enc,
+          s2k: S2K.TAG,
+          hash: S2K.data.hash,
+          count: S2K.data.count,
+          saltLen: S2K.data.salt.length,
+          ivLen: iv.length,
+        };
+      }),
+      Array.from({ length: 2 }, () => ({
+        protection: 'encrypted',
+        enc: 'aes128',
+        s2k: 'iterated',
+        hash: 'sha1',
+        count: 240,
+        saltLen: 8,
+        ivLen: 16,
+      }))
+    );
+    deepStrictEqual(
+      pgp.decodeSecretKey(PWD, protectedKeys[0].data, 'secretKey'),
+      bytesToBigInt(seed)
+    );
+    const cvPriv = ed25519.utils.getExtendedPublicKey(seed).head;
+    deepStrictEqual(
+      pgp.decodeSecretKey(PWD, protectedKeys[1].data, 'secretSubkey'),
+      bytesToBigInt(P.U256BE.encode(P.U256LE.decode(cvPriv)))
+    );
+    throws(() => pgp.getKeys(seed, NAME_EMAIL, PWD, 0, { protection: 'x' as never }));
+    throws(() => pgp.getKeys(seed, NAME_EMAIL, PWD, 0, 42 as never));
+  });
   it('AEAD preference subpacket enum', () => {
     const { publicKey } = pgp.getKeys(seed, NAME_EMAIL, PWD, 0);
     const pub = pgp.pubArmor.decode(mutateAEADPreference(publicKey, 3));
@@ -1896,6 +2003,7 @@ jPfr1XwC
   });
   it('Detached', () => {
     const pubKey = ed25519.getPublicKey(seed);
+    const pubPacket = pgp.getKeyId(seed, 0).edPubPacket;
     const NAME = 'John Doe';
     const EMAIL = 'example@example.com';
     const FULL_NAME = `${NAME} <${EMAIL}>`;
@@ -1916,36 +2024,72 @@ jPfr1XwC
       'UB3Q9Co0hX0XOwmhTBxZX86oYz64AQQ=\n' +
       '=Lpwi\n' +
       '-----END PGP SIGNATURE-----\n';
-    deepStrictEqual(pgp.signDetached(seed, commit, keys.fingerprint, 0), signature);
-    deepStrictEqual(pgp.verifyDetached(pubKey, signature, commit, keys.fingerprint), true);
+    deepStrictEqual(pgp.signDetached(seed, commit), signature);
+    deepStrictEqual(
+      pgp.verifyDetached(signature, commit, pubPacket, { fingerprint: keys.fingerprint }),
+      true
+    );
+    throws(
+      () => pgp.verifyDetached(signature, commit, pubKey, { fingerprint: keys.fingerprint }),
+      /fingerprint binding requires a complete public-key packet/
+    );
+    throws(
+      () => pgp.verifyDetached(signature, commit, pubPacket, { fingerprint: '' }),
+      /public key fingerprint mismatch/
+    );
     const maxTime = 2 ** 32 - 1;
     const maxTimePacket = pgp.sigArmor.decode(
-      pgp.signDetached(seed, commit, keys.fingerprint, maxTime)
+      pgp.signDetached(seed, commit, { signedAt: maxTime })
     )[0].data;
     deepStrictEqual(maxTimePacket.head.hashed, [
       { TAG: 'issuerFingerprint', data: { version: undefined, fingerprint: keys.fingerprint } },
       { TAG: 'signatureCreationTime', data: maxTime },
     ]);
     throws(
-      () => pgp.signDetached(seed, commit, keys.fingerprint, -1),
+      () => pgp.signDetached(seed, commit, { signedAt: -1 }),
       /invalid PGP signature creation time/
     );
     throws(
-      () => pgp.signDetached(seed, commit, keys.fingerprint, 1.5),
+      () => pgp.signDetached(seed, commit, { signedAt: 1.5 }),
       /invalid PGP signature creation time/
     );
     throws(
-      () => pgp.signDetached(seed, commit, keys.fingerprint, 2 ** 32),
+      () => pgp.signDetached(seed, commit, { signedAt: 2 ** 32 }),
       /invalid PGP signature creation time/
     );
-    const helloSig = pgp.signDetached(seed, 'hello', keys.fingerprint, 0);
-    const emptySig = pgp.signDetached(seed, '', keys.fingerprint, 0);
+    throws(
+      () => pgp.signDetached(seed, commit, { keyCreatedAt: -1 }),
+      /invalid PGP key creation time/
+    );
+    throws(
+      () => pgp.signDetached(seed, commit, keys.fingerprint as never),
+      /"options" expected object/
+    );
+    const createdKey = pgp.getKeyId(seed, 123);
+    const createdSig = pgp.signDetached(seed, 'created key', {
+      keyCreatedAt: 123,
+      signedAt: 456,
+    });
+    deepStrictEqual(
+      pgp.verifyDetached(createdSig, 'created key', createdKey.edPubPacket, {
+        fingerprint: createdKey.fingerprint,
+      }),
+      true
+    );
+    const helloSig = pgp.signDetached(seed, 'hello');
+    const emptySig = pgp.signDetached(seed, '');
     deepStrictEqual(
       {
-        hello: pgp.verifyDetached(pubKey, helloSig, 'hello', keys.fingerprint),
-        helloLf: pgp.verifyDetached(pubKey, helloSig, 'hello\n', keys.fingerprint),
-        empty: pgp.verifyDetached(pubKey, emptySig, '', keys.fingerprint),
-        onlyLf: pgp.verifyDetached(pubKey, emptySig, '\n', keys.fingerprint),
+        hello: pgp.verifyDetached(helloSig, 'hello', pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
+        helloLf: pgp.verifyDetached(helloSig, 'hello\n', pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
+        empty: pgp.verifyDetached(emptySig, '', pubPacket, { fingerprint: keys.fingerprint }),
+        onlyLf: pgp.verifyDetached(emptySig, '\n', pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
       },
       {
         hello: true,
@@ -1958,9 +2102,18 @@ jPfr1XwC
     const sha256Sig = signDetachedWithHash(seed, commit, keys.fingerprint, 'sha256');
     const sha1Sig = signDetachedWithHash(seed, commit, keys.fingerprint, 'sha1');
     const sha224Sig = signDetachedWithHash(seed, commit, keys.fingerprint, 'sha224');
-    deepStrictEqual(pgp.verifyDetached(pubKey, sha256Sig, commit, keys.fingerprint), true);
-    throws(() => pgp.verifyDetached(pubKey, sha1Sig, commit, keys.fingerprint), /digest/);
-    throws(() => pgp.verifyDetached(pubKey, sha224Sig, commit, keys.fingerprint), /digest/);
+    deepStrictEqual(
+      pgp.verifyDetached(sha256Sig, commit, pubPacket, { fingerprint: keys.fingerprint }),
+      true
+    );
+    throws(
+      () => pgp.verifyDetached(sha1Sig, commit, pubPacket, { fingerprint: keys.fingerprint }),
+      /digest/
+    );
+    throws(
+      () => pgp.verifyDetached(sha224Sig, commit, pubPacket, { fingerprint: keys.fingerprint }),
+      /digest/
+    );
     const [helloPacket] = pgp.sigArmor.decode(helloSig);
     const issuer = helloPacket.data.unhashed[0];
     const wrongIssuer = { TAG: 'issuer', data: '0000000000000000' };
@@ -1969,24 +2122,20 @@ jPfr1XwC
     deepStrictEqual(
       {
         duplicate: pgp.verifyDetached(
-          pubKey,
           issuerSig([...helloPacket.data.unhashed, issuer]),
           'hello',
-          keys.fingerprint
+          pubPacket,
+          { fingerprint: keys.fingerprint }
         ),
-        wrongOnly: pgp.verifyDetached(pubKey, issuerSig([wrongIssuer]), 'hello', keys.fingerprint),
-        correctWrong: pgp.verifyDetached(
-          pubKey,
-          issuerSig([issuer, wrongIssuer]),
-          'hello',
-          keys.fingerprint
-        ),
-        wrongCorrect: pgp.verifyDetached(
-          pubKey,
-          issuerSig([wrongIssuer, issuer]),
-          'hello',
-          keys.fingerprint
-        ),
+        wrongOnly: pgp.verifyDetached(issuerSig([wrongIssuer]), 'hello', pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
+        correctWrong: pgp.verifyDetached(issuerSig([issuer, wrongIssuer]), 'hello', pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
+        wrongCorrect: pgp.verifyDetached(issuerSig([wrongIssuer, issuer]), 'hello', pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
       },
       {
         duplicate: true,
@@ -2027,10 +2176,10 @@ jPfr1XwC
         },
       },
     ]);
-    deepStrictEqual(pgp.verifyDetached(pubKey, issuerlessSig, issuerlessData), true);
+    deepStrictEqual(pgp.verifyDetached(issuerlessSig, issuerlessData, pubKey), true);
     throws(
-      () => pgp.verifyDetached(pubKey, issuerlessSig, issuerlessData, keys.fingerprint),
-      /wrong fingerprint/
+      () => pgp.verifyDetached(issuerlessSig, issuerlessData, pubPacket),
+      /signature issuer fingerprint mismatch/
     );
     const issuerOnlySig = pgp.sigArmor.encode([
       {
@@ -2046,15 +2195,16 @@ jPfr1XwC
         },
       },
     ]);
-    deepStrictEqual(pgp.verifyDetached(pubKey, issuerOnlySig, issuerlessData), true);
+    deepStrictEqual(pgp.verifyDetached(issuerOnlySig, issuerlessData, pubKey), true);
     throws(
-      () => pgp.verifyDetached(pubKey, issuerOnlySig, issuerlessData, keys.fingerprint),
-      /wrong fingerprint/
+      () => pgp.verifyDetached(issuerOnlySig, issuerlessData, pubPacket),
+      /signature issuer fingerprint mismatch/
     );
-    const otherFingerprint = pgp.getKeyId(
+    const otherKey = pgp.getKeyId(
       Uint8Array.from({ length: 32 }, (_, i) => i + 1),
       0
-    ).fingerprint;
+    );
+    const otherFingerprint = otherKey.fingerprint;
     const issuerFingerprintSig = (fingerprints: string[]) => {
       const head = {
         version: undefined,
@@ -2086,17 +2236,37 @@ jPfr1XwC
         },
       ]);
     };
-    const wrongThenRightSig = issuerFingerprintSig([otherFingerprint, keys.fingerprint]);
-    deepStrictEqual(pgp.verifyDetached(pubKey, wrongThenRightSig, issuerlessData), true);
+    const claimedOtherSig = issuerFingerprintSig([otherFingerprint]);
+    deepStrictEqual(pgp.verifyDetached(claimedOtherSig, issuerlessData, pubKey), true);
+    throws(
+      () =>
+        pgp.verifyDetached(claimedOtherSig, issuerlessData, pubPacket, {
+          fingerprint: otherFingerprint,
+        }),
+      /public key fingerprint mismatch/
+    );
     deepStrictEqual(
-      pgp.verifyDetached(pubKey, wrongThenRightSig, issuerlessData, keys.fingerprint),
+      pgp.verifyDetached(claimedOtherSig, issuerlessData, otherKey.edPubPacket, {
+        fingerprint: otherFingerprint,
+      }),
+      false
+    );
+    const wrongThenRightSig = issuerFingerprintSig([otherFingerprint, keys.fingerprint]);
+    deepStrictEqual(pgp.verifyDetached(wrongThenRightSig, issuerlessData, pubKey), true);
+    deepStrictEqual(
+      pgp.verifyDetached(wrongThenRightSig, issuerlessData, pubPacket, {
+        fingerprint: keys.fingerprint,
+      }),
       true
     );
     const rightThenWrongSig = issuerFingerprintSig([keys.fingerprint, otherFingerprint]);
-    deepStrictEqual(pgp.verifyDetached(pubKey, rightThenWrongSig, issuerlessData), true);
+    deepStrictEqual(pgp.verifyDetached(rightThenWrongSig, issuerlessData, pubKey), true);
     throws(
-      () => pgp.verifyDetached(pubKey, rightThenWrongSig, issuerlessData, keys.fingerprint),
-      /wrong fingerprint/
+      () =>
+        pgp.verifyDetached(rightThenWrongSig, issuerlessData, pubPacket, {
+          fingerprint: keys.fingerprint,
+        }),
+      /signature issuer fingerprint mismatch/
     );
     packets[0].data.sig = [...packets[0].data.sig, 1n];
     throws(() => pgp.sigArmor.encode(packets));
@@ -2120,6 +2290,7 @@ jPfr1XwC
       deepStrictEqual(parsed.keyId, keys.keyId);
       deepStrictEqual(parsed.created, 0);
       deepStrictEqual(parsed.privateKey, seed);
+      deepStrictEqual(parsed.user, FULL_NAME);
     });
     it('password protected', async () => {
       const NAME = 'John Doe';
@@ -2132,6 +2303,7 @@ jPfr1XwC
       deepStrictEqual(parsed.keyId, keys.keyId);
       deepStrictEqual(parsed.created, 123);
       deepStrictEqual(parsed.privateKey, seed);
+      deepStrictEqual(parsed.user, FULL_NAME);
     });
   });
 });

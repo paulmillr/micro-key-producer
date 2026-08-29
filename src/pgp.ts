@@ -329,6 +329,8 @@ const AeadWithIVLen = /* @__PURE__ */ P.apply(AEADEnum, {
 const ARGON2_DEFAULT_T = 3;
 const ARGON2_DEFAULT_P = 4;
 const ARGON2_DEFAULT_ENCODED_M = 16;
+// RFC 9580 §3.7.1.4 illustrates its first recommended Argon2 option with
+// t=1, p=4, and m=2^21 KiB (2 GiB), so keep that costly case interoperable.
 const ARGON2_MAX_ENCODED_M = 21;
 type Argon2S2KType = { salt: Bytes; t: number; p: number; encodedM: number };
 const validateArgon2S2K = (s2k: Argon2S2KType) => {
@@ -548,7 +550,8 @@ export type PubKeyPacketAlgo =
   | { TAG: 'X448'; data: NativePubType }
   | { TAG: 'Ed25519'; data: NativePubType }
   | { TAG: 'Ed448'; data: NativePubType };
-type PubKeyPacketType = {
+/** Parsed OpenPGP public-key packet body. */
+export type PubKeyPacketType = {
   version?: undefined | 6;
   created: number;
   algo: PubKeyPacketAlgo;
@@ -1620,6 +1623,24 @@ const hashPubKey: P.CoderType<PubKeyPacketType> = /* @__PURE__ */ P.apply<
     }) as P.UnwrapCoder<typeof hashPubKeyRaw>,
 });
 
+const publicKeyFingerprint = (packet: TArg<PubKeyPacketType>): string =>
+  hex.encode(
+    packet.version === 6 ? sha256(hashPubKey.encode(packet)) : sha1(hashPubKey.encode(packet))
+  );
+
+const ed25519PublicKey = (packet: TArg<PubKeyPacketType>): TRet<Bytes> => {
+  if (packet.version === 6) {
+    if (packet.algo.TAG !== 'Ed25519')
+      throw new Error('PGP public-key packet is not an Ed25519 signing key');
+    return abytes(packet.algo.data.pub, 32, 'publicKey') as TRet<Bytes>;
+  }
+  if (packet.algo.TAG !== 'EdDSA' || packet.algo.data.curve !== 'ed25519')
+    throw new Error('PGP public-key packet is not an Ed25519 signing key');
+  const prefixed = numberToBytesBE(packet.algo.data.pub, 33);
+  if (prefixed[0] !== 0x40) throw new Error('PGP Ed25519 public key has invalid legacy prefix');
+  return prefixed.subarray(1) as TRet<Bytes>;
+};
+
 type HashUserData = { user: string };
 const hashUser: P.CoderType<HashUserData> = /* @__PURE__ */ P.struct({
   // RFC 4880 §5.2.4 / RFC 9580 §5.2.4: User ID certifications hash
@@ -2135,6 +2156,19 @@ const ed25519Digest = (hash: TArg<Bytes>): TRet<Bytes> => {
   if (hash.length < 32) throw new Error(`PGP.Ed25519: expected digest >= 32 bytes`);
   return hash as TRet<Bytes>;
 };
+const verifyEd25519Strict = (
+  signature: TArg<Bytes>,
+  message: TArg<Bytes>,
+  publicKey: TArg<Bytes>
+): boolean => {
+  try {
+    const point = ed25519.Point.fromBytes(publicKey as Bytes, false);
+    if (point.isSmallOrder() || !point.isTorsionFree()) return false;
+  } catch {
+    return false;
+  }
+  return ed25519.verify(signature, message, publicKey, { zip215: false });
+};
 function signData(
   head: TArg<SignatureHeadType>,
   unhashed: TArg<SignatureSubpacketType[]>,
@@ -2174,11 +2208,11 @@ function verifyData(
       head,
       hashPrefix,
       hash,
-      verified: ed25519.verify(sig, ed25519Digest(hash), publicKey),
+      verified: verifyEd25519Strict(sig, ed25519Digest(hash), publicKey),
     } as TRet<VerifyDataResult>;
   }
   const checked = ed25519Digest(hash);
-  const verified = ed25519.verify(EDSIGN.encode(sig as bigint[]), checked, publicKey);
+  const verified = verifyEd25519Strict(EDSIGN.encode(sig as bigint[]), checked, publicKey);
   return { head, hashPrefix, hash, verified } as TRet<VerifyDataResult>;
 }
 
@@ -2387,13 +2421,37 @@ export function decodeSecretKey(
   return secretPayload(secret).decode(decryptedKey);
 }
 
+/**
+ * Password protection for generated secret-key packets.
+ * - `'argon2'` (default): Argon2id S2K + AES-256-GCM, RFC 9580 usage 253. Memory-hard,
+ *   but GnuPG 2.4 and earlier cannot import such keys.
+ * - `'legacy'`: iterated-salted SHA-1 S2K + AES-128-CFB, usage 254. Weaker KDF; kept for
+ *   interoperability with GnuPG <= 2.4. Distinct from the even older read-only
+ *   direct-cipher "LegacyCFB" format that `decodeSecretKey()` accepts.
+ */
+export type KeyProtection = 'argon2' | 'legacy';
+type KeygenOpts = { protection?: KeyProtection };
+const validateKeygenOpts = (opts: unknown): KeygenOpts => {
+  // Legacy JavaScript callers may still pass the removed positional salt/IV
+  // byte arguments in this slot; ignore them rather than restoring nonce control.
+  if (opts === undefined || isBytes(opts)) return {};
+  if (typeof opts !== 'object' || opts === null)
+    throw new Error('PGP.getKeys: options must be an object');
+  const { protection } = opts as KeygenOpts;
+  if (protection !== undefined && protection !== 'argon2' && protection !== 'legacy')
+    throw new Error(`PGP.getKeys: unknown protection=${protection}`);
+  return { protection };
+};
+const KEYGEN_SALT_LEN = { argon2: 16, legacy: 8 } as const;
+const KEYGEN_IV_LEN = { argon2: 12, legacy: 16 } as const;
 function createPrivKey(
   packetTag: SecretKeyPacketTag,
   pub: TArg<PubKeyPacketType>,
   key: TArg<Bytes>,
   password?: string,
   salt?: TArg<Bytes>,
-  iv?: TArg<Bytes>
+  iv?: TArg<Bytes>,
+  protection: KeyProtection = 'argon2'
 ): SecretKeyType {
   const pubKey = pub as PubKeyPacketType;
   const enc = 'aes256';
@@ -2408,6 +2466,28 @@ function createPrivKey(
       pub: pubKey,
       type: { TAG: 'plain', data: { secret: secretChecksumCoder.encode(key) } },
     };
+  if (protection === 'legacy') {
+    // RFC 9580 §9.5 says MUST NOT generate SHA-1 as an S2K KDF, but GnuPG
+    // 2.4.7 still does for v4 secret keys; GnuPG <= 2.4 cannot import the
+    // usage-253 AEAD packets generated below, so keep this for interop.
+    const cfbHash = 'sha1';
+    const cfbCount = 240;
+    const cfbEnc = 'aes128';
+    const cfbKeyLen = EncryptionKeySize[cfbEnc]!;
+    if (!isBytes(salt) || salt.length !== KEYGEN_SALT_LEN.legacy)
+      throw new Error(`PGP.secretKey: iterated S2K salt must be ${KEYGEN_SALT_LEN.legacy} bytes`);
+    if (!isBytes(iv) || iv.length !== KEYGEN_IV_LEN.legacy)
+      throw new Error(`PGP.secretKey: CFB IV must be ${KEYGEN_IV_LEN.legacy} bytes`);
+    const encKey = deriveKey(cfbHash, cfbKeyLen, utf8.decode(password), salt, cfbCount);
+    const keyBytes = opaquempi.encode(key);
+    // RFC 4880 §5.5.3 / RFC 9580 §5.5.3: usage 254 appends a SHA-1 trailer
+    // inside the CFB-encrypted payload.
+    const secretClear = concatBytes(keyBytes, sha1(keyBytes));
+    const secret = Encryption[cfbEnc].encrypt(secretClear, encKey, iv);
+    encKey.fill(0);
+    const S2K = { TAG: 'iterated', data: { hash: cfbHash, salt, count: cfbCount } } as const;
+    return { pub: pubKey, type: { TAG: 'encrypted', data: { enc: cfbEnc, S2K, iv, secret } } };
+  }
   if (!isBytes(salt) || salt.length !== 16)
     throw new Error('PGP.secretKey: Argon2 salt must be 16 bytes');
   if (!isBytes(iv) || iv.length !== aeadNonceLen(aead))
@@ -2484,9 +2564,9 @@ export const privArmor: TRet<P.Coder<Packet[], string>> = /* @__PURE__ */ deepFr
  * Decode an armored detached signature back into its packet list.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { getKeyId, sigArmor, signDetached } from 'micro-key-producer/pgp.js';
+ * import { sigArmor, signDetached } from 'micro-key-producer/pgp.js';
  * const seed = randomBytes(32);
- * sigArmor.decode(signDetached(seed, 'hello', getKeyId(seed).fingerprint));
+ * sigArmor.decode(signDetached(seed, 'hello'));
  * ```
  */
 // Keep the legacy version-4 detached-signature armor label and CRC24 footer on
@@ -2527,7 +2607,7 @@ function getPublicPackets(edPriv: TArg<Bytes>, cvPriv: TArg<Bytes>, createdAt: n
       data: { curve: 'curve25519', pub: cvPub, params: { hash: 'sha256', encryption: 'aes128' } },
     },
   } as const;
-  const fingerprint = hex.encode(sha1(hashPubKey.encode(edPubPacket)));
+  const fingerprint = publicKeyFingerprint(edPubPacket);
   const keyId = fingerprint.slice(-16);
   return { edPubPacket, fingerprint, keyId, cvPubPacket };
 }
@@ -2636,12 +2716,9 @@ export function formatPublic(
  * @param user - OpenPGP user ID string.
  * @param password - Optional secret-key passphrase.
  * @param createdAt - Key creation time as UNIX timestamp in seconds.
- * @param edSalt - 16-byte Argon2 salt for the signing secret-key envelope.
- * @param edIV - 12-byte AES-GCM nonce for the signing secret-key envelope.
- * @param cvSalt - 16-byte Argon2 salt for the encryption subkey envelope.
- * @param cvIV - 12-byte AES-GCM nonce for the encryption subkey envelope.
+ * @param opts - Optional `{ protection }`; see {@link KeyProtection}.
  * @returns ASCII-armored private key block.
- * @throws If the supplied key material, timestamp, or secret-key envelope parameters are invalid. {@link Error}
+ * @throws If the supplied key material or timestamp cannot be encoded as OpenPGP packets. {@link Error}
  * @example
  * Build the password-protected private key block and matching encryption subkey.
  * ```ts
@@ -2659,27 +2736,43 @@ export function formatPrivate(
   user: string,
   password?: string,
   createdAt = 0,
-  edSalt: TArg<Uint8Array> = randomBytes(16),
-  edIV: TArg<Uint8Array> = randomBytes(12),
-  cvSalt: TArg<Uint8Array> = randomBytes(16),
-  cvIV: TArg<Uint8Array> = randomBytes(12)
+  opts?: KeygenOpts
 ): string {
   edPriv = abytes(edPriv, 32, 'edPriv');
   cvPriv = abytes(cvPriv, 32, 'cvPriv');
   user = astring(user, 'user');
   if (password !== undefined) password = astring(password, 'password');
   validateDate(createdAt, 'createdAt');
-  edSalt = abytes(edSalt, 16, 'edSalt');
-  edIV = abytes(edIV, 12, 'edIV');
-  cvSalt = abytes(cvSalt, 16, 'cvSalt');
-  cvIV = abytes(cvIV, 12, 'cvIV');
+  const protection = validateKeygenOpts(opts).protection ?? 'argon2';
+  // Envelope randomness is intentionally generated inside the production API:
+  // callers must not be able to repeat an AES-GCM key/nonce pair.
+  const edSalt = randomBytes(KEYGEN_SALT_LEN[protection]);
+  const edIV = randomBytes(KEYGEN_IV_LEN[protection]);
+  const cvSalt = randomBytes(KEYGEN_SALT_LEN[protection]);
+  const cvIV = randomBytes(KEYGEN_IV_LEN[protection]);
   const { edPubPacket, cvPubPacket, edCert, cvCert } = getCerts(edPriv, cvPriv, user, createdAt);
-  const edSecret = createPrivKey('secretKey', edPubPacket, edPriv, password, edSalt, edIV);
+  const edSecret = createPrivKey(
+    'secretKey',
+    edPubPacket,
+    edPriv,
+    password,
+    edSalt,
+    edIV,
+    protection
+  );
   // Keep this wrapper as the fixed v4 transferable-secret-key packet sequence;
   // local normalization converts the Curve25519 secret from native little-endian
   // bytes to the fixed-width big-endian MPI input that `createPrivKey()` expects.
   const cvPrivLE = P.U256BE.encode(P.U256LE.decode(cvPriv));
-  const cvSecret = createPrivKey('secretSubkey', cvPubPacket, cvPrivLE, password, cvSalt, cvIV);
+  const cvSecret = createPrivKey(
+    'secretSubkey',
+    cvPubPacket,
+    cvPrivLE,
+    password,
+    cvSalt,
+    cvIV,
+    protection
+  );
   return privArmor.encode([
     { TAG: 'secretKey', data: edSecret },
     { TAG: 'userId', data: user },
@@ -2753,6 +2846,8 @@ export function getKeyId(
  * @param user - OpenPGP user ID string.
  * @param password - Optional secret-key passphrase.
  * @param createdAt - Key creation time as UNIX timestamp in seconds.
+ * @param opts - Optional `{ protection }`; see {@link KeyProtection}. Pass
+ * `{ protection: 'legacy' }` for password-protected keys that GnuPG <= 2.4 can import.
  * @returns Armored keypair plus fingerprint data.
  * @throws If the key material or creation time cannot be encoded as OpenPGP packets. {@link Error}
  * @example
@@ -2768,7 +2863,8 @@ export function getKeys(
   privKey: TArg<Bytes>,
   user: string,
   password?: string,
-  createdAt = 0
+  createdAt = 0,
+  opts?: { protection?: KeyProtection }
 ): {
   keyId: string;
   fingerprint: string; // full fingerprint
@@ -2785,7 +2881,7 @@ export function getKeys(
   const { keyId, fingerprint } = getPublicPackets(privKey, cvPrivate, createdAt);
   const publicKey = formatPublic(privKey, cvPrivate, user, createdAt);
   // The slow part
-  const privateKey = formatPrivate(privKey, cvPrivate, user, password, createdAt);
+  const privateKey = formatPrivate(privKey, cvPrivate, user, password, createdAt, opts);
   return { keyId, fingerprint, privateKey, publicKey };
 }
 
@@ -2837,33 +2933,43 @@ function detachedType(data: TArg<Bytes | string>) {
   return typeof data === 'string' ? 'text' : 'binary';
 }
 
+/** Options for detached OpenPGP signature creation. */
+export type SignDetachedOptions = {
+  /** Creation time of the version-4 OpenPGP signing-key packet. */
+  keyCreatedAt?: number;
+  /** Signature creation time as a UNIX timestamp in seconds. */
+  signedAt?: number;
+};
+
 /**
  * Creates an armored detached OpenPGP signature.
  * @param privateKey - Ed25519 signing private key.
  * @param data - Binary or text payload to sign.
- * @param fingerprint - Full OpenPGP fingerprint of the signing key.
- * @param signedAt - Signature creation time as UNIX timestamp in seconds.
+ * @param options - Signing-key and signature creation times.
  * @returns ASCII-armored detached signature.
  * @throws If the detached payload cannot be encoded or signed as OpenPGP data. {@link Error}
  * @example
  * Create a detached signature you can send alongside the original text payload.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { getKeyId, signDetached } from 'micro-key-producer/pgp.js';
+ * import { signDetached } from 'micro-key-producer/pgp.js';
  * const seed = randomBytes(32);
- * const { fingerprint } = getKeyId(seed);
- * signDetached(seed, 'hello', fingerprint);
+ * signDetached(seed, 'hello');
  * ```
  */
 export function signDetached(
   privateKey: TArg<Bytes>,
   data: TArg<Bytes | string>,
-  fingerprint: string,
-  signedAt: number = 0
+  options: TArg<SignDetachedOptions> = {}
 ): string {
   privateKey = abytes(privateKey, 32, 'privateKey');
-  fingerprint = astring(fingerprint, 'fingerprint');
+  if (!P.utils.isPlainObject(options))
+    throw new TypeError('"options" expected object, got type=' + typeof options);
+  const keyCreatedAt = options.keyCreatedAt === undefined ? 0 : options.keyCreatedAt;
+  const signedAt = options.signedAt === undefined ? 0 : options.signedAt;
+  validateDate(keyCreatedAt, 'keyCreatedAt', 'PGP key creation time');
   validateDate(signedAt, 'signedAt', 'PGP signature creation time');
+  const { fingerprint } = getKeyId(privateKey, keyCreatedAt);
   // RFC 4880 §3.5 and RFC 9580 §3.5 define OpenPGP time fields as unsigned
   // four-octet seconds; RFC 9580 §5.2.3.11 makes Signature Creation Time that field.
   const dataType = detachedType(data);
@@ -2883,35 +2989,58 @@ export function signDetached(
   return sigArmor.encode([{ TAG: 'signature', data: sig }]);
 }
 
+/** Options for detached OpenPGP signature verification. */
+export type VerifyDetachedOptions = {
+  /** Expected fingerprint of a complete public-key packet. */
+  fingerprint?: string;
+};
+
 /**
- * Verifies an armored detached OpenPGP signature with an Ed25519 public key.
- * @param publicKey - Ed25519 public key bytes.
  * @param signature - ASCII-armored detached signature.
  * @param data - Original binary or text payload.
- * @param fingerprint - Optional expected signer fingerprint.
+ * @param publicKey - Raw Ed25519 bytes for cryptographic verification, or a complete parsed
+ * OpenPGP public-key packet for identity-bound verification.
+ * @param options - Optional expected fingerprint; requires a complete public-key packet.
  * @returns Whether the detached signature verifies.
- * @throws If the signature packet, payload type, or signer fingerprint is invalid. {@link Error}
+ * @throws If the signature, payload, public-key packet, or fingerprint binding is invalid. {@link Error}
  * @example
- * Verify the detached signature with the signer's Ed25519 public key and fingerprint.
+ * Verify the detached signature and bind it to the complete signing-key packet.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
  * import { getKeyId, signDetached, verifyDetached } from 'micro-key-producer/pgp.js';
- * import { ed25519 } from '@noble/curves/ed25519.js';
  * const privateKey = randomBytes(32);
- * const { fingerprint } = getKeyId(privateKey);
- * const signature = signDetached(privateKey, 'hello', fingerprint);
- * verifyDetached(ed25519.getPublicKey(privateKey), signature, 'hello', fingerprint);
+ * const { edPubPacket, fingerprint } = getKeyId(privateKey);
+ * const signature = signDetached(privateKey, 'hello');
+ * verifyDetached(signature, 'hello', edPubPacket, { fingerprint });
  * ```
  */
 export function verifyDetached(
-  publicKey: TArg<Bytes>,
   signature: string,
   data: TArg<Bytes | string>,
-  fingerprint?: string
+  publicKey: TArg<Bytes | PubKeyPacketType>,
+  options: TArg<VerifyDetachedOptions> = {}
 ): boolean {
-  publicKey = abytes(publicKey, 32, 'publicKey');
   signature = astring(signature, 'signature');
-  if (fingerprint !== undefined) fingerprint = astring(fingerprint, 'fingerprint');
+  if (!P.utils.isPlainObject(options))
+    throw new TypeError('"options" expected object, got type=' + typeof options);
+  const expectedFingerprint =
+    options.fingerprint === undefined
+      ? undefined
+      : astring(options.fingerprint, 'options.fingerprint');
+  let verifyKey: Bytes;
+  let keyPacket: PubKeyPacketType | undefined;
+  if (isBytes(publicKey)) {
+    verifyKey = abytes(publicKey, 32, 'publicKey');
+    if (expectedFingerprint !== undefined)
+      throw new Error('verifyDetached: fingerprint binding requires a complete public-key packet');
+  } else {
+    if (!P.utils.isPlainObject(publicKey))
+      throw new TypeError(
+        '"publicKey" expected Uint8Array or object, got type=' + typeof publicKey
+      );
+    keyPacket = PubKeyPacket.decode(PubKeyPacket.encode(publicKey as PubKeyPacketType));
+    verifyKey = ed25519PublicKey(keyPacket);
+  }
   const sigPacket = sigArmor.decode(signature);
   // NOTE: in theory there can be multiple signatures inside!
   if (sigPacket.length !== 1 || sigPacket[0].TAG !== 'signature')
@@ -2920,17 +3049,22 @@ export function verifyDetached(
   const dataType = detachedType(data);
   if (dataType !== sig.head.type)
     throw new Error('verifyDetached: wrong data type: ' + dataType + ', got:' + sig.head.type);
-  if (fingerprint) {
+  if (keyPacket) {
+    const actualFingerprint = publicKeyFingerprint(keyPacket);
+    if (expectedFingerprint !== undefined && expectedFingerprint !== actualFingerprint)
+      throw new Error('public key fingerprint mismatch');
     // RFC 9580 §5.2.3.9 leaves duplicate/conflicting subpacket resolution to
     // implementers and says most cases SHOULD use the last hashed subpacket.
-    // RFC 9580 §5.2.3.35 Issuer Fingerprint must corroborate a caller-provided
-    // full fingerprint; §5.2.3.12 Issuer Key ID is only the low 64 bits.
+    // RFC 9580 §5.2.3.35 Issuer Fingerprint must identify the same complete
+    // public-key packet used for verification; §5.2.3.12 Issuer Key ID is only
+    // the low 64 bits and cannot establish that binding.
     let issuerFingerprint: string | undefined;
     for (const subpacket of sig.head.hashed as SignatureSubpacketType[])
       if (subpacket.TAG === 'issuerFingerprint') issuerFingerprint = subpacket.data.fingerprint;
-    if (issuerFingerprint !== fingerprint) throw new Error('wrong fingerprint');
+    if (issuerFingerprint !== actualFingerprint)
+      throw new Error('signature issuer fingerprint mismatch');
   }
-  const { verified, hashPrefix } = verifyData(sig.head, data, sig.sig, publicKey, sig.salt);
+  const { verified, hashPrefix } = verifyData(sig.head, data, sig.sig, verifyKey, sig.salt);
   if (!equalBytes(hashPrefix, sig.hashPrefix)) return false;
   return verified;
 }
@@ -2947,6 +3081,8 @@ export type ParsedPrivateKey = {
   keyId: string;
   /** Raw 32-byte Ed25519 public key derived from `privateKey`. */
   publicKey: Bytes;
+  /** First User ID packet from the armored block, if present. NOT certification-validated. */
+  user?: string;
 };
 
 /**
@@ -2956,6 +3092,10 @@ export type ParsedPrivateKey = {
  * @param getPassword - Optional callback used to fetch the secret-key passphrase.
  * @returns Parsed secret key bytes and identifying metadata.
  * @throws If the armored packet layout, password callback, or decoded key material is invalid. {@link Error}
+ * @remarks Argon2 S2K derivation is synchronous. RFC 9580 §3.7.1.4 illustrates its first
+ * recommended option with `m=2^21` KiB (2 GiB), and this parser accepts that case for
+ * interoperability. Isolate password-based parsing of untrusted private keys from the main event
+ * loop.
  * @example
  * Parse an armored secret key back into raw key bytes and OpenPGP metadata.
  * ```ts
@@ -2977,8 +3117,9 @@ export async function parsePrivateKey(
       '"getPassword" expected function or undefined, got type=' + typeof getPassword
     );
   // This helper intentionally extracts only the primary Ed25519 secret packet
-  // and recomputes fingerprint/keyId locally; it does not validate User IDs,
-  // certifications, subkeys, or other transferable-key wrapper packets.
+  // and recomputes fingerprint/keyId locally; the first User ID packet is
+  // surfaced verbatim, but certifications, subkeys, and other transferable-key
+  // wrapper packets are not validated.
   const parsed = privArmor.decode(privateKey);
   const secretPacket = parsed.filter((i) => i.TAG === 'secretKey');
   if (secretPacket.length !== 1) throw new Error('multiple or zero secret keys');
@@ -2998,6 +3139,7 @@ export async function parsePrivateKey(
   if (pubPGP !== secret.pub.algo.data.pub) throw new Error('wrong publicKey, decoding failed');
   const created = secret.pub.created;
   const { fingerprint, keyId } = getKeyId(secretBytes, created);
+  const userId = parsed.find((i) => i.TAG === 'userId');
   // TODO: check if there is certPositive with valid fingerprint?
   // const signatures = parsed.filter((i) => i.TAG === 'signature').map((i) => i.data);
   return {
@@ -3006,5 +3148,6 @@ export async function parsePrivateKey(
     fingerprint,
     keyId,
     publicKey,
+    user: userId ? userId.data : undefined,
   } as TRet<ParsedPrivateKey>;
 }
