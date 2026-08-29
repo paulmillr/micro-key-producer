@@ -2,50 +2,48 @@
 !!! DANGER !!!
 !!! THIS WILL ASK LOTS OF QUESTIONS IN INTERACTIVE MODE, DON'T INCLUDE IN './index.js' !!!
 
-- The tests require git, gnupg installed.
+- The 'gpgkp bin' tests run headless (no git/gnupg/TTY) but need `npm run build` first,
+  since the bin imports the compiled ../pgp.js. The gpg-agent tests require git and gnupg.
 - Tests use an isolated temporary GNUPGHOME/HOME and remove it on process exit.
-- Run using password `123456789`: `npm run test:gpgkp -- --agent`
+- Run using password `123456789`: `node test/pgp-cli.test.ts --agent`
 */
 
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
 import { execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import path, { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as pgp from '../src/pgp.ts';
+import { RUN_AGENT, killGpgAgent, launchGpgAgent, tmpDir } from './integration-utils.ts';
 
 const BIN = 'gpgkp.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT = fs.mkdtempSync(join(tmpdir(), 'mkp-gpgkp-'));
-const PATH = join(ROOT, 'work');
-const GNUPGHOME = join(ROOT, 'gnupg');
 const SIGNER = resolve(join(__dirname, '..', 'bin', BIN));
-fs.mkdirSync(GNUPGHOME, { mode: 0o700 });
+// Created lazily in setup() so importing this file (e.g. from test/integration.ts
+// without --agent) has no side effects.
+let ROOT = '';
+let PATH = '';
+let GNUPGHOME = '';
+const setup = () => {
+  ROOT = fs.mkdtempSync(join(tmpdir(), 'mkp-gpgkp-'));
+  PATH = join(ROOT, 'work');
+  GNUPGHOME = join(ROOT, 'gnupg');
+  fs.mkdirSync(GNUPGHOME, { mode: 0o700 });
+  fs.mkdirSync(PATH);
+  process.once('exit', cleanup);
+};
 const testEnv = () => ({ ...process.env, GNUPGHOME, HOME: ROOT });
 const run = (cmd: string, opts: Parameters<typeof execSync>[1] = {}) =>
   execSync(cmd, { ...opts, env: { ...testEnv(), ...opts.env } });
-const launchAgent = () => {
-  const { status, stderr } = spawnSync(
-    'gpgconf',
-    ['--homedir', GNUPGHOME, '--launch', 'gpg-agent'],
-    {
-      env: testEnv(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  );
-  if (status) throw new Error(stderr);
-};
 const cleanup = () => {
-  spawnSync('gpgconf', ['--homedir', GNUPGHOME, '--kill', 'gpg-agent'], { stdio: 'ignore' });
+  killGpgAgent(GNUPGHOME);
   fs.rmSync(ROOT, { recursive: true, force: true });
 };
-process.once('exit', cleanup);
-const RUN_AGENT = process.argv.includes('--agent');
 
 const PGP_PASSWORD = '123456789';
 const CREATED_AT = 1637429480;
@@ -61,7 +59,7 @@ function execIgnore(cmd, opts) {
   try {
     return run(cmd, opts);
   } catch (e) {
-    console.log(`[ERR] ${cmd}: e`);
+    console.log(`[ERR] ${cmd}: ${e}`);
   }
 }
 
@@ -105,21 +103,26 @@ function gitCommit(repo, env) {
   run('git verify-commit HEAD --raw', { cwd: repo, stdio: 'inherit' });
 }
 
-async function pgpInt() {
-  fs.mkdirSync(PATH);
+function pgpInt() {
   describe('PGP Integrations', () => {
     const KEYS_TO_DELETE: string[] = [];
-    it('Import (password)', () => {
+    it.serial('Import (password)', () => {
       const seed = hex.decode('29f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
-      const keys = pgp.getKeys(seed, FULL_NAME1, PGP_PASSWORD, CREATED_AT);
+      // `protection: 'legacy'`: GnuPG <= 2.4 cannot import our default Argon2+AEAD keys.
+      const keys = pgp.getKeys(seed, FULL_NAME1, PGP_PASSWORD, CREATED_AT, {
+        protection: 'legacy',
+      });
       const privateFile = join(PATH, 'privatePass.key');
       console.log('ADD', keys.keyId);
       fs.writeFileSync(privateFile, keys.privateKey);
       gpgDeleteKey(keys.keyId);
       KEYS_TO_DELETE.push(keys.keyId);
-      run(`gpg --no-options --no-autostart --import ${privateFile}`, { stdio: 'inherit' });
+      run(
+        `gpg --no-options --no-autostart --batch --pinentry-mode loopback --passphrase ${PGP_PASSWORD} --import ${privateFile}`,
+        { stdio: 'inherit' }
+      );
     });
-    it('Import (no password)', () => {
+    it.serial('Import (no password)', () => {
       const seed = hex.decode('39f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
       const keys = pgp.getKeys(seed, FULL_NAME2, undefined, CREATED_AT);
       console.log('ADD', keys.keyId);
@@ -130,20 +133,20 @@ async function pgpInt() {
       run(`gpg --no-options --no-autostart --import ${privateFile}`, { stdio: 'inherit' });
     });
     describe('micro-gpg-signer', () => {
-      it('password', () => {
+      it.serial('password', () => {
         const repo = join(PATH, 'test-password');
         gitRepo(repo);
         gitSign(repo, '21B287CDD55ACB9F', NAME1, EMAIL1);
         gitCommit(repo, { GPGKP_KEY: join(PATH, 'privatePass.key') });
       });
-      it('no password', () => {
+      it.serial('no password', () => {
         const repo = join(PATH, 'test-no-password');
         gitRepo(repo);
         gitSign(repo, '8061EFFF72C8FD15', NAME2, EMAIL2);
         gitCommit(repo, { GPGKP_KEY: join(PATH, 'privateNopass.key') });
       });
     });
-    it('Delete keys', () => {
+    it.serial('Delete keys', () => {
       for (const k of KEYS_TO_DELETE) {
         gpgDeleteKey(k);
       }
@@ -151,11 +154,73 @@ async function pgpInt() {
   });
 }
 
+// Headless checks for the gpgkp bin itself: passwordless key, no gpg, no TTY.
+// Piped stdio is deliberate; it covers the `--status-fd` non-TTY regression.
+describe('gpgkp bin', () => {
+  const USER = 'Alice Wonder <alice@example.org>';
+  const COMMIT = 'tree abc\nauthor A <a@b> 1637429480 +0000\n\ntest commit\n';
+  const gpgkp = (key: string, args: string[], input: string) =>
+    spawnSync('node', [SIGNER, ...args], {
+      input,
+      encoding: 'utf8',
+      env: { ...process.env, GPGKP_KEY: key },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  const binSeed = hex.decode('39f47c314ee8b1c77a0b7e4c0043a04a20af46f10132855b79f9ff6c4f8a8ed9');
+  const withKey = <T>(fn: (keyFile: string, keyId: string, dir: string) => T): T =>
+    tmpDir('mkp-gpgkp-bin-', (dir) => {
+      const keys = pgp.getKeys(binSeed, USER, undefined, 0);
+      const keyFile = join(dir, 'key.asc');
+      fs.writeFileSync(keyFile, keys.privateKey);
+      return fn(keyFile, keys.keyId.toUpperCase(), dir);
+    });
+  it('signs and verifies with piped status-fd', () => {
+    withKey((keyFile, keyId, dir) => {
+      const signed = gpgkp(keyFile, ['--status-fd=2', '-bsau', keyId], COMMIT);
+      deepStrictEqual(signed.status, 0, signed.stderr);
+      deepStrictEqual(signed.stderr.includes('[GNUPG:] SIG_CREATED D 22 10 00 '), true);
+      deepStrictEqual(signed.stdout.startsWith('-----BEGIN PGP SIGNATURE-----'), true);
+      const sigFile = join(dir, 'sig.asc');
+      fs.writeFileSync(sigFile, signed.stdout);
+      const verified = gpgkp(
+        keyFile,
+        ['--keyid-format=long', '--status-fd=1', '--verify', sigFile, '-'],
+        COMMIT
+      );
+      deepStrictEqual(verified.status, 0, verified.stdout);
+      deepStrictEqual(verified.stdout.includes(`[GNUPG:] GOODSIG ${keyId} ${USER}`), true);
+      deepStrictEqual(verified.stdout.includes('[GNUPG:] VALIDSIG '), true);
+      const corrupted = gpgkp(keyFile, ['--status-fd=1', '--verify', sigFile, '-'], `${COMMIT}x`);
+      deepStrictEqual(corrupted.status, 1);
+    });
+  });
+  it('refuses to sign with a mismatched key id', () => {
+    withKey((keyFile) => {
+      const signed = gpgkp(keyFile, ['--status-fd=2', '-bsau', 'DEADBEEFDEADBEEF'], COMMIT);
+      deepStrictEqual(signed.status, 1);
+      deepStrictEqual(signed.stderr.includes('does not match GPGKP_KEY'), true);
+    });
+  });
+  it('resolves relative GPGKP_KEY against cwd', () => {
+    withKey((keyFile, keyId, dir) => {
+      const res = spawnSync('node', [SIGNER, '--status-fd=2', '-bsau', keyId], {
+        input: COMMIT,
+        encoding: 'utf8',
+        cwd: dir,
+        env: { ...process.env, GPGKP_KEY: 'key.asc' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      deepStrictEqual(res.status, 0, res.stderr);
+    });
+  });
+});
+
 if (!RUN_AGENT)
   it.skip('PGP integrations require gpg-agent: pass --agent to run this integration test', () => {});
 else {
-  launchAgent();
+  setup();
+  launchGpgAgent(GNUPGHOME, { env: testEnv() });
   pgpInt();
 }
 
-should.run(true); // no parallel tests here
+it.runWhen(import.meta.url);
