@@ -135,6 +135,21 @@ type Curve = typeof p256 | typeof ed25519 | typeof x25519;
 type KeyUsage = 'deriveBits' | 'deriveKey' | 'sign' | 'verify';
 type JWKConverter = ECConverter<JsonWebKey>;
 
+// RFC 8032 verification keys must be canonical, non-small-order points in the
+// prime-order subgroup. noble's Ed25519 compatibility default is ZIP-215, so a
+// structural isValidPublicKey() check alone is not a sufficient import policy.
+function isValidCurvePublicKey(curve: Curve, publicKey: Uint8Array): boolean {
+  if (curve === ed25519) {
+    try {
+      const point = ed25519.Point.fromBytes(publicKey, false);
+      return !point.isSmallOrder() && point.isTorsionFree();
+    } catch {
+      return false;
+    }
+  }
+  return !('isValidPublicKey' in curve.utils) || curve.utils.isValidPublicKey(publicKey);
+}
+
 // RFC 7518 §4.6 defines the ECDH-ES JOSE algorithm labels; RFC 8037 reuses
 // the same family for X25519/X448 OKP keys.
 const ECDH_ES_ALGS = [undefined, 'ECDH-ES', 'ECDH-ES+A128KW', 'ECDH-ES+A192KW', 'ECDH-ES+A256KW'];
@@ -168,16 +183,13 @@ function jwkConverter(
   const publicKey: P.Coder<Uint8Array, JsonWebKey> = deepFreeze({
     encode: (bytes: TArg<Uint8Array>) => {
       const raw = bytes as Uint8Array;
-      if ('isValidPublicKey' in curve.utils) {
-        if (!curve.utils.isValidPublicKey(raw)) throw new Error('wrong public key');
-      }
+      if (!isValidCurvePublicKey(curve, raw)) throw new Error('wrong public key');
       return { ...opts, ext: true, key_ops: pubUsage, ...coder.encode(raw) };
     },
     decode: (key: JsonWebKey): TRet<Uint8Array> => {
       checkKey(key);
       const raw = coder.decode(key as JwkAffine) as Uint8Array;
-      if ('isValidPublicKey' in curve.utils && !curve.utils.isValidPublicKey(raw))
-        throw new Error('wrong public key');
+      if (!isValidCurvePublicKey(curve, raw)) throw new Error('wrong public key');
       return raw as TRet<Uint8Array>;
     },
   });
@@ -270,8 +282,42 @@ const ECParameters = /* @__PURE__ */ (() =>
     implicitCurve: ASN1.null,
     specifiedCurve: SpecifiedECDomain,
   }))();
-const DSAParameters = /* @__PURE__ */ (() =>
-  ASN1.sequence({ p: ASN1.Integer, q: ASN1.Integer, g: ASN1.Integer }))();
+/** DSA domain parameters carried by an AlgorithmIdentifier. */
+export type DSAParams = { p: bigint; q: bigint; g: bigint };
+// FIPS 186-4 caps L at 3072 bits and N at 256 bits. Account for DER's optional
+// sign-clearing 00 byte, then reject larger hostile values before bigint conversion.
+const DSA_P_BYTES = 385;
+const DSA_Q_BYTES = 33;
+export const DSAParameters: P.CoderType<DSAParams> = /* @__PURE__ */ (() =>
+  ASN1.validate(
+    ASN1.sequence({
+      p: ASN1.integer(DSA_P_BYTES),
+      q: ASN1.integer(DSA_Q_BYTES),
+      g: ASN1.integer(DSA_P_BYTES),
+    }),
+    (params) => {
+      // Cheap structural checks only: primality and subgroup validation belong
+      // to a DSA implementation, but zero/identity/out-of-range values should
+      // not cross this key-format boundary.
+      if (params.p <= _2n) throw new Error('DSA parameters: p must be greater than 2');
+      if (params.q <= _1n || params.q >= params.p)
+        throw new Error('DSA parameters: expected 1 < q < p');
+      if (params.g <= _1n || params.g >= params.p)
+        throw new Error('DSA parameters: expected 1 < g < p');
+      if (params.p.toString(2).length > 3072 || params.g.toString(2).length > 3072)
+        throw new Error('DSA parameters: p and g must not exceed 3072 bits');
+      if (params.q.toString(2).length > 256)
+        throw new Error('DSA parameters: q must not exceed 256 bits');
+      return params;
+    }
+  ))() as P.CoderType<DSAParams>;
+/** Bounded DER INTEGER used for an encoded DSA public key value. */
+export const DSAPublicKey: P.CoderType<bigint> = /* @__PURE__ */ (() =>
+  ASN1.validate(ASN1.integer(DSA_P_BYTES), (key) => {
+    if (key <= _1n) throw new Error('DSA public key must be greater than 1');
+    if (key.toString(2).length > 3072) throw new Error('DSA public key must not exceed 3072 bits');
+    return key;
+  }))() as P.CoderType<bigint>;
 // We can re-use for pub/secret only without RSA. RSA algorithm is different.
 // AlgorithmIdentifier parameter rules vary by OID: EC MUST carry ECParameters,
 // Ed/X MUST omit parameters, rsaEncryption uses ASN.1 NULL, and DSA may carry
@@ -286,7 +332,7 @@ export const KeyAlgorithm: P.CoderType<Algo> = /* @__PURE__ */ (() =>
       Ed25519: ['Ed25519', P.constant(null)], // Ed25519
       Ed448: ['Ed448', P.constant(null)], // Ed448
       rsaEncryption: ['rsaEncryption', ASN1.null],
-      // Today we don't want to support RSA keys. In the future it can be done using `micro-rsa-dsa-dh` package
+      // RSA operations remain out of scope here; use `micro-rsa-dsa-dh` after parsing.
       // Code:
       // rsassaPss: ['1.2.840.113549.1.1.10', sequence(hashAlgorithm, maskGenAlgorithm, saltLength, trailerField)]
       // rsaesOaep: ['1.2.840.113549.1.1.7', sequence(hashAlgorithm, maskGenAlgorithm, pSourceAlgorithm)]
@@ -321,12 +367,12 @@ export const KeyAlgorithm: P.CoderType<Algo> = /* @__PURE__ */ (() =>
 // RFC 5208 §6 and RFC 5958 §2 define PKCS#8 attributes as SET OF Attribute,
 // so each decoded member must be one Attribute TLV rather than a greedy byte tail.
 const Attributes = /* @__PURE__ */ (() => ASN1.set(RawTLV))();
-type RSAOtherPrimeInfo = {
+export type RSAOtherPrimeInfo = {
   prime: bigint;
   exponent: bigint;
   coefficient: bigint;
 };
-type RSAKey = {
+export type RSAPrivateKeyValue = {
   version: bigint;
   modulus: bigint;
   publicExponent: bigint;
@@ -338,6 +384,8 @@ type RSAKey = {
   coefficient: bigint;
   otherPrimeInfos?: RSAOtherPrimeInfo[];
 };
+/** PKCS#1 RSA public-key value. */
+export type RSAPublicKeyValue = { modulus: bigint; publicExponent: bigint };
 /** Elliptic-curve parameter encoding used by DER key structures. */
 export type ECParams =
   | { TAG: 'namedCurve'; data: string }
@@ -351,7 +399,7 @@ export type KeyInfo =
   | { TAG: 'Ed25519'; data: null }
   | { TAG: 'Ed448'; data: null }
   | { TAG: 'rsaEncryption'; data: null }
-  | { TAG: 'DSA'; data: unknown };
+  | { TAG: 'DSA'; data: DSAParams | undefined };
 /** Top-level algorithm wrapper for DER key structures. */
 export type Algo = {
   /** Algorithm identifier and its associated parameters. */
@@ -473,24 +521,70 @@ export const SPKI: P.CoderType<SPKIKey> = /* @__PURE__ */ (() =>
     publicKey: ASN1.BitString,
   }))() as unknown as P.CoderType<SPKIKey>;
 
+// RFC 8017 permits large RSA keys, but an untrusted key parser still needs a
+// finite application policy. These limits match OpenSSL's public-operation
+// ceiling while allowing the DER sign-clearing byte.
+const RSA_MODULUS_BITS = 16_384;
+const RSA_VALUE_BYTES = RSA_MODULUS_BITS / 8 + 1;
+const RSA_EXPONENT_BITS = 64;
+const RSA_EXPONENT_BYTES = RSA_EXPONENT_BITS / 8 + 1;
+const RSA_OTHER_PRIMES = 8;
+const RSAValue = /* @__PURE__ */ ASN1.integer(RSA_VALUE_BYTES);
+const RSAExponent = /* @__PURE__ */ ASN1.integer(RSA_EXPONENT_BYTES);
+const rsaPublic = <T extends RSAPublicKeyValue>(key: T): T => {
+  if (key.modulus <= _1n || !(key.modulus & _1n))
+    throw new Error('RSA: modulus must be an odd integer greater than 1');
+  if (key.modulus.toString(2).length > RSA_MODULUS_BITS)
+    throw new Error(`RSA: modulus exceeds ${RSA_MODULUS_BITS}-bit limit`);
+  if (key.publicExponent < _3n || !(key.publicExponent & _1n))
+    throw new Error('RSA: public exponent must be an odd integer at least 3');
+  if (key.publicExponent.toString(2).length > RSA_EXPONENT_BITS)
+    throw new Error(`RSA: public exponent exceeds ${RSA_EXPONENT_BITS}-bit limit`);
+  if (key.publicExponent >= key.modulus)
+    throw new Error('RSA: public exponent must be smaller than modulus');
+  return key;
+};
+/** Strict PKCS#1 RSAPublicKey parser with finite integer-width policy. */
+export const RSAPublicKey: P.CoderType<RSAPublicKeyValue> = /* @__PURE__ */ (() =>
+  ASN1.validate(
+    ASN1.sequence({ modulus: RSAValue, publicExponent: RSAExponent }),
+    rsaPublic
+  ))() as P.CoderType<RSAPublicKeyValue>;
+
+const limitedArray = <T>(inner: P.CoderType<T>, max: number, name: string): P.CoderType<T[]> =>
+  P.wrap({
+    encodeStream(w, values) {
+      if (!Array.isArray(values)) throw w.err(`${name}: expected array`);
+      if (values.length > max) throw w.err(`${name}: exceeds ${max}-item limit`);
+      for (const value of values) inner.encodeStream(w, value);
+    },
+    decodeStream(r) {
+      const values: T[] = [];
+      while (!r.isEnd()) {
+        if (values.length >= max) throw r.err(`${name}: exceeds ${max}-item limit`);
+        values.push(inner.decodeStream(r));
+      }
+      return values;
+    },
+  });
 const OtherPrimeInfo = ASN1.sequence({
-  prime: ASN1.Integer,
-  exponent: ASN1.Integer,
-  coefficient: ASN1.Integer,
+  prime: RSAValue,
+  exponent: RSAValue,
+  coefficient: RSAValue,
 });
 const OtherPrimeInfos = ASN1.sequence({
-  values: P.array(null, OtherPrimeInfo),
+  values: limitedArray(OtherPrimeInfo, RSA_OTHER_PRIMES, 'RSA OtherPrimeInfos'),
 });
 const RSAPrivateKeyInner = ASN1.sequence({
-  version: ASN1.Integer,
-  modulus: ASN1.Integer,
-  publicExponent: ASN1.Integer,
-  privateExponent: ASN1.Integer,
-  prime1: ASN1.Integer,
-  prime2: ASN1.Integer,
-  exponent1: ASN1.Integer,
-  exponent2: ASN1.Integer,
-  coefficient: ASN1.Integer,
+  version: ASN1.integer(1),
+  modulus: RSAValue,
+  publicExponent: RSAExponent,
+  privateExponent: RSAValue,
+  prime1: RSAValue,
+  prime2: RSAValue,
+  exponent1: RSAValue,
+  exponent2: RSAValue,
+  coefficient: RSAValue,
   otherPrimeInfos: ASN1.optional(OtherPrimeInfos),
 });
 const rsaOtherPrimes = (version: bigint, other?: RSAOtherPrimeInfo[]) => {
@@ -503,14 +597,64 @@ const rsaOtherPrimes = (version: bigint, other?: RSAOtherPrimeInfo[]) => {
   if (version === _1n && (!other || !other.length))
     throw new Error('RSAPrivateKey: expected otherPrimeInfos for version 1');
 };
-export const RSAPrivateKey: P.CoderType<RSAKey> = P.apply(RSAPrivateKeyInner, {
-  encode(to): RSAKey {
+const gcd = (a: bigint, b: bigint): bigint => {
+  while (b) [a, b] = [b, a % b];
+  return a;
+};
+const lcm = (a: bigint, b: bigint): bigint => (a / gcd(a, b)) * b;
+const rsaPrivate = <T extends RSAPrivateKeyValue>(key: T): T => {
+  rsaPublic(key);
+  if (key.privateExponent <= _0n || key.privateExponent >= key.modulus)
+    throw new Error('RSAPrivateKey: expected 0 < privateExponent < modulus');
+  const others = key.otherPrimeInfos || [];
+  rsaOtherPrimes(key.version, key.otherPrimeInfos);
+  const factors = [key.prime1, key.prime2, ...others.map((info) => info.prime)];
+  const seen = new Set<bigint>();
+  let product = _1n;
+  let lambda = _1n;
+  for (const factor of factors) {
+    if (factor <= _2n || !(factor & _1n))
+      throw new Error('RSAPrivateKey: prime factors must be odd integers greater than 2');
+    if (seen.has(factor)) throw new Error('RSAPrivateKey: repeated prime factor');
+    seen.add(factor);
+    product *= factor;
+    if (product > key.modulus) throw new Error('RSAPrivateKey: factors do not match modulus');
+    lambda = lcm(lambda, factor - _1n);
+  }
+  if (product !== key.modulus) throw new Error('RSAPrivateKey: factors do not match modulus');
+  if ((key.publicExponent * key.privateExponent) % lambda !== _1n)
+    throw new Error('RSAPrivateKey: private exponent is inconsistent');
+  if (key.exponent1 !== key.privateExponent % (key.prime1 - _1n))
+    throw new Error('RSAPrivateKey: exponent1 is inconsistent');
+  if (key.exponent2 !== key.privateExponent % (key.prime2 - _1n))
+    throw new Error('RSAPrivateKey: exponent2 is inconsistent');
+  if (
+    key.coefficient <= _0n ||
+    key.coefficient >= key.prime1 ||
+    (key.prime2 * key.coefficient) % key.prime1 !== _1n
+  )
+    throw new Error('RSAPrivateKey: coefficient is inconsistent');
+  let priorProduct = key.prime1 * key.prime2;
+  for (const info of others) {
+    if (info.exponent !== key.privateExponent % (info.prime - _1n))
+      throw new Error('RSAPrivateKey: other-prime exponent is inconsistent');
+    if (
+      info.coefficient <= _0n ||
+      info.coefficient >= info.prime ||
+      (priorProduct * info.coefficient) % info.prime !== _1n
+    )
+      throw new Error('RSAPrivateKey: other-prime coefficient is inconsistent');
+    priorProduct *= info.prime;
+  }
+  return key;
+};
+export const RSAPrivateKey: P.CoderType<RSAPrivateKeyValue> = P.apply(RSAPrivateKeyInner, {
+  encode(to): RSAPrivateKeyValue {
     const other = to.otherPrimeInfos?.values;
-    rsaOtherPrimes(to.version, other);
-    return { ...to, otherPrimeInfos: other };
+    return rsaPrivate({ ...to, otherPrimeInfos: other });
   },
-  decode(from: RSAKey) {
-    rsaOtherPrimes(from.version, from.otherPrimeInfos);
+  decode(from: RSAPrivateKeyValue) {
+    rsaPrivate(from);
     return {
       ...from,
       otherPrimeInfos:
@@ -550,9 +694,7 @@ function derConverter(
   const publicKey: P.Coder<Uint8Array, Uint8Array> = {
     encode: (key: TArg<Uint8Array>): TRet<Uint8Array> => {
       const raw = abytes(key, publicKeyLength, 'public key');
-      if ('isValidPublicKey' in curve.utils) {
-        if (!curve.utils.isValidPublicKey(raw)) throw new Error('wrong public key');
-      }
+      if (!isValidCurvePublicKey(curve, raw)) throw new Error('wrong public key');
       // we encode what was given always by user (no method to uncompress public key without deps on point)
       return SPKI.encode({ algorithm: { info }, publicKey: raw }) as TRet<Uint8Array>;
     },
@@ -560,9 +702,7 @@ function derConverter(
       const decoded = SPKI.decode(key);
       checkAlgo(decoded.algorithm.info);
       const publicKey = abytes(decoded.publicKey, publicKeyLength, 'public key');
-      if ('isValidPublicKey' in curve.utils) {
-        if (!curve.utils.isValidPublicKey(publicKey)) throw new Error('wrong public key');
-      }
+      if (!isValidCurvePublicKey(curve, publicKey)) throw new Error('wrong public key');
       return publicKey as TRet<Uint8Array>;
     },
   };

@@ -9,7 +9,15 @@ import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { ASN1, BER, DER } from '../src/asn1.ts';
 import * as convert from '../src/convert.ts';
-import { PKCS8, PKCS8SecretKey, RSAPrivateKey, SPKI } from '../src/convert.ts';
+import {
+  DSAParameters,
+  DSAPublicKey,
+  PKCS8,
+  PKCS8SecretKey,
+  RSAPrivateKey,
+  RSAPublicKey,
+  SPKI,
+} from '../src/convert.ts';
 import { base64armor } from '../src/utils.ts';
 import { DER_VECTORS } from './convert-vectors.ts';
 
@@ -125,6 +133,35 @@ describe('convert', () => {
       throws(() => der.publicKey.decode(spki), /wrong public key/);
     }
   });
+  it('rejects small- and mixed-order Ed25519 keys at JWK and DER boundaries', () => {
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const noncanonicalIdentity = new Uint8Array(32).fill(0xff);
+    noncanonicalIdentity[0] = 0xee;
+    noncanonicalIdentity[31] = 0x7f;
+    const torsion = ed25519.Point.fromBytes(new Uint8Array(32), false);
+    const mixedOrder = ed25519.Point.BASE.add(torsion).toBytes();
+    const valid = convert.ed25519_jwk.publicKey.encode(
+      ed25519.getPublicKey(ed25519.utils.randomSecretKey())
+    );
+    for (const weak of [identity, noncanonicalIdentity, new Uint8Array(32), mixedOrder]) {
+      throws(() => convert.ed25519_jwk.publicKey.encode(weak), /wrong public key/);
+      throws(
+        () =>
+          convert.ed25519_jwk.publicKey.decode({
+            ...valid,
+            x: base64urlnopad.encode(weak),
+          }),
+        /wrong public key/
+      );
+      throws(() => convert.ed25519_der.publicKey.encode(weak), /wrong public key/);
+      const spki = SPKI.encode({
+        algorithm: { info: { TAG: 'Ed25519', data: null } },
+        publicKey: weak,
+      });
+      throws(() => convert.ed25519_der.publicKey.decode(spki), /wrong public key/);
+    }
+  });
   it('bounds recursive and wide schema-less ASN.1 trees', () => {
     const nested = (nodes: number): Uint8Array => {
       let out = Uint8Array.of(0x05, 0x00);
@@ -169,6 +206,80 @@ describe('convert', () => {
       children: Array.from({ length: 10_000 }, () => ({ tag: 0x05, valueHex: '' })),
     };
     throws(() => ASN1.TLVNode.encode(wideTree), /ASN\.1 node count exceeds limit 10000/);
+  });
+  it('bounds and validates RSA/DSA key integers', () => {
+    const bounded = ASN1.integer(2);
+    deepStrictEqual(bounded.decode(bounded.encode(0x7fffn)), 0x7fffn);
+    throws(() => bounded.encode(0x8000n), /exceeds 2-byte limit/);
+    throws(() => bounded.decode(hex.decode('0203010000')), /exceeds 2-byte limit/);
+    throws(() => ASN1.integer(0), /positive safe-integer/);
+
+    const rsaPublic = { modulus: 3233n, publicExponent: 17n };
+    deepStrictEqual(RSAPublicKey.decode(RSAPublicKey.encode(rsaPublic)), rsaPublic);
+    for (const bad of [
+      { ...rsaPublic, modulus: 0n },
+      { ...rsaPublic, modulus: 3232n },
+      { ...rsaPublic, publicExponent: 0n },
+      { ...rsaPublic, publicExponent: 1n },
+      { ...rsaPublic, publicExponent: 2n },
+      { ...rsaPublic, publicExponent: 3233n },
+      { ...rsaPublic, modulus: 1n << 16_384n },
+      { ...rsaPublic, publicExponent: (1n << 64n) + 1n },
+    ])
+      throws(() => RSAPublicKey.encode(bad));
+    // Reduced https://github.com/jedisct1/badrsa parser case: reject by encoded
+    // width before bigint conversion. The upstream corpus scales this shape to 32 MiB.
+    const hugeModulusBody = new Uint8Array(2050);
+    hugeModulusBody[0] = 1;
+    const hugeModulus = concatBytes(
+      Uint8Array.of(0x02),
+      DER.length.encode(hugeModulusBody.length),
+      hugeModulusBody
+    );
+    const hugePublic = concatBytes(
+      Uint8Array.of(0x30),
+      DER.length.encode(hugeModulus.length + ASN1.Integer.encode(65537n).length),
+      hugeModulus,
+      ASN1.Integer.encode(65537n)
+    );
+    throws(() => RSAPublicKey.decode(hugePublic), /exceeds 2049-byte limit/);
+    throws(() => RSAPublicKey.decode(hex.decode('3006020180020103')), /negative/);
+    throws(() => RSAPublicKey.decode(hex.decode('3006020100020100')), /modulus/);
+
+    const rsaPrivate = {
+      version: 0n,
+      modulus: 3233n,
+      publicExponent: 17n,
+      privateExponent: 2753n,
+      prime1: 61n,
+      prime2: 53n,
+      exponent1: 53n,
+      exponent2: 49n,
+      coefficient: 38n,
+      otherPrimeInfos: undefined,
+    };
+    deepStrictEqual(RSAPrivateKey.decode(RSAPrivateKey.encode(rsaPrivate)), rsaPrivate);
+    for (const bad of [
+      { ...rsaPrivate, version: 2n },
+      { ...rsaPrivate, publicExponent: 1n },
+      { ...rsaPrivate, privateExponent: 0n },
+      { ...rsaPrivate, prime1: 59n },
+      { ...rsaPrivate, prime2: 61n },
+      { ...rsaPrivate, exponent1: rsaPrivate.exponent1 + rsaPrivate.prime1 - 1n },
+      { ...rsaPrivate, coefficient: rsaPrivate.coefficient + 1n },
+    ])
+      throws(() => RSAPrivateKey.encode(bad));
+
+    const dsa = { p: 23n, q: 11n, g: 2n };
+    deepStrictEqual(DSAParameters.decode(DSAParameters.encode(dsa)), dsa);
+    deepStrictEqual(DSAPublicKey.decode(DSAPublicKey.encode(4n)), 4n);
+    throws(() => DSAParameters.encode({ ...dsa, p: 2n }));
+    throws(() => DSAParameters.encode({ ...dsa, q: 1n }));
+    throws(() => DSAParameters.encode({ ...dsa, g: 1n }));
+    throws(() => DSAParameters.encode({ ...dsa, p: 1n << 3072n }));
+    throws(() => DSAParameters.encode({ p: 1n << 300n, q: 1n << 256n, g: 2n }));
+    throws(() => DSAPublicKey.encode(1n));
+    throws(() => DSAPublicKey.encode(1n << 3072n));
   });
   it('ASN.1', () => {
     deepStrictEqual(DER.length.encode(0x7f), Uint8Array.from([0x7f]));
@@ -390,9 +501,16 @@ describe('convert', () => {
     throws(() => RSAPrivateKey.decode(rsaVersionOnly));
     throws(() => RSAPrivateKey.encode({ ...rsaKey, version: 1n }));
     const rsaMulti = {
-      ...rsaKey,
       version: 1n,
-      otherPrimeInfos: [{ prime: 17n, exponent: 3n, coefficient: 5n }],
+      modulus: 105n,
+      publicExponent: 5n,
+      privateExponent: 5n,
+      prime1: 3n,
+      prime2: 5n,
+      exponent1: 1n,
+      exponent2: 1n,
+      coefficient: 2n,
+      otherPrimeInfos: [{ prime: 7n, exponent: 5n, coefficient: 1n }],
     };
     deepStrictEqual(RSAPrivateKey.decode(RSAPrivateKey.encode(rsaMulti)), rsaMulti);
     throws(() => RSAPrivateKey.encode({ ...rsaMulti, version: 0n }));
@@ -458,6 +576,7 @@ describe('convert', () => {
     });
     deepStrictEqual(BER.encode(signedBoundary.nodes, signedBoundary.der), signedBoundaryTag);
     const maxTag = Uint8Array.from([0x1f, 0x8f, 0xff, 0xff, 0xff, 0x7f, 0x00]);
+    deepStrictEqual(ASN1.any.decode(maxTag), maxTag);
     const max = BER.decode(maxTag, { allowBER: true });
     deepStrictEqual(max, {
       nodes: [
@@ -479,6 +598,16 @@ describe('convert', () => {
       () => BER.decode(Uint8Array.from([0x1f, 0x90, 0x80, 0x80, 0x80, 0x00, 0x00])),
       /BER tag number exceeds uint32/
     );
+    throws(
+      () => ASN1.any.decode(Uint8Array.from([0x1f, 0x90, 0x80, 0x80, 0x80, 0x00, 0x00])),
+      /BER tag number exceeds uint32/
+    );
+    const tagBomb = new Uint8Array(1024 * 1024 + 2);
+    tagBomb[0] = 0x1f;
+    tagBomb.fill(0x81, 1, tagBomb.length - 1);
+    tagBomb[tagBomb.length - 1] = 0;
+    throws(() => ASN1.any.decode(tagBomb), /BER tag number exceeds uint32/);
+    throws(() => BER.decode(tagBomb), /BER tag number exceeds uint32/);
     for (const { name, type, pem, decoded, notImplemented, shouldFail } of DER_VECTORS) {
       const ARMOR = pem.split('\n')[0].replaceAll('-', '').replace('BEGIN ', '');
       const coder = base64armor(ARMOR, 10, P.bytes(null));

@@ -227,19 +227,25 @@ const lenValue = (bytes: TArg<Uint8Array>): number => {
   return len;
 };
 const BER_TAG_MAX = 0xffffffff;
-const highTagNumber = (tag: number[]): number => {
+const readHighTagNumber = (readByte: () => number): { bytes: number[]; number: number } => {
+  const bytes: number[] = [];
   let num = 0;
-  for (let i = 1; i < tag.length; i++) {
-    const b = tag[i];
+  while (true) {
+    const b = readByte();
+    // A uint32 tag number needs at most five base-128 body octets. Reject a
+    // sixth before retaining it so continuation runs cannot grow this array.
+    if (bytes.length === 5) throw new Error('BER tag number exceeds uint32');
     // RFC 9090 §2.1 restates X.690 base-128 shortest-form for OID
     // subidentifiers; high-tag-number identifiers use the same base-128
     // form, and RFC 7468 Appendix B requires DER canonicality.
-    if (i === 1 && b === 0x80) throw new Error('BER high-tag-number non-minimal');
+    if (!bytes.length && b === 0x80) throw new Error('BER high-tag-number non-minimal');
     if (num > (BER_TAG_MAX - (b & 0x7f)) / 128) throw new Error('BER tag number exceeds uint32');
     num = num * 128 + (b & 0x7f);
+    bytes.push(b);
+    if (!(b & 0x80)) break;
   }
   if (num < 0x1f) throw new Error('BER high-tag-number non-minimal');
-  return num;
+  return { bytes, number: num };
 };
 const DERLength: P.CoderType<number> = /* @__PURE__ */ (() => {
   return /* @__PURE__ */ P.apply(
@@ -458,28 +464,45 @@ const _ASN1 = /* @__PURE__ */ (() => {
   };
   const ASCII = /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), ascii);
   // Primitive types
-  const Integer = basic(
-    { TAG: 'universal', data: { constructed: 0, type: 'integer' } },
-    /* @__PURE__ */ P.apply(/* @__PURE__ */ P.bytes(null), {
-      encode(bytes) {
-        // RFC 5280 Appendix B notes leading 00 is only for clearing the
-        // INTEGER sign bit; RFC 7468 Appendix B's DER canonicality means empty
-        // or redundant leading-zero encodings are rejected.
-        if (!bytes.length) throw new Error('DER INTEGER empty');
-        if (bytes[0] & 0x80) throw new Error('negative values not allowed');
-        if (bytes.length > 1 && bytes[0] === 0x00 && !(bytes[1] & 0x80))
-          throw new Error('DER INTEGER non-minimal');
-        return bytesToNumberBE(bytes);
-      },
-      decode(value) {
-        if (value < 0) throw new Error('negative values not allowed');
-        const bytes = numberToVarBytesBE(value);
-        return (
-          bytes[0] & 0x80 ? concatBytes(Uint8Array.of(0x00), bytes) : bytes
-        ) as TRet<Uint8Array>;
-      },
-    }) satisfies P.CoderType<bigint>
-  );
+  const integer = (maxBytes?: number): ASN1Coder<bigint> => {
+    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1))
+      throw new Error(`ASN1.integer: expected a positive safe-integer maxBytes, got ${maxBytes}`);
+    // Algorithm schemas must be able to reject hostile multi-megabyte INTEGERs
+    // before bytesToNumberBE performs a linear-time bigint conversion. The
+    // generic Integer stays unbounded because ASN.1 itself has no universal
+    // INTEGER width limit; callers with a protocol limit use integer(maxBytes).
+    const body =
+      maxBytes === undefined
+        ? /* @__PURE__ */ P.bytes(null)
+        : /* @__PURE__ */ P.validate(/* @__PURE__ */ P.bytes(null), (bytes) => {
+            if (bytes.length > maxBytes)
+              throw new Error(`DER INTEGER exceeds ${maxBytes}-byte limit`);
+            return bytes;
+          });
+    return basic(
+      { TAG: 'universal', data: { constructed: 0, type: 'integer' } },
+      /* @__PURE__ */ P.apply(body, {
+        encode(bytes) {
+          // RFC 5280 Appendix B notes leading 00 is only for clearing the
+          // INTEGER sign bit; RFC 7468 Appendix B's DER canonicality means empty
+          // or redundant leading-zero encodings are rejected.
+          if (!bytes.length) throw new Error('DER INTEGER empty');
+          if (bytes[0] & 0x80) throw new Error('negative values not allowed');
+          if (bytes.length > 1 && bytes[0] === 0x00 && !(bytes[1] & 0x80))
+            throw new Error('DER INTEGER non-minimal');
+          return bytesToNumberBE(bytes);
+        },
+        decode(value) {
+          if (value < 0) throw new Error('negative values not allowed');
+          const bytes = numberToVarBytesBE(value);
+          return (
+            bytes[0] & 0x80 ? concatBytes(Uint8Array.of(0x00), bytes) : bytes
+          ) as TRet<Uint8Array>;
+        },
+      }) satisfies P.CoderType<bigint>
+    );
+  };
+  const Integer = /* @__PURE__ */ integer();
   const OID = basic(
     { TAG: 'universal', data: { constructed: 0, type: 'oid' } },
     // RFC 5280 Appendix B mandates X.509 support for OID arc elements
@@ -661,12 +684,8 @@ const _ASN1 = /* @__PURE__ */ (() => {
     decodeStream(r): TRet<Uint8Array> {
       const tag: number[] = [r.byte()];
       if ((tag[0] & 0x1f) === 0x1f) {
-        while (true) {
-          const b = r.byte();
-          tag.push(b);
-          if (!(b & 0x80)) break;
-        }
-        highTagNumber(tag);
+        const high = readHighTagNumber(() => r.byte());
+        tag.push(...high.bytes);
       }
       const a = r.byte();
       let len = a;
@@ -952,6 +971,7 @@ const _ASN1 = /* @__PURE__ */ (() => {
     tagged,
     ASCII,
     Integer,
+    integer,
     Boolean,
     OctetString,
     OID,
@@ -1013,6 +1033,8 @@ type ASN1Pub = {
   tagged: <T>(tag: number, inner: P.CoderType<T>) => ASN1TagCoder<T>;
   ASCII: P.CoderType<string>;
   Integer: ASN1TagCoder<bigint>;
+  /** Create a nonnegative DER INTEGER coder with a maximum content width. */
+  integer: (maxBytes: number) => ASN1TagCoder<bigint>;
   Boolean: ASN1TagCoder<boolean>;
   OctetString: ASN1TagCoder<Uint8Array>;
   OID: ASN1TagCoder<string>;
@@ -1114,15 +1136,15 @@ const _BER = {
     let tagNum = aTag & 0x1f;
     const tagBytes: number[] = [aTag];
     if (tagNum === 0x1f) {
-      while (true) {
+      const high = readHighTagNumber(() => {
         const b = src[pos++];
         if (b === undefined) throw new Error('unexpected end of high-tag-number');
-        tagBytes.push(b);
-        if (!(b & 0x80)) break;
-      }
+        return b;
+      });
       // RFC 5958 §2 requires BER receiver support and references X.690 for BER;
       // the uint32 cap is this public `number` metadata boundary, not an X.690 requirement.
-      tagNum = highTagNumber(tagBytes);
+      tagNum = high.number;
+      tagBytes.push(...high.bytes);
     }
     const tg = { bytes: Uint8Array.from(tagBytes), cls, cons, tagNum };
     const lenAt = pos;
