@@ -11,7 +11,7 @@ import * as tor from '../src/tor.ts';
 const seed = sha256(utf8ToBytes('micro-key-producer benchmark seed'));
 const checkBytes = Uint8Array.of(1, 2, 3, 4);
 const otpUrl =
-  'otpauth://totp/ACME:alice@example.com?secret=GEZDGNBVGY3TQOJQ&issuer=ACME&algorithm=SHA1&digits=6&period=30';
+  'otpauth://totp/ACME:alice@example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=ACME&algorithm=SHA1&digits=6&period=30';
 const otpOpts = otp.parse(otpUrl);
 const mask = password.mask('Cvccvc-cvccvc-cvccv1');
 const masked = mask.apply(seed);

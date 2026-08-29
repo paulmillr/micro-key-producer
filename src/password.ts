@@ -321,7 +321,16 @@ class Mask {
     return { password, entropyLeft };
   }
   inverse({ password, entropyLeft }: ApplyResult): Uint8Array {
-    const values = zip(this.sets, password.split('')).map(([s, c]) => Array.from(s).indexOf(c));
+    password = astring(password, 'password');
+    const chars = password.split('');
+    if (chars.length !== this.sets.length) throw new Error('password length does not match mask');
+    if (typeof entropyLeft !== 'bigint' || entropyLeft < _0n)
+      throw new Error('invalid entropyLeft');
+    const values = this.sets.map((set, index) => {
+      const value = Array.from(set).indexOf(chars[index]);
+      if (value < 0) throw new Error(`invalid character at position ${index}`);
+      return value;
+    });
     const num = zip(this.sets, values).reduceRight(
       (acc, [s, v]) => acc * BigInt(s.size) + BigInt(v),
       _0n

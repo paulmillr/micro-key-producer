@@ -15,30 +15,47 @@ import { astring } from './utils.ts';
 export type OTPOpts = {
   /** HMAC hash name: `sha1`, `sha256`, or `sha512`. */
   algorithm: string;
-  /** Number of digits to keep from the generated OTP code. */
+  /** Number of digits to keep from the generated OTP code (6 through 16). */
   digits: number;
   /** TOTP step size in seconds. */
   interval: number;
   /** Decoded OTP secret bytes. */
   secret: Uint8Array;
 };
+const OTP_MIN_DIGITS = 6;
+const OTP_MAX_DIGITS = 16;
+const OTP_MIN_SECRET_BYTES = 16;
+function assertOtpDigits(digits: number, name: string): number {
+  const value = anumber(digits, name);
+  if (!Number.isSafeInteger(value) || value < OTP_MIN_DIGITS || value > OTP_MAX_DIGITS)
+    throw new RangeError(`OTP: ${name} must be an integer from 6 to 16`);
+  return value;
+}
+function assertOtpSecret(secret: TArg<Uint8Array>, name: string): TRet<Uint8Array> {
+  const bytes = abytes(secret, undefined, name);
+  // RFC 4226 §4 requires HOTP shared secrets to be at least 128 bits and
+  // recommends 160 bits. TOTP inherits HOTP's construction.
+  if (bytes.length < OTP_MIN_SECRET_BYTES)
+    throw new RangeError(`OTP: ${name} must contain at least 128 bits`);
+  return bytes;
+}
 function parseSecret(secret: string): TRet<Uint8Array> {
   // Accept common OTP secrets without RFC 4648 padding by normalizing to
   // uppercase and restoring the missing '=' suffix before strict base32 decode.
   const len = Math.ceil(secret.length / 8) * 8;
-  return base32.decode(secret.padEnd(len, '=').toUpperCase()) as TRet<Uint8Array>;
+  return assertOtpSecret(base32.decode(secret.padEnd(len, '=').toUpperCase()), 'secret');
 }
 
 /**
  * Parses a raw base32 secret or `otpauth://totp/...` URL.
  * @param otp - Base32 secret or otpauth URL.
  * @returns Normalized OTP settings.
- * @throws If the otpauth URL is malformed or requests unsupported OTP settings. {@link Error}
+ * @throws If the secret is shorter than 128 bits or the URL requests unsupported settings. {@link Error}
  * @example
  * Parse either a base32 secret or an otpauth URL before generating codes.
  * ```ts
  * import { parse, totp } from 'micro-key-producer/otp.js';
- * const opts = parse('JBSWY3DPEHPK3PXP');
+ * const opts = parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
  * totp(opts, 0);
  * ```
  */
@@ -60,10 +77,7 @@ export function parse(otp: string): TRet<OTPOpts> {
       // RFC 4226 §5.1 defines Digit as the HOTP digit-count parameter; require
       // an exact decimal token here because parseInt silently truncates suffixes.
       if (!/^\d+$/.test(digits)) throw new Error(`OTP: invalid digits: ${digits}`);
-      const parsed = Number.parseInt(digits);
-      if (![6, 7, 8].includes(parsed))
-        throw new Error(`OTP: url should include 6, 7 or 8 digits. Got: ${digits}`);
-      opts.digits = parsed;
+      opts.digits = assertOtpDigits(Number.parseInt(digits), 'digits');
     }
     const algo = params.get('algorithm');
     if (algo) {
@@ -99,7 +113,7 @@ export function parse(otp: string): TRet<OTPOpts> {
  * Rebuild the otpauth URL after normalizing or editing the parsed settings.
  * ```ts
  * import { parse, buildURL } from 'micro-key-producer/otp.js';
- * const opts = parse('JBSWY3DPEHPK3PXP');
+ * const opts = parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
  * buildURL(opts);
  * ```
  */
@@ -107,9 +121,9 @@ export function buildURL(opts: TArg<OTPOpts>): string {
   if (!packedUtils.isPlainObject(opts))
     throw new TypeError('"opts" expected object, got type=' + typeof opts);
   opts.algorithm = astring(opts.algorithm, 'opts.algorithm');
-  anumber(opts.digits, 'opts.digits');
+  opts.digits = assertOtpDigits(opts.digits, 'opts.digits');
   anumber(opts.interval, 'opts.interval');
-  abytes(opts.secret, undefined, 'opts.secret');
+  opts.secret = assertOtpSecret(opts.secret, 'opts.secret');
   // OTPOpts only carries the secret/hash/digits/interval core, so serialization
   // canonicalizes back to the minimal unlabeled TOTP URL and drops any original
   // issuer/label metadata.
@@ -124,12 +138,12 @@ export function buildURL(opts: TArg<OTPOpts>): string {
  * @param opts - OTP settings and secret. See {@link OTPOpts}.
  * @param counter - HOTP counter value.
  * @returns Numeric HOTP code as a zero-padded string.
- * @throws If the OTP configuration requests an unsupported hash algorithm. {@link Error}
+ * @throws If the secret is shorter than 128 bits or the configuration is unsupported. {@link Error}
  * @example
  * Generate an HOTP code for an explicit moving counter value.
  * ```ts
  * import { parse, hotp } from 'micro-key-producer/otp.js';
- * const opts = parse('JBSWY3DPEHPK3PXP');
+ * const opts = parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
  * hotp(opts, 0);
  * ```
  */
@@ -137,17 +151,14 @@ export function hotp(opts: TArg<OTPOpts>, counter: number | bigint): string {
   if (!packedUtils.isPlainObject(opts))
     throw new TypeError('"opts" expected object, got type=' + typeof opts);
   opts.algorithm = astring(opts.algorithm, 'opts.algorithm');
-  anumber(opts.digits, 'opts.digits');
+  opts.digits = assertOtpDigits(opts.digits, 'opts.digits');
   anumber(opts.interval, 'opts.interval');
-  abytes(opts.secret, undefined, 'opts.secret');
+  opts.secret = assertOtpSecret(opts.secret, 'opts.secret');
   if (typeof counter === 'number') anumber(counter, 'counter');
   else if (typeof counter !== 'bigint')
     throw new TypeError('"counter" expected number or bigint, got type=' + typeof counter);
   const hash = { sha1, sha256, sha512 }[opts.algorithm];
   if (!hash) throw new Error(`TOTP: unknown hash: ${opts.algorithm}`);
-  // RFC 4226 §5.3 says implementations MUST extract a 6-digit code at
-  // minimum; direct HOTP callers bypass parse() and still need this guard.
-  if (opts.digits < 6) throw new Error(`HOTP: expected at least 6 digits. Got: ${opts.digits}`);
   // RFC 4226 §5.1 defines C as the exact 8-byte counter moving factor; JS
   // numbers above MAX_SAFE_INTEGER cannot identify that counter without loss.
   if (typeof counter === 'number' && !Number.isSafeInteger(counter))
@@ -163,12 +174,12 @@ export function hotp(opts: TArg<OTPOpts>, counter: number | bigint): string {
  * @param opts - OTP settings and secret. See {@link OTPOpts}.
  * @param ts - UNIX time in milliseconds.
  * @returns Numeric TOTP code as a zero-padded string.
- * @throws If the OTP configuration requests an unsupported hash algorithm. {@link Error}
+ * @throws If the secret is shorter than 128 bits or the configuration is unsupported. {@link Error}
  * @example
  * Generate a TOTP code for a specific timestamp.
  * ```ts
  * import { parse, totp } from 'micro-key-producer/otp.js';
- * const opts = parse('JBSWY3DPEHPK3PXP');
+ * const opts = parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
  * totp(opts, 0);
  * ```
  */

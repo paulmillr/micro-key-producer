@@ -50,6 +50,23 @@ describe('password', () => {
     // Inverse works
     for (const m of ['@Ss-ss-ss', '************', 'AaAa+AaA11..@@@@'])
       eql(pwd.mask(m).inverse(pwd.mask(m).apply(entropy)), entropy);
+    const decoder = pwd.mask('11');
+    eql(decoder.inverse({ password: '98', entropyLeft: 0n }), Uint8Array.of(0x59));
+    throws(
+      () => decoder.inverse({ password: 'X9', entropyLeft: 0n }),
+      /invalid character at position 0/
+    );
+    throws(
+      () => decoder.inverse({ password: '9X', entropyLeft: 0n }),
+      /invalid character at position 1/
+    );
+    throws(() => decoder.inverse({ password: '9', entropyLeft: 0n }), /length does not match/);
+    throws(() => decoder.inverse({ password: '999', entropyLeft: 0n }), /length does not match/);
+    throws(() => decoder.inverse({ password: '98', entropyLeft: -1n }), /invalid entropyLeft/);
+    throws(
+      () => decoder.inverse({ password: '98', entropyLeft: 0 as never }),
+      /invalid entropyLeft/
+    );
     // Just for research
     eql(pwd.mask('aa').entropy, 9);
     eql(pwd.mask('Aaaaaa@1').entropy, 36);

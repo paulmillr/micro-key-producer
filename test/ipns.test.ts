@@ -29,6 +29,20 @@ describe('ipns', () => {
     throws(() => ed25519.Point.fromHex(invalid));
     throws(() => ipns.parseAddress(`ipns://f0172002408011220${invalid}`));
   });
+  it('parseAddress rejects weak Ed25519 signing identities', () => {
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const noncanonicalIdentity = new Uint8Array(32).fill(0xff);
+    noncanonicalIdentity[0] = 0xee;
+    noncanonicalIdentity[31] = 0x7f;
+    const torsion = ed25519.Point.fromBytes(new Uint8Array(32), false);
+    const mixedOrder = ed25519.Point.BASE.add(torsion).toBytes();
+    for (const weak of [identity, noncanonicalIdentity, new Uint8Array(32), mixedOrder])
+      throws(
+        () => ipns.parseAddress(`ipns://f0172002408011220${hex.encode(weak)}`),
+        /weak Ed25519 public key/
+      );
+  });
 });
 
 it.runWhen(import.meta.url);

@@ -13,6 +13,20 @@ import { astring } from './utils.ts';
 // key and checksum when forming the base32 payload.
 const ADDRESS_VERSION = Uint8Array.of(0x03);
 
+function assertStrongEd25519PublicKey(publicKey: Uint8Array): void {
+  try {
+    const point = ed25519.Point.fromBytes(publicKey, false);
+    if (!point.isSmallOrder() && point.isTorsionFree()) return;
+  } catch {}
+  throw new Error('weak Ed25519 public key');
+}
+
+function formatPublicKeyUnchecked(pubBytes: Uint8Array): string {
+  const checksum = sha3_256(concatBytes(utf8.decode('.onion checksum'), pubBytes, ADDRESS_VERSION));
+  const addr = concatBytes(pubBytes, checksum.slice(0, 2), ADDRESS_VERSION);
+  return `${base32.encode(addr).toLowerCase()}.onion`;
+}
+
 /**
  * Formats a Tor v3 onion address from an ed25519 public key.
  * @param pubBytes - Raw ed25519 public key bytes.
@@ -30,11 +44,8 @@ export function formatPublicKey(pubBytes: TArg<Uint8Array>): string {
   // BIP-0155 Appendix B / ZIP-0155 "Tor v3 address encoding" fix PUBKEY at 32
   // bytes and encode `PUBKEY || CHECKSUM || VERSION`.
   pubBytes = abytes(pubBytes, 32, 'public key');
-  // checksum = H(".onion checksum" || pubkey || version)
-  const checksum = sha3_256(concatBytes(utf8.decode('.onion checksum'), pubBytes, ADDRESS_VERSION));
-  // onion_address = base32(pubkey || checksum || version);
-  const addr = concatBytes(pubBytes, checksum.slice(0, 2), ADDRESS_VERSION);
-  return `${base32.encode(addr).toLowerCase()}.onion`;
+  assertStrongEd25519PublicKey(pubBytes);
+  return formatPublicKeyUnchecked(pubBytes);
 }
 
 /**
@@ -90,7 +101,9 @@ export function getKeys(seed: TArg<Uint8Array>): TRet<{
   const added = concatBytes(head, prefix);
   return {
     publicKeyBytes: pointBytes,
-    publicKey: formatPublicKey(pointBytes),
+    // getExtendedPublicKey() derives a canonical prime-subgroup point from the
+    // seed, so avoid repeating the public import check on this trusted path.
+    publicKey: formatPublicKeyUnchecked(pointBytes),
     privateKey: `ED25519-V3:${base64.encode(added)}`,
   };
 }

@@ -1,3 +1,4 @@
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
@@ -28,6 +29,17 @@ describe('tor', () => {
     throws(() => tor.formatPublicKey(new Uint8Array([...pub, 0])));
     throws(() => tor.parseAddress(shortAddr));
     throws(() => tor.parseAddress(longAddr));
+  });
+  it('rejects weak Ed25519 signing identities', () => {
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const noncanonicalIdentity = new Uint8Array(32).fill(0xff);
+    noncanonicalIdentity[0] = 0xee;
+    noncanonicalIdentity[31] = 0x7f;
+    const torsion = ed25519.Point.fromBytes(new Uint8Array(32), false);
+    const mixedOrder = ed25519.Point.BASE.add(torsion).toBytes();
+    for (const weak of [identity, noncanonicalIdentity, new Uint8Array(32), mixedOrder])
+      throws(() => tor.formatPublicKey(weak), /weak Ed25519 public key/);
   });
 });
 

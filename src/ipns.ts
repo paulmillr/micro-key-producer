@@ -10,6 +10,14 @@ import { base32, hex } from '@scure/base';
 // and remove the canonical leading `k` themselves.
 import { astring, base36 } from './utils.ts';
 
+function assertStrongEd25519PublicKey(publicKey: Uint8Array): void {
+  try {
+    const point = ed25519.Point.fromBytes(publicKey, false);
+    if (!point.isSmallOrder() && point.isTorsionFree()) return;
+  } catch {}
+  throw new Error('weak Ed25519 public key');
+}
+
 /**
  * Formats an IPNS public key into the canonical `ipns://k...` form.
  * @param pubBytes - Encoded multicodec public key bytes.
@@ -67,7 +75,7 @@ export function parseAddress(address: string): TRet<Uint8Array> {
     // RFC 8032 §5.1.5 step 4 defines the Ed25519 public key as an encoded
     // curve point, and §5.1.7 step 1 treats public-key point decode failure
     // as invalid; reject malformed libp2p-key payloads before returning them.
-    ed25519.Point.fromHex(hexKey.slice(16));
+    assertStrongEd25519PublicKey(key.subarray(8));
     return key as TRet<Uint8Array>;
   }
   // Throw error if IPNS key prefix is invalid

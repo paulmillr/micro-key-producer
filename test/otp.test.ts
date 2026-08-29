@@ -6,6 +6,9 @@ import * as otp from '../src/otp.ts';
 describe('otp', () => {
   it('OTP url parser', () => {
     const INVALID = [
+      '',
+      'AA',
+      'GEZDGNBV',
       'http://hello.com',
       'otpauth://totp',
       'otpauth://hotp',
@@ -17,6 +20,9 @@ describe('otp', () => {
       'otpauth://totp?algorithm=aes',
       'otpauth://totp?secret=Ab$:1',
       'otpauth://totp?secret=1234567890',
+      'otpauth://totp/?secret=AA',
+      'otpauth://totp/?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=5',
+      'otpauth://totp/?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=17',
     ];
     for (const i of INVALID) throws(() => otp.parse(i));
     eql(otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS'), {
@@ -36,11 +42,11 @@ describe('otp', () => {
         secret: hexToBytes('3dc6caa4824a6d288767b2331e20b43166cb85d9'),
       }
     );
-    eql(otp.parse('otpauth://totp/?secret=GEZDGNBV&period=60'), {
+    eql(otp.parse('otpauth://totp/?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&period=60'), {
       algorithm: 'sha1',
       digits: 6,
       interval: 60,
-      secret: hexToBytes('3132333435'),
+      secret: hexToBytes('3132333435363738393031323334353637383930'),
     });
     eql(
       otp.buildURL(otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS')),
@@ -55,12 +61,35 @@ describe('otp', () => {
       'otpauth://totp/?secret=HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ&interval=30&digits=6&algorithm=SHA1'
     );
     const intervalOpts = {
-      secret: Uint8Array.from([1, 2, 3, 4]),
+      secret: Uint8Array.from({ length: 16 }, (_, i) => i),
       algorithm: 'sha1',
       digits: 6,
       interval: 60,
     };
     eql(otp.parse(otp.buildURL(intervalOpts)), intervalOpts);
+  });
+  it('rejects OTP secrets shorter than 128 bits at every public boundary', () => {
+    for (const secret of [new Uint8Array(), new Uint8Array([0]), new Uint8Array(15)]) {
+      const opts = { secret, algorithm: 'sha1', digits: 6, interval: 30 };
+      throws(() => otp.buildURL(opts), /at least 128 bits/);
+      throws(() => otp.hotp(opts, 0), /at least 128 bits/);
+      throws(() => otp.totp(opts, 0), /at least 128 bits/);
+    }
+  });
+  it('limits OTP output to 6 through 16 digits at every public boundary', () => {
+    const opts = otp.parse('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
+    for (const digits of [5, 17, 6.5, Number.MAX_SAFE_INTEGER]) {
+      const invalid = { ...opts, digits };
+      throws(() => otp.buildURL(invalid));
+      throws(() => otp.hotp(invalid, 0));
+      throws(() => otp.totp(invalid, 0));
+    }
+    for (const digits of [6, 10, 16]) {
+      const valid = { ...opts, digits };
+      eql(otp.hotp(valid, 0).length, digits);
+      eql(otp.totp(valid, 0).length, digits);
+      eql(otp.parse(otp.buildURL(valid)).digits, digits);
+    }
   });
   it('OTP', () => {
     const opts1 = otp.parse('ZYTYYE5FOAGW5ML7LRWUL4WTZLNJAMZS');
@@ -72,10 +101,6 @@ describe('otp', () => {
     eql(otp.hotp(opts1, 42), otp.hotp(opts1, 42n));
     throws(() => otp.hotp({ ...opts1, digits: 5 }, 0n));
     throws(() => otp.hotp(opts1, Number.MAX_SAFE_INTEGER + 1));
-    const opts3 = otp.parse('GEZDGNBV');
-    eql(otp.hotp(opts3, 0), '734055');
-    eql(otp.hotp(opts3, 1), '662488');
-    eql(otp.hotp(opts3, 2), '289363');
     eql(otp.totp(opts1, 0), '549419');
     eql(otp.totp(opts2, 0), '009551');
     eql(otp.totp(opts1, 10 * 1000), '549419');
