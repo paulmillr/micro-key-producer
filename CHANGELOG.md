@@ -1,5 +1,9 @@
 # Changelog for micro-key-producer
 
+## 0.10.2 (2026-08-29)
+
+- Upgrade micro-packed
+
 ## 0.10.1 (2026-08-29)
 
 - pgp: added legacy CFB key protection option, exposed packet helpers

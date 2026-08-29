@@ -1,6 +1,6 @@
 {
   "name": "@paulmillr/micro-key-producer",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "exports": {
     ".": "./src/index.ts",
     "./asn1.js": "./src/asn1.ts",
@@ -20,7 +20,7 @@
     "@noble/curves": "jsr:@noble/curves@2.4.0",
     "@noble/hashes": "jsr:@noble/hashes@2.4.0",
     "@scure/base": "jsr:@scure/base@2.4.0",
-    "micro-packed": "jsr:@paulmillr/micro-packed@0.11.0"
+    "micro-packed": "jsr:@paulmillr/micro-packed@0.11.1"
   },
   "publish": {
     "include": ["src", "jsr.json", "LICENSE", "README.md"]
