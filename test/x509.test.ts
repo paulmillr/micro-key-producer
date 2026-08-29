@@ -1016,6 +1016,85 @@ describe('x509', () => {
     deepStrictEqual(p384.signerInfos[0].signatureAlg.algorithm, 'ecdsa-with-SHA384');
     deepStrictEqual(p384.digestAlgorithms[0].algorithm, 'sha384');
   });
+  it('rejects universal CMS forgeries under a small-order Ed25519 signer key', () => {
+    const data = new TextEncoder().encode('authorize transfer');
+    const signed = CMS.sign(
+      data,
+      pem('openssl/client-ed25519-cert.pem'),
+      pem('openssl/client-ed25519-key.pem')
+    );
+    const ci = CMS.decode(signed);
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const signerCert = (sd.certificates || []).find((i) => i.TAG === 'certificate');
+    const signerInfo = sd.signerInfos[0];
+    if (!signerCert || !signerInfo) throw new Error('Ed25519 signer certificate missing');
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const forged = new Uint8Array(64);
+    forged[0] = 1;
+    signerCert.data.tbs.spki.publicKey = identity;
+    signerInfo.signature = forged;
+    ci.content = __TEST.CMSSignedData.encode(sd);
+    ci.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(ci), {
+          time: CERT_CREATED,
+          checkSignatures: true,
+          allowUntrusted: true,
+        }),
+      /CMS signature invalid/
+    );
+  });
+  it('rejects universal certificate forgeries under a small-order Ed25519 issuer key', () => {
+    const tpl = getEdnsJiyaTpl();
+    const { cert, key, root } = getCertKeyRoot();
+    const ci = CMS.decode(CMS.sign(tpl, cert, key, root, { createdTs: CERT_CREATED }));
+    const sd = __TEST.CMSSignedData.decode(ci.content);
+    const signerInfo = sd.signerInfos[0];
+    if (!signerInfo || signerInfo.sid.TAG !== 'issuerSerial')
+      throw new Error('issuerSerial signer missing');
+    const sidIssuer = CERTUtils.Name.encode(signerInfo.sid.data.issuer);
+    const signerCert = (sd.certificates || []).find(
+      (i) =>
+        i.TAG === 'certificate' &&
+        i.data.tbs.serial === signerInfo.sid.data.serial &&
+        equalBytes(CERTUtils.Name.encode(i.data.tbs.issuer), sidIssuer)
+    );
+    const issuerCert = (sd.certificates || []).find(
+      (i) =>
+        i.TAG === 'certificate' &&
+        signerCert?.TAG === 'certificate' &&
+        equalBytes(
+          CERTUtils.Name.encode(i.data.tbs.subject),
+          CERTUtils.Name.encode(signerCert.data.tbs.issuer)
+        )
+    );
+    if (!signerCert || !issuerCert) throw new Error('certificate chain missing');
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const forged = new Uint8Array(64);
+    forged[0] = 1;
+    const ed25519Algorithm = { algorithm: 'Ed25519', params: undefined };
+    issuerCert.data.tbs.spki.algorithm = ed25519Algorithm;
+    issuerCert.data.tbs.spki.publicKey = identity;
+    for (const item of [signerCert.data, issuerCert.data]) {
+      item.tbs.signature = ed25519Algorithm;
+      item.sigAlg = ed25519Algorithm;
+      item.sig = forged;
+    }
+    ci.content = __TEST.CMSSignedData.encode(sd);
+    ci.ber = undefined;
+    throws(
+      () =>
+        CMS.verify(CMS.encode(ci), {
+          time: CERT_CREATED,
+          chain: [issuerCert.data],
+          checkSignatures: true,
+        }),
+      /certificate signature invalid/
+    );
+  });
   it('rejects Ed25519 SHA-512 digestAlgorithm NULL params (RFC 8419 section 3.1)', () => {
     const data = new TextEncoder().encode('abc');
     const cert = pem('openssl/client-ed25519-cert.pem');
@@ -1851,6 +1930,73 @@ describe('x509', () => {
         }),
       /EKU missing emailProtection/
     );
+  });
+  it('intersects RFC 5280 EKU purpose constraints across intermediates', () => {
+    type CertChoice = Extract<
+      NonNullable<ReturnType<typeof __TEST.CMSSignedData.decode>['certificates']>[number],
+      { TAG: 'certificate' }
+    >;
+    type Certificate = CertChoice['data'];
+    const ekuEmailProtection = Uint8Array.from([
+      0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x04,
+    ]);
+    const ekuCodeSigning = Uint8Array.from([
+      0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03,
+    ]);
+    const ekuAny = Uint8Array.from([0x30, 0x06, 0x06, 0x04, 0x55, 0x1d, 0x25, 0x00]);
+    const setEku = (cert: Certificate, value: Uint8Array): void => {
+      if (!cert.tbs.extensions) throw new Error('certificate extensions missing');
+      let eku = cert.tbs.extensions.list.find((extension) => extension.oid === 'extendedKeyUsage');
+      if (!eku) {
+        eku = { oid: 'extendedKeyUsage', rest: new Uint8Array() };
+        cert.tbs.extensions.list.push(eku);
+      }
+      eku.rest = ASN1.OctetString.encode(value);
+    };
+    const make = (
+      intermediateEku: Uint8Array,
+      anchorEku?: Uint8Array
+    ): { cms: Uint8Array; anchor: Certificate } => {
+      const c = decodeP384Cert();
+      const sd = __TEST.CMSSignedData.decode(c.content);
+      const sid = sd.signerInfos[0].sid;
+      if (sid.TAG !== 'issuerSerial') throw new Error('expected issuerSerial sid');
+      const certificates = (sd.certificates || []).filter(
+        (item): item is CertChoice => item.TAG === 'certificate'
+      );
+      const signer = certificates.find((item) => item.data.tbs.serial === sid.data.serial);
+      const intermediate = certificates.find((item) => item !== signer);
+      if (!signer || !intermediate) throw new Error('signer/intermediate certificates not found');
+      const anchor = deepClone(intermediate.data);
+      const anchorName = anchor.tbs.subject.rdns[0]?.[0]?.value;
+      if (!anchorName || typeof anchorName.data !== 'string')
+        throw new Error('unexpected trust-anchor name');
+      anchorName.data += ' Trust Anchor';
+      anchor.tbs.issuer = deepClone(anchor.tbs.subject);
+      intermediate.data.tbs.issuer = deepClone(anchor.tbs.subject);
+      setEku(signer.data, ekuEmailProtection);
+      setEku(intermediate.data, intermediateEku);
+      if (anchorEku) setEku(anchor, anchorEku);
+      c.content = __TEST.CMSSignedData.encode(sd);
+      c.ber = undefined;
+      return { cms: CMS.encode(c), anchor };
+    };
+    const verify = (fixture: { cms: Uint8Array; anchor: Certificate }, purpose = 'smime') =>
+      CMS.verify(fixture.cms, {
+        time: CERT_CREATED,
+        chain: [fixture.anchor],
+        checkSignatures: false,
+        purpose: purpose as 'smime' | 'any',
+      });
+
+    const mismatch = make(ekuCodeSigning);
+    throws(() => verify(mismatch), /certificate EKU missing emailProtection at depth 1/);
+    deepStrictEqual(verify(mismatch, 'any').chain.length, 3);
+    deepStrictEqual(verify(make(ekuEmailProtection)).chain.length, 3);
+    deepStrictEqual(verify(make(ekuAny)).chain.length, 3);
+    // Trust-anchor EKU is supplied by relying-party policy and is not intersected
+    // with constraints on certificates inside the validated path.
+    deepStrictEqual(verify(make(ekuEmailProtection, ekuCodeSigning)).chain.length, 3);
   });
   it('enforces RFC 5280 certificatePolicies SIZE constraints', () => {
     const { root } = getCertKeyRoot();
@@ -3043,6 +3189,27 @@ describe('x509', () => {
     throws(
       () => CMS.verify(badIssuer, { time: CERT_CREATED, chain: [], checkSignatures: false }),
       /issuer keyUsage missing keyCertSign/
+    );
+    const undefinedBit = make((_, signerCert) => {
+      setKU(
+        signerCert,
+        ASN1.OctetString.encode(
+          ASN1.BitStringRaw.encode({ unused: 6, bytes: Uint8Array.from([0x80, 0x40]) })
+        )
+      );
+    });
+    throws(
+      () => CMS.verify(undefinedBit, { time: CERT_CREATED, chain: [root], checkSignatures: false }),
+      /KeyUsage exceeds 9 defined bits/
+    );
+    const oversized = make((_, signerCert) => {
+      const bytes = new Uint8Array(2 * 1024 * 1024);
+      bytes[0] = 0x80;
+      setKU(signerCert, ASN1.OctetString.encode(ASN1.BitStringRaw.encode({ unused: 0, bytes })));
+    });
+    throws(
+      () => CMS.verify(oversized, { time: CERT_CREATED, chain: [root], checkSignatures: false }),
+      /KeyUsage exceeds 9 defined bits/
     );
   });
   it('verify is validate plus signature checks', () => {

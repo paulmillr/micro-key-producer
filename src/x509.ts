@@ -581,6 +581,23 @@ const CMS_ALG_BY_SIG_OID = /* @__PURE__ */ (() =>
     // RFC 5754 section 3.3 defines ECDSA-with-SHA224; the EC curve still comes from SPKI.
     'ecdsa-with-SHA224': { ec: p256, sigOid: 'ecdsa-with-SHA224', hash: sha224 },
   }) as Record<CmsAlg['sigOid'], CmsAlg>)();
+
+// Keep Ed25519 verification on the RFC 8032/NIST path. In addition to strict
+// point decoding, reject small- and mixed-order public keys before noble's
+// cofactored verification equation. Ed448 retains its existing policy.
+const verifyEd25519Strict = (
+  signature: TArg<Uint8Array>,
+  message: TArg<Uint8Array>,
+  publicKey: TArg<Uint8Array>
+): boolean => {
+  try {
+    const point = ed25519.Point.fromBytes(publicKey as Uint8Array, false);
+    if (point.isSmallOrder() || !point.isTorsionFree()) return false;
+  } catch {
+    return false;
+  }
+  return ed25519.verify(signature, message, publicKey, { zip215: false });
+};
 // Keep the executable digest map in sync with public digestAlgorithm override
 // names in `oidName`; missing rows turn accepted names into runtime
 // "unsupported digestAlgorithm" failures in cmsSignCtx().
@@ -1900,21 +1917,6 @@ const KnownCriticalCert = /* @__PURE__ */ (() =>
       return name !== 'issuingDistributionPoint' && name !== 'certificateIssuer';
     })
   ))();
-const bitFlags = <T extends Record<string, number>>(
-  bs: TArg<{ unused: number; bytes: Uint8Array }>,
-  ix: T,
-  name: string
-): { [K in keyof T]: boolean } => {
-  const bitsrc = bs as { unused: number; bytes: Uint8Array };
-  if (bitsrc.unused > 7)
-    throw new Error(`${name} BIT STRING invalid unused bits: ${bitsrc.unused}`);
-  const bits = P.array(bitsrc.bytes.length * 8, P.bits(1)).decode(bitsrc.bytes);
-  const used = bits.length - bitsrc.unused;
-  const get = (i: number): boolean => (i < used ? !!bits[i] : false);
-  const out: Partial<{ [K in keyof T]: boolean }> = {};
-  for (const k in ix) out[k] = get(ix[k]);
-  return out as { [K in keyof T]: boolean };
-};
 const keyUsageBits = (
   bs: TArg<{
     unused: number;
@@ -1932,22 +1934,27 @@ const keyUsageBits = (
   decipherOnly: boolean;
 } => {
   // RFC 5280 section 4.2.1.3 uses fixed KeyUsage BIT STRING numbering;
-  // omitted trailing bits stay false.
-  return bitFlags(
-    bs,
-    {
-      digitalSignature: 0,
-      nonRepudiation: 1,
-      keyEncipherment: 2,
-      dataEncipherment: 3,
-      keyAgreement: 4,
-      keyCertSign: 5,
-      cRLSign: 6,
-      encipherOnly: 7,
-      decipherOnly: 8,
-    },
-    'KeyUsage'
-  );
+  // omitted trailing bits stay false and bits above 8 are undefined. Read the
+  // two possible content bytes directly instead of expanding untrusted input
+  // into one JavaScript boolean per encoded bit.
+  const bitsrc = bs as { unused: number; bytes: Uint8Array };
+  if (bitsrc.unused > 7)
+    throw new Error(`KeyUsage BIT STRING invalid unused bits: ${bitsrc.unused}`);
+  const used = bitsrc.bytes.length * 8 - bitsrc.unused;
+  if (used > 9) throw new Error('KeyUsage exceeds 9 defined bits');
+  const get = (index: number): boolean =>
+    index < used && (bitsrc.bytes[index >>> 3]! & (0x80 >>> (index & 7))) !== 0;
+  return {
+    digitalSignature: get(0),
+    nonRepudiation: get(1),
+    keyEncipherment: get(2),
+    dataEncipherment: get(3),
+    keyAgreement: get(4),
+    keyCertSign: get(5),
+    cRLSign: get(6),
+    encipherOnly: get(7),
+    decipherOnly: get(8),
+  };
 };
 const ExtValueByOID = /* @__PURE__ */ (() =>
   P.mappedTag(ASN1.OID, {
@@ -2055,6 +2062,16 @@ const certInfo = (
   if (!isCA && keyUsage?.keyCertSign)
     throw new Error('keyUsage keyCertSign requires basicConstraints cA=true');
   return { isCA, pathLen, keyUsage, eku, critical };
+};
+const checkEkuPurpose = (
+  info: ReturnType<typeof certInfo>,
+  purpose: NonNullable<CmsVerifyOpts['purpose']>,
+  depth: number
+): void => {
+  const required =
+    purpose === 'smime' ? 'emailProtection' : purpose === 'codeSigning' ? 'codeSigning' : undefined;
+  if (required && info.eku && !info.eku.has('anyExtendedKeyUsage') && !info.eku.has(required))
+    throw new Error(`certificate EKU missing ${required} at depth ${depth}`);
 };
 // Exact DER form of the subject Name, kept for diagnostics and exact identity
 // checks. RFC 5280 section 7.1 defines DN comparison through RFC 4518
@@ -2316,8 +2333,11 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
         throw new Error(
           `certificate signatureAlgorithm OID ${sigOid} is not compatible with issuer key`
         );
-      if (!CMS_ALG[key.algorithm.info.TAG].ed.verify(child.sig, msg, key.publicKey))
-        throw new Error('certificate signature invalid');
+      const verified =
+        key.algorithm.info.TAG === 'Ed25519'
+          ? verifyEd25519Strict(child.sig, msg, key.publicKey)
+          : CMS_ALG.Ed448.ed.verify(child.sig, msg, key.publicKey);
+      if (!verified) throw new Error('certificate signature invalid');
       return;
     }
     throw new Error(
@@ -2520,15 +2540,10 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
   )
     throw new Error('signer keyUsage missing digitalSignature or nonRepudiation');
   const purpose = cfg.purpose || 'any';
-  const eku = signerCertInfo.eku;
   // RFC 5280 section 4.2.1.12: if EKU is present, certificate use is constrained to listed purposes
-  // (except anyExtendedKeyUsage).
-  if (eku && purpose !== 'any' && !eku.has('anyExtendedKeyUsage')) {
-    if (purpose === 'smime' && !eku.has('emailProtection'))
-      throw new Error('EKU missing emailProtection');
-    if (purpose === 'codeSigning' && !eku.has('codeSigning'))
-      throw new Error('EKU missing codeSigning');
-  }
+  // (except anyExtendedKeyUsage). Apply the same rule to intermediates after
+  // path construction establishes which terminal certificate is the configured trust anchor.
+  checkEkuPurpose(signerCertInfo, purpose, 0);
   ensureCritical(signerCert);
   const pool = [...certs, ...chainItems].filter(
     (c) =>
@@ -2537,6 +2552,7 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
   for (const c of pool) ensureCritical(c);
   const seen = new Set<string>();
   const chain: Cert[] = [signerCert];
+  const chainInfo: ReturnType<typeof certInfo>[] = [signerCertInfo];
   let cur = signerCert;
   while (true) {
     const id = `${base64.encode(subjectDer(cur))}:${cur.tbs.serial.toString(16)}`;
@@ -2687,14 +2703,23 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
       throw new Error('issuer pathLenConstraint exceeded');
     if (checkSignatures) verifyIssuedCert(cur, issuer);
     chain.push(issuer);
+    chainInfo.push(issuerInfo);
     cur = issuer;
   }
   // RFC 5280 section 6 path validation is anchored in trust anchors supplied by the relying party.
   // Structural-only validation cannot establish trust because certificate signatures were not checked.
   const end = chain[chain.length - 1];
   const endDer = X509C.Certificate.encode(end);
-  const trusted =
-    checkSignatures && chainItems.some((a) => equalBytes(X509C.Certificate.encode(a), endDer));
+  const configuredTrustAnchor = chainItems.some((a) =>
+    equalBytes(X509C.Certificate.encode(a), endDer)
+  );
+  // RFC 5280 §4.2.1.12 intersects EKU constraints across the certification
+  // path. The terminal caller-configured trust anchor is policy input rather
+  // than a path certificate, so only signer/intermediate certificates are checked.
+  const constrainedLength = chainInfo.length - (configuredTrustAnchor ? 1 : 0);
+  for (let depth = 1; depth < constrainedLength; depth++)
+    checkEkuPurpose(chainInfo[depth], purpose, depth);
+  const trusted = checkSignatures && configuredTrustAnchor;
   // RFC 5280 section 6.1: validated path is rooted at an input trust anchor.
   if (checkSignatures && !trusted && !allowUntrusted) {
     if (!chainItems.length)
@@ -2849,7 +2874,9 @@ const cmsVerifyEc = (der: TArg<Uint8Array>, opts: TArg<CmsVerifyOpts> = {}): Cms
     if (CMS_ALG[tag].sigOid !== sigOid)
       throw new Error(`unsupported signatureAlgorithm OID ${signerInfo.signatureAlg.algorithm}`);
     return verifyInputs(sig, (data: TArg<Uint8Array>) =>
-      CMS_ALG[tag].ed.verify(signerInfo.signature, data as Uint8Array, key.publicKey)
+      tag === 'Ed25519'
+        ? verifyEd25519Strict(signerInfo.signature, data, key.publicKey)
+        : CMS_ALG.Ed448.ed.verify(signerInfo.signature, data, key.publicKey)
     );
   }
   throw new Error('CMS.verify({checkSignatures:true}) supports EC/Ed signer certificates only');
