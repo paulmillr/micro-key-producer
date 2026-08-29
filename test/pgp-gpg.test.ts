@@ -1,6 +1,5 @@
 import { cfb } from '@noble/ciphers/aes.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { numberToBytesBE } from '@noble/curves/utils.js';
 import { md5 } from '@noble/hashes/legacy.js';
 import { concatBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
@@ -8,15 +7,21 @@ import { base64, hex, utf8 } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as pgp from '../src/pgp.ts';
+import {
+  RUN_AGENT,
+  killGpgAgent,
+  launchGpgAgent,
+  tmpDir,
+  toolProbe,
+  type ToolProbe,
+} from './integration-utils.ts';
 
-// Run directly; this is intentionally not imported by test/index.ts because it needs local GnuPG.
+// Imported by test/integration.ts, not test/index.ts: it needs local GnuPG.
 // Public-key checks run with --no-autostart; GnuPG 2.x still routes private-key/passphrase
 // operations through gpg-agent, so those checks use a temporary homedir and kill the agent on cleanup.
 type SecretKey = Parameters<typeof pgp.decodeSecretKey>[1];
-type GPGProbe = { ok: true } | { ok: false; reason: string };
 const secretKeyPacket = (packets: pgp.Packet[]): SecretKey => {
   const packet = packets.find((p): p is Extract<pgp.Packet, { TAG: 'secretKey' }> => {
     return p.TAG === 'secretKey';
@@ -45,24 +50,8 @@ const rawArmor = (text: string): Uint8Array =>
       .filter((line) => !/^[A-Za-z-]+: /.test(line))
       .join('')
   );
-const tmp = <T>(fn: (dir: string) => T): T => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkp-gpg-'));
-  fs.chmodSync(dir, 0o700);
-  try {
-    return fn(dir);
-  } finally {
-    spawnSync('gpgconf', ['--homedir', dir, '--kill', 'gpg-agent'], { stdio: 'ignore' });
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-};
-const gpgLaunchAgent = (dir: string) => {
-  const res = spawnSync('gpgconf', ['--homedir', dir, '--launch', 'gpg-agent'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (res.error) throw res.error;
-  if (res.status !== 0) throw new Error(gpgReason(res.stderr || res.stdout));
-};
+const tmp = <T>(fn: (dir: string) => T): T => tmpDir('mkp-gpg-', fn, killGpgAgent);
+const gpgLaunchAgent = (dir: string) => launchGpgAgent(dir, { parseReason: gpgReason });
 const gpgArgs = (dir: string, args: string[]) => [
   '--no-options',
   '--homedir',
@@ -99,16 +88,7 @@ const gpgReason = (text: string): string => {
     'unknown GnuPG error'
   );
 };
-const gpgReady = (): GPGProbe => {
-  const res = spawnSync('gpg', ['--version'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (res.error) return { ok: false, reason: res.error.message };
-  if (res.status !== 0) return { ok: false, reason: gpgReason(res.stderr || res.stdout) };
-  return { ok: true };
-};
-const gpgAgentReady = (): GPGProbe => {
+const gpgAgentReady = (): ToolProbe => {
   try {
     return tmp((dir) => {
       const key = path.join(dir, 'probe.asc');
@@ -132,7 +112,7 @@ const onePassInfo = (list: string): string[] =>
 const armorHeader = (armor: string) =>
   armor.replace(/\n\n/, '\nVersion: micro-key-producer test\n\n');
 const badCRC = (armor: string) => armor.replace(/\n=([A-Za-z0-9+/]{4})\n/, '\n=AAAA\n');
-const primaryEd25519PublicKey = (packets: pgp.Packet[]): Uint8Array => {
+const primaryEd25519PublicKeyPacket = (packets: pgp.Packet[]): pgp.PubKeyPacketType => {
   const packet = packets.find((p): p is Extract<pgp.Packet, { TAG: 'publicKey' }> => {
     return p.TAG === 'publicKey';
   });
@@ -140,18 +120,29 @@ const primaryEd25519PublicKey = (packets: pgp.Packet[]): Uint8Array => {
   const algo = packet.data.algo;
   if (algo.TAG !== 'EdDSA' || algo.data.curve !== 'ed25519')
     throw new Error(`expected GnuPG Ed25519 public key, got ${algo.TAG}`);
-  const prefixed = numberToBytesBE(algo.data.pub, 33);
-  if (prefixed[0] !== 0x40) throw new Error('expected prefixed Ed25519 public point');
-  return prefixed.subarray(1);
+  return packet.data;
 };
+const verifyBound = (
+  signature: string,
+  data: Uint8Array | string,
+  publicKey: string,
+  fingerprint: string
+): boolean =>
+  pgp.verifyDetached(
+    signature,
+    data,
+    primaryEd25519PublicKeyPacket(pgp.pubArmor.decode(publicKey)),
+    {
+      fingerprint,
+    }
+  );
 const fingerprintFromColons = (list: string): string => {
   const line = list.split('\n').find((l) => l.startsWith('fpr:'));
   const fingerprint = line?.split(':')[9]?.toLowerCase();
   if (!fingerprint) throw new Error('missing GnuPG fingerprint');
   return fingerprint;
 };
-const GPG = gpgReady();
-const RUN_AGENT = process.argv.includes('--agent');
+const GPG = toolProbe('gpg', ['--version'], { parseReason: gpgReason });
 const GPG_AGENT = RUN_AGENT
   ? GPG.ok
     ? gpgAgentReady()
@@ -259,7 +250,7 @@ else
         const data = utf8.decode('hello');
         fs.writeFileSync(pub, keys.publicKey);
         fs.writeFileSync(msg, data);
-        fs.writeFileSync(sig, pgp.signDetached(seed, data, keys.fingerprint, 0));
+        fs.writeFileSync(sig, pgp.signDetached(seed, data));
         const imported = gpgResult(dir, ['--import', pub]);
         const verified = gpgResult(dir, ['--verify', sig, msg]);
         deepStrictEqual(
@@ -285,7 +276,7 @@ else
         fs.writeFileSync(pub, keys.publicKey);
         fs.writeFileSync(lf, utf8.decode(text));
         fs.writeFileSync(crlf, utf8.decode('hello\r\nworld\r\n'));
-        fs.writeFileSync(sig, pgp.signDetached(seed, text, keys.fingerprint, 0));
+        fs.writeFileSync(sig, pgp.signDetached(seed, text));
         const imported = gpgResult(dir, ['--import', pub]);
         const verifiedLf = gpgResult(dir, ['--verify', sig, lf]);
         const verifiedCrlf = gpgResult(dir, ['--verify', sig, crlf]);
@@ -328,12 +319,7 @@ else
         return {
           imported: imported.status,
           signed: signed.status,
-          local: pgp.verifyDetached(
-            ed25519.getPublicKey(seed),
-            fs.readFileSync(sig, 'utf8'),
-            data,
-            keys.fingerprint
-          ),
+          local: verifyBound(fs.readFileSync(sig, 'utf8'), data, keys.publicKey, keys.fingerprint),
         };
       });
       deepStrictEqual(verified, {
@@ -368,16 +354,11 @@ else
         return {
           imported: imported.status,
           signed: signed.status,
-          localLf: pgp.verifyDetached(
-            ed25519.getPublicKey(seed),
-            fs.readFileSync(sig, 'utf8'),
-            lf,
-            keys.fingerprint
-          ),
-          localCrlf: pgp.verifyDetached(
-            ed25519.getPublicKey(seed),
+          localLf: verifyBound(fs.readFileSync(sig, 'utf8'), lf, keys.publicKey, keys.fingerprint),
+          localCrlf: verifyBound(
             fs.readFileSync(sig, 'utf8'),
             'hello\r\nfrom gpg\r\n',
+            keys.publicKey,
             keys.fingerprint
           ),
         };
@@ -419,12 +400,7 @@ else
           imported: imported.status,
           signed: signed.status,
           expiration: packet.data.head.hashed.find((s) => s.TAG === 'signatureExpirationTime'),
-          local: pgp.verifyDetached(
-            ed25519.getPublicKey(seed),
-            fs.readFileSync(sig, 'utf8'),
-            data,
-            keys.fingerprint
-          ),
+          local: verifyBound(fs.readFileSync(sig, 'utf8'), data, keys.publicKey, keys.fingerprint),
         };
       });
       deepStrictEqual(verified, {
@@ -484,7 +460,7 @@ else
               name: c.name,
               signed: signed.status,
               subpacket: packet.data.head.hashed.find((s) => s.TAG === c.tag),
-              local: pgp.verifyDetached(ed25519.getPublicKey(seed), text, data, keys.fingerprint),
+              local: verifyBound(text, data, keys.publicKey, keys.fingerprint),
             };
           }),
         };
@@ -531,7 +507,7 @@ else
           'sign',
           '0',
         ]);
-        const publicKey = primaryEd25519PublicKey(
+        const publicKey = primaryEd25519PublicKeyPacket(
           pgp.pubArmor.decode(gpg(dir, ['--armor', '--export', 'generated@example.com']))
         );
         const fingerprint = fingerprintFromColons(
@@ -552,7 +528,9 @@ else
         return {
           generated: generated.status,
           signed: signed.status,
-          local: pgp.verifyDetached(publicKey, fs.readFileSync(sig, 'utf8'), data, fingerprint),
+          local: pgp.verifyDetached(fs.readFileSync(sig, 'utf8'), data, publicKey, {
+            fingerprint,
+          }),
         };
       });
       deepStrictEqual(verified, {
@@ -846,10 +824,52 @@ else
         );
       });
     });
+    shouldAgent('GnuPG encrypts, signs and decrypts with locally generated secret key', () => {
+      const password = 'password';
+      // `protection: 'legacy'`: GnuPG <= 2.4 cannot import our default Argon2+AEAD
+      // password-protected keys.
+      const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', password, 0, {
+        protection: 'legacy',
+      });
+      tmp((dir) => {
+        const priv = path.join(dir, 'priv.asc');
+        const msg = path.join(dir, 'msg.txt');
+        const out = path.join(dir, 'msg.gpg');
+        fs.writeFileSync(priv, keys.privateKey);
+        fs.writeFileSync(msg, 'test message');
+        gpgLaunchAgent(dir);
+        gpg(dir, ['--passphrase', password, '--import', priv]);
+        gpg(dir, [
+          '--passphrase',
+          password,
+          '--trust-model',
+          'always',
+          '--default-key',
+          keys.keyId,
+          '--recipient',
+          keys.keyId,
+          '--armor',
+          '--encrypt',
+          '--sign',
+          '--output',
+          out,
+          msg,
+        ]);
+        const decrypted = gpgResult(dir, ['--passphrase', password, '--decrypt', out]);
+        deepStrictEqual(
+          {
+            status: decrypted.status,
+            stdout: decrypted.stdout,
+            goodSignature: decrypted.stderr.includes('Good signature from "gpg <gpg@example.com>"'),
+          },
+          { status: 0, stdout: 'test message', goodSignature: true }
+        );
+      });
+    });
     it('GnuPG and local armor handling agree on headers and strict CRC24', () => {
       const keys = pgp.getKeys(seed, 'gpg <gpg@example.com>', undefined, 0);
       const msgBytes = utf8.decode('hello');
-      const signature = pgp.signDetached(seed, msgBytes, keys.fingerprint, 0);
+      const signature = pgp.signDetached(seed, msgBytes);
       const pubHeader = armorHeader(keys.publicKey);
       const privHeader = armorHeader(keys.privateKey);
       const sigHeader = armorHeader(signature);

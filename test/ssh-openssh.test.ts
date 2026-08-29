@@ -1,25 +1,17 @@
 import { concatBytes } from '@noble/hashes/utils.js';
-import { describe, it } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { base64, hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as ssh from '../src/ssh.ts';
+import { describeIfTool, tmpDir, toolProbe } from './integration-utils.ts';
 
-// Run directly; this is intentionally not imported by test/index.ts because it needs local OpenSSH ssh-keygen.
+// Imported by test/integration.ts, not test/index.ts: it needs local OpenSSH ssh-keygen.
 const seed = hex.decode('71e722b077c007d4ae263287878a0bff1816c99f93cf8dcddd995bccefd1d7a3');
 const check = hex.decode('c346f14a');
-const tmp = <T>(fn: (dir: string) => T): T => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkp-ssh-'));
-  fs.chmodSync(dir, 0o700);
-  try {
-    return fn(dir);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-};
+const tmp = <T>(fn: (dir: string) => T): T => tmpDir('mkp-ssh-', fn);
 const sshEnv = (home: string) => {
   const { SSH_AUTH_SOCK, SSH_AGENT_PID, ...env } = process.env;
   return { ...env, HOME: home };
@@ -30,6 +22,9 @@ const sshKeygen = (home: string, args: string[]): string =>
     env: sshEnv(home),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+// ssh-keygen has no version flag that exits 0; a spawn error means the binary is absent.
+const SSH_KEYGEN = toolProbe('ssh-keygen', ['-?'], { ignoreStatus: true });
+const describeSSHKeygen = describeIfTool(SSH_KEYGEN, 'OpenSSH ssh-keygen');
 const U32BE = (n: number) => Uint8Array.of(n >>> 24, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
 const readU32BE = (bytes: Uint8Array, pos: number) =>
   bytes[pos]! * 2 ** 24 + bytes[pos + 1]! * 2 ** 16 + bytes[pos + 2]! * 2 ** 8 + bytes[pos + 3]!;
@@ -159,7 +154,7 @@ const sshKeygenPublic = (pubKey: Uint8Array) =>
     };
   });
 
-describe('ssh openssh', () => {
+describeSSHKeygen('ssh openssh', () => {
   it('OpenSSH accepts locally generated private and public keys', () => {
     const keys = ssh.getKeys(seed, 'user@pc', check);
     tmp((dir) => {

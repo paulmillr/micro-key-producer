@@ -1,13 +1,13 @@
-import { describe, it } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ASN1 } from '../src/asn1.ts';
 import { CMS, __TEST } from '../src/x509.ts';
+import { describeIfTool, tmpDir, toolProbe } from './integration-utils.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,14 +36,9 @@ const openssl = (home: string, args: string[]): Uint8Array => {
     execFileSync('openssl', args, { env: opensslEnv(home), stdio: ['ignore', 'pipe', 'pipe'] })
   );
 };
-const tmp = <T>(fn: (dir: string) => T): T => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkp-openssl-'));
-  try {
-    return fn(dir);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-};
+const OPENSSL = toolProbe('openssl', ['version']);
+const describeOpenSSL = describeIfTool(OPENSSL, 'OpenSSL');
+const tmp = <T>(fn: (dir: string) => T): T => tmpDir('mkp-openssl-', fn);
 const explicitPkcs8 = (keyPem: string): string =>
   tmp((dir) => {
     const src = path.join(dir, 'named-key.pem');
@@ -380,7 +375,7 @@ const fixtures = genOpenSSLFixtures();
 // historical verification timestamp eventually falls outside their validity.
 const FIXTURE_TIME = Date.now();
 
-describe('x509 openssl', () => {
+describeOpenSSL('x509 openssl', () => {
   it('openssl accepts generated p256 and p384 signatures and returns original content', () => {
     const root = fixtures.root;
     const base = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
@@ -1043,7 +1038,7 @@ describe('x509 openssl', () => {
   });
 });
 
-describe('x509 openssl explicit params', () => {
+describeOpenSSL('x509 openssl explicit params', () => {
   it('runtime-generated supported keys interop when EC keys use explicit params', () => {
     const content = CMS.signed(read(EDNS_JIYA)).encapContentInfo.eContent || new Uint8Array();
     const cases = [
