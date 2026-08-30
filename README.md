@@ -390,6 +390,12 @@ guarded from unauthorized access.
 
 The full API is:
 
+`HARDENED_OFFSET` is a top-level export (`0x80000000`), not a static of `HDKey`:
+
+```ts
+import { HARDENED_OFFSET } from 'micro-key-producer/slip10.js';
+```
+
 ```ts
 export const HARDENED_OFFSET: number;
 
